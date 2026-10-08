@@ -364,6 +364,26 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
     Ok(ownership)
 }
 
+// Establish read validity before deriving ownership differences. A disappearing
+// FD is a non-atomic census, not evidence that the product omitted its permit.
+fn verify_read(raw: &Observation) -> Result<(), String> {
+    if !raw.errors.is_empty() {
+        return Err(format!("failed raw observation: {:?}", raw.errors));
+    }
+    if !raw.closed_during_read.is_empty() {
+        return Err(format!(
+            "descriptor census raced; closed during read: {:?}",
+            raw.closed_during_read
+        ));
+    }
+    if raw.completed_unix_ms < raw.started_unix_ms
+        || raw.completed_unix_ms - raw.started_unix_ms > 2000
+    {
+        return Err("invalid or excessively long observation interval".to_owned());
+    }
+    Ok(())
+}
+
 /// Reject normalized samples that cannot be reproduced from their raw receipt.
 ///
 /// # Errors
@@ -371,13 +391,7 @@ pub fn read_ownership(observation: &Observation, listeners: u64) -> Result<Owner
 /// are evidence errors; the caller must report INVALID, never PASS.
 #[allow(clippy::too_many_lines)]
 pub fn verify(raw: &Observation, sample: &Sample, policy: &Policy) -> Result<(), String> {
-    if !raw.errors.is_empty()
-        || !raw.closed_during_read.is_empty()
-        || raw.completed_unix_ms < raw.started_unix_ms
-        || raw.completed_unix_ms - raw.started_unix_ms > 2000
-    {
-        return Err("failed, raced or excessively long observation".to_owned());
-    }
+    verify_read(raw)?;
     let expected = &sample.process;
     if raw.pid != expected.pid
         || raw
@@ -536,6 +550,7 @@ pub fn normalize(
     role: &str,
     artifact: Artifact,
 ) -> Result<Sample, String> {
+    verify_read(raw)?;
     let ownership = read_ownership(raw, policy.listener_sockets)?;
     let status = raw.status.as_deref().ok_or("missing status")?;
     let smaps = raw.smaps_rollup.as_deref().ok_or("missing smaps_rollup")?;

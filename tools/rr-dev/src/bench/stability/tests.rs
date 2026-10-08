@@ -1386,6 +1386,31 @@ fn ownership_requires_contiguous_publications_and_known_retirements() {
 }
 
 #[test]
+fn raced_census_is_reported_before_deriving_an_ownership_deficit() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut value = raw_observation(sample, policy);
+    value["closed_during_read"] = json!([117]);
+    value["ownership_log"] = json!(
+        value["ownership_log"]
+            .as_str()
+            .unwrap()
+            .replace("\"fd_units_in_use\":256", "\"fd_units_in_use\":0")
+    );
+    let raw = schema::parse_observation(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let error = super::observation::normalize(&raw, policy, "landing", sample.observation.clone())
+        .unwrap_err();
+    assert!(error.contains("descriptor census raced"), "{error}");
+    assert!(
+        error.contains("117"),
+        "retain the actual vanished FD: {error}"
+    );
+    // The original incomplete evidence must never become a valid sample.
+    assert!(super::observation::verify(&raw, sample, policy).is_err());
+}
+
+#[test]
 fn normalized_ownership_requires_fresh_complete_raw_observations() {
     let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
     let sample = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
