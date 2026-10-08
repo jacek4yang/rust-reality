@@ -45,6 +45,13 @@ connection lifetime checks. Candidate packages verify the actual distribution
 assets. QEMU specialist qualification separately exercises independent guest
 kernels and constrained CPU/RAM; it is not a precise performance benchmark.
 
+Native qualification also supports explicit `workflow_dispatch` on the selected
+branch's exact SHA, including the final merged `main` commit. Both the full
+qualification job and the 600-second connection matrix check out that same SHA.
+PR-head evidence does not qualify a later merge commit; retain a new exact-main
+run before release. Dispatch becomes available once the workflow is present on
+the default branch.
+
 QEMU starts on `ready_for_review` or explicit `workflow_dispatch`, rather than
 every draft push. Dispatch uses the selected branch's exact SHA. Existing
 campaigns are not cancelled by newer requests. A result never qualifies a

@@ -1,6 +1,7 @@
 name: Native qualification
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -24,7 +25,7 @@ defaults:
     shell: python3 -c "import subprocess,sys; sys.exit(subprocess.call(['bash','--noprofile','--norc','-e','-o','pipefail',sys.argv[1]], close_fds=True))" {0}
 
 concurrency:
-  group: native-qualification-${{ github.event.pull_request.number }}
+  group: native-qualification-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,13 +34,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CARGO_TERM_COLOR: never
     steps:
       - name: Check out the exact proposed source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Prepare isolated evidence paths and native tools
@@ -213,7 +214,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: native-qualification-${{ github.event.pull_request.head.sha }}
+          name: native-qualification-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/qualification-public/
           if-no-files-found: error
           retention-days: 30
@@ -228,7 +229,7 @@ jobs:
       - name: Check out the exact proposed source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Install the repository Rust toolchain
         run: rustup toolchain install
