@@ -21,6 +21,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  kvm-capability:
+    name: Hosted KVM capability (not qualification)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Probe actual hosted QEMU acceleration
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kvm-capability"
+          exec > >(tee "$RUNNER_TEMP/kvm-capability/probe.log") 2>&1
+          uname -a
+          lscpu
+          test -c /dev/kvm
+          ls -l /dev/kvm
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86
+          qemu-system-x86_64 --version
+          # No disks, guest credentials, listeners, or host permission changes.
+          # Force KVM: unavailable acceleration must fail rather than use TCG.
+          printf 'info kvm\nquit\n' | sudo timeout 20s qemu-system-x86_64 \
+            -accel kvm -cpu host -m 128 -smp 1 -nodefaults \
+            -display none -serial none -monitor stdio -S \
+            | tee "$RUNNER_TEMP/kvm-capability/qemu.log"
+          grep -q 'kvm support: enabled' "$RUNNER_TEMP/kvm-capability/qemu.log"
+          echo 'KVM capability confirmed; no workload qualification performed.'
+      - name: Retain capability evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: kvm-capability-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/kvm-capability/
+          if-no-files-found: error
+          retention-days: 7
   qualify:
     name: Exact-head native qualification
     runs-on: ubuntu-24.04
