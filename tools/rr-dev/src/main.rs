@@ -396,6 +396,8 @@ enum BenchCommand {
     StabilityRun(bench::stability::campaign::Plan),
     /// Execute and retain a required check for an existing frozen campaign.
     StabilityCheck(bench::stability::qualification::Plan),
+    /// Verify and bind one retained native package smoke receipt.
+    StabilityBindPackage(bench::stability::package_bind::Plan),
     /// Owned-fixture child: execute the fixed guest campaign schedule.
     #[command(hide = true)]
     StabilityGuest(bench::stability::guest::Plan),
@@ -1559,6 +1561,14 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::StabilityBindPackage(plan) => match bench::stability::package_bind::run(plan)
+        {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        },
         BenchCommand::StabilityCheck(plan) => {
             match bench::stability::qualification::run(repo, plan) {
                 Ok(()) => ExitCode::SUCCESS,

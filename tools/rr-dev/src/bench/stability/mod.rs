@@ -17,6 +17,7 @@ pub mod native_mechanism;
 pub mod native_pressure;
 pub mod observation;
 pub mod package;
+pub mod package_bind;
 pub mod qualification;
 pub mod schema;
 pub mod test_receipt;

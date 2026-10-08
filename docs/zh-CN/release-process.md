@@ -226,3 +226,17 @@ v2.0 必须代表 runtime-independent Session Engine、显式 Runtime Adapter/Tr
 大量 core/alloc 兼容纯逻辑、受支持客户端、经证明才启用的 EarlyPrepare、成熟 fuzz、
 有界资源、stock Xray 互操作，以及逐路径 allocation/copy/syscall/cache/CPU/延迟审计；
 发布次数本身不是 v2.0 的理由。
+
+## 原生产物执行回执
+
+候选包工作流使用 `--receipt-dir` 将各平台 smoke 执行证据保留为独立的
+`package-receipt-SHA-TIER` 工件；失败时也保留可获得的尝试记录。回执目录
+不得混入 `candidate-SHA-*` 可分发产物聚合。仅成功上传安装包不能证明
+执行来源一致，也不等于完整稳定性验收 PASS。GNU 包中的二进制必须与
+VM 验收候选逐字节相同，其他平台必须绑定相同源码。
+
+用 `cargo dev bench stability-bind-package --evidence BUNDLE/evidence.json --receipt-dir RECEIPT`
+导入保留的原生包回执。导入器核对冻结合同、源码、七条原始执行记录、归档内容
+和原生平台后才追加检查；拒绝重复尝试、路径逃逸、符号链接以及不同的 GNU
+候选二进制。失败尝试不替换原聚合文件，导入成功仍须用冻结评估器完成其余
+检查及 VM 场景验收，不能单独作为发布 PASS。

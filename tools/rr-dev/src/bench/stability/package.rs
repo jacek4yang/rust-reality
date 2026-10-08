@@ -126,6 +126,48 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
 
+    fn verify_import_round_trip(root: &Path, receipt: &Path, original: &Identity) {
+        use super::super::{package_bind, schema};
+        let directory = root.join("import");
+        std::fs::create_dir(&directory).unwrap();
+        let mut identity = original.clone();
+        for (name, artifact) in [
+            ("source.tar", &mut identity.source_archive),
+            ("evaluator", &mut identity.evaluator),
+            ("environment.json", &mut identity.environment),
+            ("workload.json", &mut identity.workload),
+            ("candidate", &mut identity.candidate),
+            ("contract.json", &mut identity.contract),
+        ] {
+            let bytes: &[u8] = match name {
+                "candidate" => b"packaged binary fixture",
+                "contract.json" => schema::CONTRACT.as_bytes(),
+                _ => b"retained test fixture",
+            };
+            artifact.path = name.to_owned();
+            std::fs::write(directory.join(name), bytes).unwrap();
+            artifact.sha256 = hash::sha256_hex(bytes);
+        }
+        let mut aggregate: schema::Evidence =
+            serde_json::from_value(super::super::tests::fixture()).unwrap();
+        aggregate.identity = identity;
+        aggregate.checks.clear();
+        aggregate.cells.clear();
+        let path = directory.join("evidence.json");
+        std::fs::write(&path, serde_json::to_vec(&aggregate).unwrap()).unwrap();
+        let plan = package_bind::Plan {
+            evidence: path.clone(),
+            receipt_dir: receipt.to_path_buf(),
+        };
+        package_bind::run(&plan).unwrap();
+        let after = std::fs::read(&path).unwrap();
+        let bound = schema::parse(&after).unwrap();
+        assert_eq!(bound.checks.len(), 1);
+        assert_eq!(bound.checks[0].name, "package-gnu");
+        assert!(package_bind::run(&plan).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), after);
+    }
+
     #[test]
     #[allow(clippy::too_many_lines)]
     fn package_proof_rejects_an_archive_containing_another_binary() {
@@ -221,6 +263,8 @@ mod tests {
         .to_vec();
         check.executed_cases = 7;
         verify(work.path(), &check, &identity).unwrap();
+        verify_import_round_trip(work.path(), &directory, &identity);
+
         let mut missing = check.clone();
         missing
             .observations

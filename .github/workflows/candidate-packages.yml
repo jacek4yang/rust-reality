@@ -160,7 +160,18 @@ jobs:
           exit 1
 
       - name: Smoke-test packaged tier asset
-        run: cargo dev release smoke "$RELEASE_TAG" "${{ matrix.tier }}" dist
+        run: |
+          cargo dev release smoke "$RELEASE_TAG" "${{ matrix.tier }}" dist \
+            --receipt-dir "$RUNNER_TEMP/package-receipt-${{ matrix.tier }}"
+
+      - name: Preserve native package execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-receipt-${{ env.CANDIDATE_SHA }}-${{ matrix.tier }}
+          path: ${{ runner.temp }}/package-receipt-${{ matrix.tier }}/
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Preserve verified tier asset
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

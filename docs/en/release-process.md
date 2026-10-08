@@ -131,6 +131,18 @@ tiers must bind the same source. Emulated smoke remains functional evidence and
 does not satisfy native package qualification. Candidate package labels do not
 create Git tags or authorize publication.
 
+The candidate-package workflow retains each native smoke receipt separately as
+`package-receipt-SHA-TIER`, including failed attempts when available. These receipt
+artifacts must not match the distributable `candidate-SHA-*` aggregation pattern.
+A successful asset upload alone does not establish execution provenance or an
+aggregate stability PASS. Import a retained native receipt with
+`cargo dev bench stability-bind-package --evidence BUNDLE/evidence.json --receipt-dir RECEIPT`.
+The importer validates the frozen contract, source, all seven recorded executions,
+archive contents and native tier before appending a check. It refuses duplicate
+attempts, path escapes, symlinks and a different GNU candidate. Failed attempts
+never replace the existing aggregate. Run the frozen evaluator afterward; import
+success alone does not satisfy the remaining checks or VM cells.
+
 
 Active workload samples enforce kernel resource ceilings and fresh owner-counter
 capacities independently. They do not subtract periodic ownership logs from a
