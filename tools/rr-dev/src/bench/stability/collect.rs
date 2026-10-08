@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, fs, io::Read as _, path::Path, time::SystemTime
 
 use crate::{bench::process::proc_starttime, process::Tool};
 
-use super::schema::Observation;
+use super::schema::{MAX_DESCRIPTOR_READS, Observation, complete_descriptor_pair};
 
 pub(super) fn unix_ms() -> Result<u64, String> {
     SystemTime::now()
@@ -123,7 +123,7 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
     let descriptors = last.descriptors.clone();
     let closed_during_read = last.closed_during_read.clone();
     errors.extend(last.errors.iter().cloned());
-    if !complete_pair(&descriptor_reads) {
+    if !complete_descriptor_pair(&descriptor_reads) {
         errors.push(
             "descriptor census had no consecutive complete matching reads within its fixed bound"
                 .to_owned(),
@@ -216,25 +216,13 @@ fn descriptor_read(root: &Path) -> super::schema::DescriptorRead {
     }
 }
 
-/// A fixed work bound, independent of observed resource counts or acceptance.
-pub(super) const MAX_DESCRIPTOR_READS: usize = 6;
-
-pub(super) fn complete_pair(reads: &[super::schema::DescriptorRead]) -> bool {
-    let Some(pair) = reads.last_chunk::<2>() else {
-        return false;
-    };
-    pair.iter()
-        .all(|read| read.errors.is_empty() && read.closed_during_read.is_empty())
-        && pair[0].descriptors == pair[1].descriptors
-}
-
 fn descriptor_census(
     mut scan: impl FnMut() -> super::schema::DescriptorRead,
 ) -> Vec<super::schema::DescriptorRead> {
     let mut reads = Vec::new();
     for _ in 0..MAX_DESCRIPTOR_READS {
         reads.push(scan());
-        if !reads.last().expect("one read").errors.is_empty() || complete_pair(&reads) {
+        if !reads.last().expect("one read").errors.is_empty() || complete_descriptor_pair(&reads) {
             break;
         }
     }
@@ -261,7 +249,7 @@ mod tests {
         let reads = descriptor_census(|| source.next().expect("must not keep sampling"));
         assert_eq!(reads.len(), 3);
         assert_eq!(reads[0].closed_during_read, [117]);
-        assert!(complete_pair(&reads));
+        assert!(complete_descriptor_pair(&reads));
     }
 
     #[test]
@@ -272,7 +260,7 @@ mod tests {
             read
         });
         assert_eq!(reads.len(), 1);
-        assert!(!complete_pair(&reads));
+        assert!(!complete_descriptor_pair(&reads));
     }
 
     #[test]
@@ -283,7 +271,7 @@ mod tests {
             census_read(&format!("socket:[{number}]"))
         });
         assert_eq!(reads.len(), MAX_DESCRIPTOR_READS);
-        assert!(!complete_pair(&reads));
+        assert!(!complete_descriptor_pair(&reads));
     }
 
     #[test]
@@ -298,7 +286,7 @@ mod tests {
             read
         });
         assert_eq!(reads.last().unwrap().descriptors.len(), 91);
-        assert!(complete_pair(&reads));
+        assert!(complete_descriptor_pair(&reads));
     }
 
     #[test]

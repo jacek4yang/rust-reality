@@ -388,6 +388,18 @@ pub struct DescriptorRead {
     pub errors: Vec<String>,
 }
 
+/// A fixed work bound, independent of observed resource counts or acceptance.
+pub(super) const MAX_DESCRIPTOR_READS: usize = 6;
+
+pub(super) fn complete_descriptor_pair(reads: &[DescriptorRead]) -> bool {
+    let Some(pair) = reads.last_chunk::<2>() else {
+        return false;
+    };
+    pair.iter()
+        .all(|read| read.errors.is_empty() && read.closed_during_read.is_empty())
+        && pair[0].descriptors == pair[1].descriptors
+}
+
 /// One attempted observation, including partial evidence on failure.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -377,11 +377,11 @@ fn verify_read(raw: &Observation) -> Result<(), String> {
         ));
     }
     let reads = &raw.descriptor_reads;
-    if reads.len() > super::collect::MAX_DESCRIPTOR_READS
+    if reads.len() > super::schema::MAX_DESCRIPTOR_READS
         || reads.iter().any(|read| !read.errors.is_empty())
-        || !super::collect::complete_pair(reads)
+        || !super::schema::complete_descriptor_pair(reads)
         || reads.last().map(|read| &read.descriptors) != Some(&raw.descriptors)
-        || (2..reads.len()).any(|end| super::collect::complete_pair(&reads[..end]))
+        || (2..reads.len()).any(|end| super::schema::complete_descriptor_pair(&reads[..end]))
     {
         return Err(
             "descriptor census is incomplete, inconsistent or not the first stable pair".to_owned(),
