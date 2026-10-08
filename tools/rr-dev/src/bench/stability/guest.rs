@@ -345,7 +345,11 @@ impl Session<'_> {
         if raw.errors.is_empty() && raw.closed_during_read.is_empty() {
             Ok(())
         } else {
-            Err(format!("{name}: incomplete raw observation (retained)"))
+            Err(observation_failure(
+                name,
+                &raw.errors,
+                &raw.closed_during_read,
+            ))
         }
     }
 
@@ -630,9 +634,26 @@ fn run_in(plan: &Plan, root: PathBuf) -> Result<(), String> {
     }
 }
 
+fn observation_failure(name: &str, errors: &[String], closed: &[u32]) -> String {
+    format!(
+        "{name}: incomplete raw observation (retained); read errors: {errors:?}; descriptors closed during census: {closed:?}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn observation_failure_distinguishes_census_churn_from_read_errors() {
+        let churn = observation_failure("fault-warm-15000", &[], &[29, 37]);
+        assert!(churn.contains("read errors: []"));
+        assert!(churn.contains("descriptors closed during census: [29, 37]"));
+        let read = observation_failure("checkpoint", &["permission denied".to_owned()], &[]);
+        assert!(read.contains("permission denied"));
+        assert!(read.contains("descriptors closed during census: []"));
+        assert!(read.contains("retained"));
+    }
+
     #[test]
     fn a_guest_receipt_is_never_replaced_by_a_later_attempt() {
         let workspace =
