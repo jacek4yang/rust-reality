@@ -103,7 +103,6 @@ impl Found {
 #[cfg(all(test, feature = "std", target_os = "linux"))]
 mod tests {
     use std::os::fd::AsRawFd as _;
-    use std::vec::Vec;
 
     use rustix::io::Errno;
     use rustix::pipe::pipe;
@@ -114,10 +113,7 @@ mod tests {
     fn inherited_scan_sees_a_new_pipe_and_keeps_stdio() {
         let (reader, writer) = pipe().expect("pipe");
         let numbers = inherited_descriptors().expect("scan");
-        let found = numbers.values[..numbers.len]
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
+        let found = &numbers.values[..numbers.len];
         assert!(found.contains(&reader.as_raw_fd()));
         assert!(found.contains(&writer.as_raw_fd()));
         assert!(!found.contains(&0));
