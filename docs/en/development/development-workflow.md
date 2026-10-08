@@ -33,6 +33,13 @@ cargo build --release --locked          # release profile (thin LTO, codegen-uni
 Match validation depth to the change. Do not run the full gate after every edit;
 never merge on focused tests alone.
 
+GitHub Actions is the primary merge-quality gate at the exact candidate SHA.
+Local tests provide fast development feedback. If a demonstrated sandbox
+capability restriction prevents local execution, retain that failure and its
+reproducer, and require the unmodified full suite in GitHub Actions. Do not
+skip tests or treat unexplained/supported-environment failures as exemptions.
+The policy and evidence requirements are [ADR 0038](../../adr/0038-hosted-actions-are-primary-quality-gates.md).
+
 1. **While editing:** focused unit/module tests
    (`cargo test -p rust-reality <module>` or the rr-dev equivalent).
 2. **After a coherent slice:** the affected package suite and strict clippy

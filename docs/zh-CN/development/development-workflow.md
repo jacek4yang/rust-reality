@@ -34,6 +34,11 @@ cargo build --release --locked          # release profile（thin LTO，codegen-u
 验证深度应与变更匹配。不要在每次编辑后都运行完整门禁；也绝不能仅凭聚焦测试
 合入变更。
 
+GitHub Actions 是绑定精确候选 SHA 的主要合并质量门禁；本地测试提供快速开发反馈。
+若已证明开发沙箱缺少必要能力，保留本地失败及复现证据，由 GitHub Actions 完整执行
+未修改的全量套件。不能跳过测试，也不能把原因不明或受支持部署环境中的失败当作豁免。
+规则和证据要求见 [ADR 0038](../../adr/0038-hosted-actions-are-primary-quality-gates.md)。
+
 1. **编辑期间：** 聚焦单元/模块测试
    （`cargo test -p rust-reality <module>` 或对应的 rr-dev 命令）。
 2. **完成一个连贯切片后：** 受影响 package 的测试套件和严格 Clippy

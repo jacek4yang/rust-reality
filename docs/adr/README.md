@@ -77,3 +77,4 @@ of the law is what it is.
 | [0035](0035-remove-thread-sanitizer-gate.md) | Remove the ThreadSanitizer gate | Accepted |
 | [0036](0036-separate-native-and-qemu-qualification.md) | Separate native and QEMU qualification | Accepted |
 | [0037](0037-bound-descriptor-census-acquisition.md) | Bound descriptor census acquisition | Accepted |
+| [0038](0038-hosted-actions-are-primary-quality-gates.md) | Hosted Actions are the primary quality gates | Accepted |

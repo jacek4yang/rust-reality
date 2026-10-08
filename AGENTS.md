@@ -322,6 +322,16 @@ binary, whose dependency graph excludes tooling.
 Contributors MUST NOT remove a workspace from the gate's coverage; `cargo dev`'s
 own tests enforce that both workspaces stay covered.
 
+GitHub Actions is the primary merge-quality authority. Local focused and
+slice-level tests provide development feedback; run the full gate locally when
+the environment supports it. A demonstrated development-sandbox capability
+restriction may be satisfied by the unmodified full gate on the exact candidate
+in GitHub Actions. Retain the local failure, capability reproducer, command,
+source identity and hosted result in the PR. Do not skip stages, shrink scope,
+alter assertions or mark the local attempt successful. Unexplained failures and
+failures in supported deployment environments remain blockers even when CI is
+green. See [ADR 0038](docs/adr/0038-hosted-actions-are-primary-quality-gates.md).
+
 Formatting is applied only to intentionally touched files. Contributors MUST
 NOT run `cargo fmt --all` over the tooling workspace casually — recursive
 formatter churn on unrelated tooling files is a known review hazard. The gate
@@ -469,11 +479,18 @@ decisions belong in ADRs.
 
 A change merges only when, at the exact head SHA:
 
-1. the focused and slice-level validation of §14 has run locally;
-2. the full authoritative gates of §14 pass locally;
+1. the focused and slice-level validation of §14 has run locally, with any
+   demonstrated capability restriction recorded and covered on the exact head
+   in GitHub Actions under §14;
+2. the unmodified full authoritative gate of §14 passes in GitHub Actions;
 3. GitHub CI succeeds on that exact head;
 4. GitHub Security succeeds on that exact head;
 5. `git diff --check` is clean.
+
+Local full-gate success is valuable supplementary evidence, not a second
+mandatory copy of a hosted pass when the development sandbox lacks required
+capabilities. Merge authorization and release-specific qualification remain
+separate requirements; green checks alone authorize neither merge nor release.
 
 Existing gates MUST NOT be weakened or deleted to make a change easier. If a
 gate is genuinely wrong, fixing it is a reviewed change with a documented
