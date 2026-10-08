@@ -5137,14 +5137,9 @@ mod tests {
             )));
         }
         match result {
-            Err(VisionSessionError::Tls(source))
-                if matches!(
-                    source,
-                    crate::protocol::reality::tls13::TlsApplicationIoError::Timeout
-                ) =>
-            {
-                Ok(())
-            }
+            Err(VisionSessionError::Tls(
+                crate::protocol::reality::tls13::TlsApplicationIoError::Timeout,
+            )) => Ok(()),
             Err(VisionSessionError::Timeout) => Ok(()),
             other => Err(io::Error::other(format!(
                 "pending write did not fail as a stall: {other:?}"
