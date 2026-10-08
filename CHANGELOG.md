@@ -6,8 +6,9 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Fixed
 
-- The server closes inherited descriptors above stderr at startup. Parent
-  pipes are not relay permits, and ownership qualification rejects them.
+- CLI startup preserves intentionally inherited descriptors, including
+  configurations passed through `/proc/self/fd`. Qualification launchers isolate
+  runner descriptors instead of closing application descriptors in production.
 
 ### Changed
 

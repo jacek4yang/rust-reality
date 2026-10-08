@@ -43,8 +43,6 @@ extern crate std;
 #[cfg(target_os = "linux")]
 pub mod errno;
 #[cfg(target_os = "linux")]
-pub mod inherited;
-#[cfg(target_os = "linux")]
 pub mod memory;
 #[cfg(target_os = "linux")]
 pub mod pipe;
@@ -63,8 +61,6 @@ pub use rustix::fd::{AsFd, BorrowedFd, OwnedFd};
 #[cfg(target_os = "linux")]
 pub use rustix::io::Errno;
 
-#[cfg(target_os = "linux")]
-pub use inherited::close_inherited_descriptors;
 #[cfg(target_os = "linux")]
 pub use memory::{MemoryError, resident_set_bytes};
 #[cfg(target_os = "linux")]

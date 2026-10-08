@@ -16,6 +16,13 @@ on:
 permissions:
   contents: read
 
+# Isolate runner-owned descriptors at the test-launch boundary. Production
+# must retain intentional supervisor/configuration FD passing. No ownership
+# acceptance rule is relaxed: unexpected descriptors in the candidate still fail.
+defaults:
+  run:
+    shell: python3 -c "import subprocess,sys; sys.exit(subprocess.call(['bash','--noprofile','--norc','-e','-o','pipefail',sys.argv[1]], close_fds=True))" {0}
+
 concurrency:
   group: native-qualification-${{ github.event.pull_request.number }}
   cancel-in-progress: true

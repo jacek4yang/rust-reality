@@ -11,15 +11,6 @@ use clap::Parser as _;
 use rust_reality::cli::{Cli, CliError};
 
 fn main() -> ExitCode {
-    // Runner and supervisor pipes are not relay permits. Close them before
-    // clap or the server opens descriptors of its own.
-    if let Err(error) = rr_linux::close_inherited_descriptors() {
-        let _ = writeln!(
-            io::stderr().lock(),
-            "error: could not close inherited descriptors: {error}"
-        );
-        return ExitCode::FAILURE;
-    }
     match rust_reality::cli::run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
