@@ -204,6 +204,10 @@ fn verify_required_check(
             checks::verify_ci(&read_artifact(root, &check.output)?, check, identity)?;
             Ok(Report { verdict: Verdict::Pass, findings: Vec::new() })
         }
+        "long-lived-connections" => {
+            test_receipt::verify_long_lived(&read_artifact(root, &check.output)?, check, &contract)?;
+            Ok(Report { verdict: Verdict::Pass, findings: Vec::new() })
+        }
         _ if contract.deterministic_tests.contains_key(&check.name) => {
             test_receipt::verify(&read_artifact(root, &check.output)?, check, &contract)?;
             Ok(Report { verdict: Verdict::Pass, findings: Vec::new() })

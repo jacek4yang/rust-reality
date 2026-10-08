@@ -97,6 +97,7 @@
     "inactivity",
     "write-stall",
     "half-close",
+    "long-lived-connections",
     "package-gnu",
     "package-musl",
     "package-v3",
@@ -143,6 +144,8 @@
       "transport::tcp_relay::tests::splice_asymmetry_and_half_close_preserve_both_directions"
     ]
   },
+  "long_lived_minimum_ms": 600000,
+  "long_lived_test": "server::vision::tests::authenticated_connections_survive_quiet_directions_for_600s",
   "recovered_line_fds": 768,
   "peak_line_fds": 2048,
   "peak_landing_fds": 1024

@@ -50,6 +50,8 @@ pub enum Case {
     NativeDescriptorPressure,
     /// Thirty-minute native ownership workload and fixed recovery checkpoints.
     NativeResources,
+    /// Real 600-second quiet-direction, half-close and write-stall matrix.
+    LongLivedConnections,
 }
 
 impl Case {
@@ -63,6 +65,7 @@ impl Case {
             Self::NativeMechanism => "native-mechanism",
             Self::NativeDescriptorPressure => "native-descriptor-pressure",
             Self::NativeResources => "native-resources",
+            Self::LongLivedConnections => "long-lived-connections",
         }
     }
 
@@ -146,6 +149,11 @@ fn command(
         ]
         .map(str::to_owned)
         .to_vec(),
+        Case::LongLivedConnections => {
+            let contract: schema::Contract =
+                serde_json::from_str(schema::CONTRACT).expect("compiled contract");
+            super::test_receipt::long_lived_argv(&contract)
+        }
         Case::NativeInterop
         | Case::NativeMechanism
         | Case::NativeDescriptorPressure
@@ -459,5 +467,13 @@ mod tests {
         );
         plan.case = Case::Lifecycle;
         assert!(command(&plan, directory, &evidence.identity).is_err());
+        plan.run_id = None;
+        plan.case = Case::LongLivedConnections;
+        let contract: schema::Contract =
+            serde_json::from_str(schema::CONTRACT).expect("compiled contract");
+        assert_eq!(
+            command(&plan, directory, &evidence.identity).unwrap(),
+            super::super::test_receipt::long_lived_argv(&contract)
+        );
     }
 }

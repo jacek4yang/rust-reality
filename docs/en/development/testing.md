@@ -206,6 +206,9 @@ package-check receipts: absent receipts keep aggregate qualification NOT RUN.
 After the VM runner exits, `cargo dev bench stability-check --evidence BUNDLE/evidence.json
 --case local-full-gate` collects the authoritative local gate. The `lifecycle`
 case runs unfiltered library tests and binds all eight required lifecycle checks.
+`--case long-lived-connections` runs the ignored 600-second authenticated matrix
+(SSE, WebSocket, quiet directions, delayed response, half-close and write stall).
+The unfiltered lifecycle run lists that test as ignored and cannot satisfy it.
 Use `--case exact-head-ci --run-id ID` and `--case exact-head-security --run-id ID`
 to retain the corresponding GitHub workflow receipts. Run from the clean frozen
 checkout with its exact frozen harness. Each attempt retains its command, owned

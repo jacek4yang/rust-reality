@@ -134,3 +134,156 @@ pub fn verify(bytes: &[u8], check: &Check, contract: &Contract) -> Result<(), St
     }
     Ok(())
 }
+
+/// Frozen real-elapsed command. Lifecycle's unfiltered run must not satisfy it.
+pub(super) fn long_lived_argv(contract: &Contract) -> Vec<String> {
+    [
+        "cargo",
+        "test",
+        "--lib",
+        "--locked",
+        "--",
+        "--color",
+        "never",
+        "--exact",
+        contract.long_lived_test.as_str(),
+        "--ignored",
+        "--test-threads=1",
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+fn elapsed_ms(value: &str) -> Result<u64, String> {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction.len() > 9
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("invalid elapsed seconds".to_owned());
+    }
+    let seconds: u64 = whole
+        .parse()
+        .map_err(|_| "elapsed seconds overflow".to_owned())?;
+    let mut millis = 0_u64;
+    for (index, byte) in fraction.bytes().take(3).enumerate() {
+        millis += u64::from(byte - b'0') * 10_u64.pow(2 - u32::try_from(index).unwrap_or(0));
+    }
+    seconds
+        .checked_mul(1_000)
+        .and_then(|value| value.checked_add(millis))
+        .ok_or_else(|| "elapsed milliseconds overflow".to_owned())
+}
+
+/// Require the ignored 600-second matrix to have run and passed on a real clock.
+///
+/// # Errors
+/// Rejects a substituted command, a short run, a failure, or a missing case.
+pub fn verify_long_lived(bytes: &[u8], check: &Check, contract: &Contract) -> Result<(), String> {
+    if contract.long_lived_minimum_ms != 600_000
+        || contract.long_lived_test
+            != "server::vision::tests::authenticated_connections_survive_quiet_directions_for_600s"
+        || check.name != "long-lived-connections"
+        || check.executed_cases != 1
+        || check.failed_cases != 0
+        || check.argv != long_lived_argv(contract)
+    {
+        return Err("long-lived command or contract bound was substituted".to_owned());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+    if !text.ends_with('\n') {
+        return Err("truncated libtest output".to_owned());
+    }
+    let mut saw_case = false;
+    let mut elapsed = None;
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        if line == format!("test {} ... ok", contract.long_lived_test) {
+            if saw_case {
+                return Err("duplicated long-lived result".to_owned());
+            }
+            saw_case = true;
+        } else if line.starts_with(&format!("test {} ...", contract.long_lived_test)) {
+            return Err("long-lived matrix did not pass".to_owned());
+        } else if let Some(rest) = line.strip_prefix("test result: ok. ") {
+            if elapsed.is_some() {
+                return Err("repeated libtest terminal result".to_owned());
+            }
+            let duration = rest
+                .split("; ")
+                .find_map(|field| field.strip_prefix("finished in "))
+                .and_then(|value| value.strip_suffix('s'))
+                .ok_or("missing long-lived duration")?;
+            if rest
+                .split("; ")
+                .any(|field| field.ends_with(" failed") && field != "0 failed")
+            {
+                return Err("long-lived suite reported a failure".to_owned());
+            }
+            elapsed = Some(elapsed_ms(duration)?);
+        }
+    }
+    if !saw_case {
+        return Err("long-lived matrix was not executed".to_owned());
+    }
+    let elapsed = elapsed.ok_or("missing long-lived terminal result")?;
+    if elapsed < contract.long_lived_minimum_ms {
+        return Err("long-lived matrix did not reach 600 elapsed seconds".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check(argv: Vec<String>) -> Check {
+        Check {
+            name: "long-lived-connections".to_owned(),
+            source_commit: "abc".to_owned(),
+            candidate_sha256: "d".repeat(64),
+            argv,
+            exit_code: Some(0),
+            completed: true,
+            executed_cases: 1,
+            failed_cases: 0,
+            execution: super::super::schema::Artifact {
+                path: "execution.json".to_owned(),
+                sha256: "e".repeat(64),
+            },
+            output: super::super::schema::Artifact {
+                path: "output.json".to_owned(),
+                sha256: "f".repeat(64),
+            },
+            observations: Vec::new(),
+        }
+    }
+
+    fn contract() -> Contract {
+        serde_json::from_str(super::super::schema::CONTRACT).expect("compiled contract")
+    }
+
+    fn receipt(seconds: &str, status: &str) -> String {
+        format!(
+            "running 1 test\ntest {} ... {status}\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in {seconds}s\n",
+            contract().long_lived_test
+        )
+    }
+
+    #[test]
+    fn long_lived_receipt_requires_the_frozen_600_second_run() {
+        let contract = contract();
+        assert_eq!(contract.long_lived_minimum_ms, 600_000);
+        let check = check(long_lived_argv(&contract));
+        assert!(verify_long_lived(receipt("600.00", "ok").as_bytes(), &check, &contract).is_ok());
+        assert!(verify_long_lived(receipt("599.999", "ok").as_bytes(), &check, &contract).is_err());
+        assert!(
+            verify_long_lived(receipt("700", "ignored").as_bytes(), &check, &contract).is_err()
+        );
+        let mut substituted = check.clone();
+        substituted.argv.pop();
+        assert!(
+            verify_long_lived(receipt("700.00", "ok").as_bytes(), &substituted, &contract).is_err()
+        );
+    }
+}

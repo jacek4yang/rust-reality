@@ -132,7 +132,7 @@ jobs:
           cargo dev bench run --suite soak --soak-implementation rust \
             --rust-bin "$RUST_BIN" --xray-bin "$XRAY_BIN" --openssl-bin "$OPENSSL_BIN" \
             --soak-seconds 1800 --soak-round-sleep-ms 5000 --soak-min-rounds 3 \
-            --soak-distributed-interval-seconds 60 \
+            --soak-distributed-interval-seconds 1800 \
             --run-id "$GITHUB_RUN_ID-soak" --out-dir "$Q/soak"
       - name: Retain only public-safe evidence files
         if: always()
@@ -210,3 +210,24 @@ jobs:
           path: ${{ runner.temp }}/qualification-public/
           if-no-files-found: error
           retention-days: 30
+
+  long-lived-connections:
+    name: 600s connection matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Check out the exact proposed source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Install the repository Rust toolchain
+        run: rustup toolchain install
+      - name: Run the ignored authenticated connection matrix
+        timeout-minutes: 20
+        run: >-
+          cargo test --lib --locked -- --color never --exact
+          server::vision::tests::authenticated_connections_survive_quiet_directions_for_600s
+          --ignored --test-threads=1

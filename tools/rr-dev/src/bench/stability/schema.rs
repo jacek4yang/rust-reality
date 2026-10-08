@@ -48,6 +48,8 @@ pub struct Contract {
     pub recovered_line_fds: u64,
     pub peak_line_fds: u64,
     pub peak_landing_fds: u64,
+    pub long_lived_minimum_ms: u64,
+    pub long_lived_test: String,
     pub cells: Vec<String>,
     pub roles: Vec<String>,
     pub faults: Vec<String>,

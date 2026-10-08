@@ -155,7 +155,9 @@ VM 执行器不提供独立要求的原生、CI、安全或发布包检查回执
 汇总资格认证仍为 NOT RUN。
 VM 执行器退出后，使用 `cargo dev bench stability-check --evidence BUNDLE/evidence.json
 --case local-full-gate` 收集权威本地门禁。`lifecycle` 运行未筛选的库测试，
-绑定全部八项生命周期检查。使用 `--case exact-head-ci --run-id ID` 和
+绑定全部八项生命周期检查。`--case long-lived-connections` 运行被忽略的 600 秒
+认证连接矩阵（SSE、WebSocket、单向静默、延迟响应、半关闭和写停滞）。未筛选的
+生命周期运行只会把该测试标为 ignored，不能代替它。使用 `--case exact-head-ci --run-id ID` 和
 `--case exact-head-security --run-id ID` 保留对应 GitHub 工作流回执。
 必须从干净的冻结源码目录运行完全相同的冻结工具。每次尝试均保留命令、
 所属子进程身份、原始 stdout/stderr、终态以及最终源码和可执行文件身份检查，
