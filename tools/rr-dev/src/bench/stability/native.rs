@@ -93,7 +93,7 @@ impl<'a> Qualification<'a> {
     /// Incomplete observations never establish a passing baseline.
     pub fn begin(&mut self) -> Result<(), String> {
         std::thread::sleep(Duration::from_secs(3));
-        self.capture("baseline", false)?;
+        self.capture("baseline", false, None)?;
         self.receipt.workload_started_unix_ms = Some(collect::unix_ms()?);
         Ok(())
     }
@@ -103,7 +103,7 @@ impl<'a> Qualification<'a> {
     /// # Errors
     /// Returns incomplete observations or resource-accounting violations.
     pub fn round(&mut self, round: usize) -> Result<(), String> {
-        self.capture(&format!("round-{round}"), false)
+        self.capture(&format!("round-{round}"), false, None)
     }
 
     /// Collect every recovery checkpoint at its contract-defined offset.
@@ -124,17 +124,15 @@ impl<'a> Qualification<'a> {
                 std::thread::sleep(delay);
             }
             let recovered = Some(offset) == contract.native_recovery_offsets_ms.last();
-            if let Err(error) = self.capture(&format!("recovery-{offset}"), recovered) {
-                errors.push(error);
-            }
-            if started.elapsed()
-                > deadline + Duration::from_millis(contract.checkpoint_tolerance_ms)
-                || collect::unix_ms()?.saturating_sub(epoch)
-                    > offset.saturating_add(contract.checkpoint_tolerance_ms)
+            let window = RecoveryWindow {
+                started,
+                epoch,
+                offset: *offset,
+                tolerance: contract.checkpoint_tolerance_ms,
+            };
+            if let Err(error) = self.capture(&format!("recovery-{offset}"), recovered, Some(window))
             {
-                errors.push(format!(
-                    "native recovery checkpoint {offset} exceeded its fixed window"
-                ));
+                errors.push(error);
             }
         }
         if errors.is_empty() {
@@ -167,6 +165,7 @@ impl<'a> Qualification<'a> {
         let capture = self.capture(
             "terminal",
             primary_error.is_none() && self.receipt.finalization_errors.is_empty(),
+            None,
         );
         if let Err(error) = &capture {
             self.receipt.finalization_errors.push(error.clone());
@@ -199,7 +198,12 @@ impl<'a> Qualification<'a> {
         }
     }
 
-    fn capture(&mut self, label: &str, recovered: bool) -> Result<(), String> {
+    fn capture(
+        &mut self,
+        label: &str,
+        recovered: bool,
+        window: Option<RecoveryWindow>,
+    ) -> Result<(), String> {
         let mut errors = Vec::new();
         let mut checkpoint = schema::NativeCheckpoint {
             phase: label.to_owned(),
@@ -208,9 +212,33 @@ impl<'a> Qualification<'a> {
             samples: Vec::new(),
             errors: Vec::new(),
         };
-        for (name, process) in &mut self.processes {
+        // Finish raw collection before serialization, digesting and evaluation.
+        // Those operations must not delay another role's observation or count
+        // as time spent observing the candidate.
+        let collected: Vec<_> = self
+            .processes
+            .iter()
+            .map(|(name, process)| (name.clone(), collect::observe(process.pid, &process.log)))
+            .collect();
+        if let Some(window) = window {
+            match collect::unix_ms() {
+                Ok(completed)
+                    if window.contains(
+                        checkpoint.started_unix_ms,
+                        completed,
+                        window.started.elapsed(),
+                    ) => {}
+                Ok(_) => errors.push(format!(
+                    "native recovery checkpoint {} exceeded its fixed collection window",
+                    window.offset
+                )),
+                Err(error) => errors.push(error),
+            }
+        }
+        for (name, raw) in collected {
+            let process = self.processes.get_mut(&name).expect("registered process");
             let result = (|| {
-                let raw = collect::observe(process.pid, &process.log)?;
+                let raw = raw?;
                 let file = format!("ownership-{label}-{name}.json");
                 let bytes = serde_json::to_string(&raw).map_err(|error| error.to_string())?;
                 self.run.write_new(&file, &bytes)?;
@@ -229,7 +257,7 @@ impl<'a> Qualification<'a> {
                 } else {
                     return Err("missing native ownership baseline".to_owned());
                 };
-                let sample = observation::normalize(&raw, &policy, name, artifact)?;
+                let sample = observation::normalize(&raw, &policy, &name, artifact)?;
                 checkpoint.samples.push(sample.clone());
                 let baseline = process
                     .baseline
@@ -277,5 +305,66 @@ impl<'a> Qualification<'a> {
         } else {
             Err(errors.join("; "))
         }
+    }
+}
+
+/// Deadline applies to collecting evidence, not to processing retained bytes.
+#[derive(Clone, Copy)]
+struct RecoveryWindow {
+    started: Instant,
+    epoch: u64,
+    offset: u64,
+    tolerance: u64,
+}
+
+impl RecoveryWindow {
+    fn contains(self, began: u64, completed: u64, elapsed: Duration) -> bool {
+        let Some(start) = self.epoch.checked_add(self.offset) else {
+            return false;
+        };
+        let Some(end) = start.checked_add(self.tolerance) else {
+            return false;
+        };
+        let Some(monotonic_end) = self.offset.checked_add(self.tolerance) else {
+            return false;
+        };
+        began >= start
+            && completed >= began
+            && completed <= end
+            && elapsed >= Duration::from_millis(self.offset)
+            && elapsed <= Duration::from_millis(monotonic_end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_window_checks_raw_collection_not_later_processing() {
+        let window = RecoveryWindow {
+            started: Instant::now(),
+            epoch: 1000,
+            offset: 180_000,
+            tolerance: 2000,
+        };
+        // Reproduce the historical last raw completion at offset + 1629ms.
+        assert!(window.contains(181_000, 182_629, Duration::from_millis(181_629)));
+        // Later serialization/evaluation has no input to this decision.
+        assert!(!window.contains(181_000, 183_001, Duration::from_millis(182_001)));
+        assert!(!window.contains(180_999, 182_000, Duration::from_secs(181)));
+        assert!(!window.contains(181_000, 182_000, Duration::from_millis(182_001)));
+        assert!(!window.contains(181_000, 180_999, Duration::from_secs(181)));
+    }
+
+    #[test]
+    fn recovery_window_rejects_timestamp_overflow() {
+        let window = RecoveryWindow {
+            started: Instant::now(),
+            epoch: u64::MAX,
+            offset: 1,
+            tolerance: 2000,
+        };
+        assert!(!window.contains(u64::MAX, u64::MAX, Duration::from_millis(1)));
     }
 }
