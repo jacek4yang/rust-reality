@@ -4,6 +4,11 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The server closes inherited descriptors above stderr at startup. Parent
+  pipes are not relay permits, and ownership qualification rejects them.
+
 ### Changed
 
 - Stability evidence uses a strict offline ownership contract with distinct
