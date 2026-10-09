@@ -271,6 +271,12 @@ pub fn verify(
     Ok(())
 }
 
+/// Hold LANDING abort so the co-scheduled LINE-A `ss` census can witness the live
+/// ingress first. Begin fires on all guests at the same schedule instant; without
+/// this delay the landing kill tears down `:9444` before LINE-A's census (~34ms)
+/// completes. Must stay under `checkpoint_tolerance_ms` (2000).
+pub(super) const RESTART_CENSUS_HOLD_MS: u64 = 500;
+
 /// Read-only census for LINE-A's active loopback ingress (fixture listen port 9444).
 /// LANDING listens on 9443; a 9443 filter on LINE-A can never witness the prefix flow.
 pub(super) const RESTART_INGRESS_COMMAND: [&str; 11] = [

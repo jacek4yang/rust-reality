@@ -316,7 +316,9 @@ never rewritten by this classification.
 
 For deliberate LANDING restart, LINE-A also records the single established
 loopback ingress connection on its public listener (fixture port 9444) at the
-fault boundary. A Handoff relay EPIPE can be
+fault boundary. LANDING delays its abort by a short fixed hold so that co-scheduled
+LINE-A census can observe the live ingress before the kill tears it down. A
+Handoff relay EPIPE can be
 classified as injected only once, for that exact peer, after the verified kill
 and ingress census, and before the intact affected prefix's recorded failure
 plus the existing clock guard. Missing/ambiguous census, a different peer,

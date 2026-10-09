@@ -1882,6 +1882,22 @@ fn restart_ingress_censuses_line_a_listener_not_landing_port() {
 }
 
 #[test]
+fn restart_ingress_census_hold_lets_line_a_ss_win_before_landing_abort() {
+    // Begin is co-scheduled: without a LANDING hold, abort (~3ms) finishes before
+    // LINE-A's ss census (~34ms) and empties :9444 (Frozen INVALID 37895293382).
+    // Hold must exceed observed census latency, stay under checkpoint_tolerance_ms.
+    let hold = super::action::RESTART_CENSUS_HOLD_MS;
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    assert!(hold >= 250, "hold {hold} too short for LINE-A ss census");
+    assert!(hold <= 1000, "hold {hold} longer than needed");
+    assert!(
+        hold < contract.checkpoint_tolerance_ms,
+        "hold {hold} must stay under checkpoint_tolerance_ms {}",
+        contract.checkpoint_tolerance_ms
+    );
+}
+
+#[test]
 fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
     let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":110,
         "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),

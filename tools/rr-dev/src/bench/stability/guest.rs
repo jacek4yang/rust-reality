@@ -435,6 +435,32 @@ impl Session<'_> {
         Ok((crate::hash::sha256_hex(&bytes), warm))
     }
 
+    /// Abort LANDING only after LINE-A's co-scheduled ingress census can finish.
+    ///
+    /// Begin is co-scheduled across guests. Without
+    /// [`super::action::RESTART_CENSUS_HOLD_MS`], landing kill (~3ms) wins over
+    /// LINE-A's read-only `ss` census on `:9444` (~34ms) and empties the witness
+    /// (Frozen QEMU INVALID on 5e882bb / run 37895293382). Hold stays under
+    /// `checkpoint_tolerance_ms`.
+    fn landing_restart(&mut self, begin: bool) -> Result<(), String> {
+        if !begin {
+            return self.start_server(true);
+        }
+        std::thread::sleep(Duration::from_millis(
+            super::action::RESTART_CENSUS_HOLD_MS,
+        ));
+        self.server
+            .as_mut()
+            .ok_or("missing restart server")?
+            .abort()?;
+        self.server.take();
+        fs::rename(
+            self.output.join("server.log"),
+            self.output.join("server-before-restart.log"),
+        )
+        .map_err(|error| error.to_string())
+    }
+
     fn fault(&mut self, name: &str, begin: bool) -> Result<(), String> {
         let started = collect::unix_ms()?;
         let mut outcomes = Vec::new();
@@ -484,21 +510,7 @@ impl Session<'_> {
                 &mut outcomes,
             ),
             "landing-restart" if self.plan.role == Role::Landing => {
-                if begin {
-                    self.server
-                        .as_mut()
-                        .ok_or("missing restart server")?
-                        .abort()?;
-                    self.server.take();
-                    fs::rename(
-                        self.output.join("server.log"),
-                        self.output.join("server-before-restart.log"),
-                    )
-                    .map_err(|error| error.to_string())?;
-                    Ok(())
-                } else {
-                    self.start_server(true)
-                }
+                self.landing_restart(begin)
             }
             "line-a-partition" | "rtt-50" | "rtt-100" | "rtt-200" | "rtt-100-loss-1" => {
                 self.netem(name, begin, &mut outcomes)
