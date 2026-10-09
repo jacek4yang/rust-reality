@@ -76,6 +76,11 @@ are the commands for running it directly:
 
 ```shell
 cargo test   --manifest-path tools/Cargo.toml --workspace --locked
+
+Qualification `run:` steps use `tools/ci/gha_pipefail_shell.py` (ADR 0044): bash
+`-euo pipefail` with closed FDs and signal forwarding so cancel/timeout cannot
+drown failures in `KeyboardInterrupt` tracebacks. Prove locally with
+`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- gha_shell`.
 cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 ```
 

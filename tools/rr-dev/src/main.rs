@@ -28,6 +28,8 @@ mod deploy;
 mod docs;
 mod doctor;
 mod fuzz;
+#[cfg(test)]
+mod gha_shell;
 mod hash;
 mod perf;
 mod process;

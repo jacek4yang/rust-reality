@@ -39,7 +39,9 @@ jobs:
       CARGO_TERM_COLOR: never
     defaults:
       run:
-        shell: python3 -c "import subprocess,sys; sys.exit(subprocess.call(['bash','--noprofile','--norc','-e','-o','pipefail',sys.argv[1]], close_fds=True))" {0}
+        # Signal-forwarding bash -euo pipefail + close_fds (tools/ci/gha_pipefail_shell.py).
+        # Replacing bare subprocess.call — cancel must not dump KeyboardInterrupt stacks.
+        shell: python3 ${{ github.workspace }}/tools/ci/gha_pipefail_shell.py {0}
     steps:
       - name: Check out the frozen source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0

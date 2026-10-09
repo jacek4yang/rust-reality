@@ -57,6 +57,11 @@ clippy，在 `--all` 中执行完整工具测试。直接运行方式如下：
 
 ```shell
 cargo test   --manifest-path tools/Cargo.toml --workspace --locked
+
+资格门禁的 `run:` 步骤使用 `tools/ci/gha_pipefail_shell.py`（[ADR 0044](../../adr/0044-signal-safe-gha-pipefail-shell.md)）：
+在关闭继承描述符的前提下运行 bash `-euo pipefail`，并转发取消/超时信号，避免
+`KeyboardInterrupt` 堆栈淹没真实失败。本地验证：
+`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- gha_shell`。
 cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
