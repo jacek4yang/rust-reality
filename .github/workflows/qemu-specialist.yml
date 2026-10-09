@@ -2,6 +2,9 @@ name: QEMU specialist qualification
 
 # Independent-kernel/resource-profile qualification runs on a frozen review
 # candidate or an explicit operator dispatch, not every draft edit.
+# Four contract cells run as an Actions matrix (ADR 0042): ordinary hosted
+# runners have one cell's non-overlapping vCPU budget, so same-host parallel
+# would oversubscribe constrained profiles. Merge remains fail-closed.
 on:
   workflow_call:
     inputs:
@@ -59,18 +62,20 @@ jobs:
           path: ${{ runner.temp }}/kvm-capability/
           if-no-files-found: error
           retention-days: 7
-  qemu-preflight:
-    name: Hosted four-cell QEMU campaign
+
+  qemu-prepare:
+    name: Shared QEMU campaign inputs
     needs: kvm-capability
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+    timeout-minutes: 45
     env:
       HEAD_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+      PACKAGE_ARTIFACT: ${{ inputs.package_artifact }}
     steps:
       - name: Check out exact source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
           fetch-depth: 0
       - name: Restore the coordinator's native GNU package receipt
@@ -79,27 +84,149 @@ jobs:
         with:
           name: ${{ inputs.package_artifact }}
           path: ${{ runner.temp }}/shared-gnu-package
-      - name: Prepare official distribution tools and frozen controller
+      - name: Build frozen controller and campaign binaries
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain)"
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client curl ca-certificates
+          sudo apt-get install -y --no-install-recommends curl ca-certificates build-essential perl libtext-template-perl unzip
           rustup toolchain install
           RUST_REALITY_GIT_COMMIT="$HEAD_SHA" cargo build --locked --release --manifest-path tools/Cargo.toml -p rr-dev
-          mkdir -m 700 "$RUNNER_TEMP/rr-cloud-fixture"
-          cd "$RUNNER_TEMP/rr-cloud-fixture"
+          mkdir -p "$RUNNER_TEMP/rr-qemu-prepare/bin" "$RUNNER_TEMP/rr-qemu-prepare/tools/xray" "$RUNNER_TEMP/rr-qemu-prepare/base"
+          cp "$GITHUB_WORKSPACE/tools/target/release/rr-dev" "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev"
+          chmod 0755 "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev"
+          if [[ -n "$PACKAGE_ARTIFACT" ]]; then
+            python3 - <<'PYBIND'
+          import hashlib, json, os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'shared-gnu-package'
+          proof = json.loads((root/'receipt.json').read_text())
+          if (proof['schema'] != 'rr-package-execution/v1'
+              or proof['source_commit'] != os.environ['HEAD_SHA']
+              or proof['tier'] != 'linux-x86_64-generic'
+              or proof['primary_error'] is not None or proof['finalization_errors']
+              or proof['runner'] or proof['host_architecture'] != 'x86_64'
+              or len(proof['commands']) != 7
+              or any(c['exit_code'] != 0 or c['error'] is not None for c in proof['commands'])):
+              raise SystemExit('Native GNU package receipt is not acceptable')
+          binary = root/'rust-reality'
+          expected = proof['binary']
+          if (expected['path'] != 'rust-reality' or binary.is_symlink() or not binary.is_file()
+              or expected['before'] != expected['after']
+              or hashlib.file_digest(binary.open('rb'), 'sha256').hexdigest() != expected['before']):
+              raise SystemExit('GNU package executable identity mismatch')
+          dest = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-qemu-prepare'/'bin'/'rust-reality'
+          shutil.copy2(binary, dest)
+          dest.chmod(0o755)
+          PYBIND
+          else
+            RUST_REALITY_GIT_COMMIT="$HEAD_SHA" cargo build --locked --release
+            cp "$GITHUB_WORKSPACE/target/release/rust-reality" "$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality"
+            chmod 0755 "$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality"
+          fi
+          cd "$RUNNER_TEMP/rr-qemu-prepare/tools"
+          curl --fail --location --retry 3 --max-time 180 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip -o xray.zip
+          echo '1eb9175d0f0a8f8149c9230a7fc5ae66ce332ed20a53155ce61fe62e3f58b7df  xray.zip' | sha256sum --check -
+          unzip -q xray.zip xray LICENSE -d xray
+          chmod +x xray/xray
+          curl --fail --location --retry 3 --max-time 180 https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz -o openssl.tar.gz
+          echo 'deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  openssl.tar.gz' | sha256sum --check -
+          tar -xzf openssl.tar.gz
+          cd openssl-3.5.6
+          ./Configure --prefix="$RUNNER_TEMP/rr-qemu-prepare/tools/openssl" --openssldir="$RUNNER_TEMP/rr-qemu-prepare/tools/openssl/ssl" no-shared no-tests enable-ssl-trace
+          make -j2
+          make install_sw install_ssldirs
+          cd "$RUNNER_TEMP/rr-qemu-prepare/base"
           curl --fail --location --retry 3 --max-time 600 https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img -o base.qcow2
           curl --fail --location --retry 3 --max-time 60 https://cloud-images.ubuntu.com/noble/current/SHA256SUMS -o SHA256SUMS.vendor
           awk '$2 == "*noble-server-cloudimg-amd64.img" || $2 == "noble-server-cloudimg-amd64.img" {print $1 "  base.qcow2"}' SHA256SUMS.vendor > base.sha256
           test "$(wc -l < base.sha256)" = 1
           sha256sum --check base.sha256
-      - name: Provision isolated ephemeral system guests
-        timeout-minutes: 15
+          python3 - <<'PYMETA'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-qemu-prepare'
+          def digest(path):
+              return hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
+          meta = {
+              'schema': 'rr-qemu-prepare/v1',
+              'source_commit': os.environ['HEAD_SHA'],
+              'rr_dev_sha256': digest(root/'bin'/'rr-dev'),
+              'candidate_sha256': digest(root/'bin'/'rust-reality'),
+              'xray_sha256': digest(root/'tools'/'xray'/'xray'),
+              'openssl_sha256': digest(root/'tools'/'openssl'/'bin'/'openssl'),
+              'base_sha256': digest(root/'base'/'base.qcow2'),
+          }
+          (root/'prepare-identity.json').write_text(json.dumps(meta, indent=2) + '\n')
+          print(json.dumps(meta, indent=2))
+          PYMETA
+      - name: Retain shared prepare inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/rr-qemu-prepare/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 9
+
+  qemu-cell:
+    name: QEMU cell ${{ matrix.cell }}
+    needs: [kvm-capability, qemu-prepare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: handoff/ordinary
+            slug: handoff-ordinary
+          - cell: nxr/ordinary
+            slug: nxr-ordinary
+          - cell: handoff/constrained
+            slug: handoff-constrained
+          - cell: nxr/constrained
+            slug: nxr-constrained
+    env:
+      HEAD_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+      MATRIX_CELL: ${{ matrix.cell }}
+      CELL_SLUG: ${{ matrix.slug }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Restore shared prepare inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/rr-qemu-prepare
+      - name: Provision cell fixture and run one contract cell
+        timeout-minutes: 110
         run: |
           set -euo pipefail
-          # Root is confined to this disposable runner and its temporary guests.
-          # No host device permissions or operator SSH settings are changed.
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain)"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils openssh-client curl ca-certificates
+          chmod 0755 "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" "$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality"
+          chmod 0755 "$RUNNER_TEMP/rr-qemu-prepare/tools/xray/xray" "$RUNNER_TEMP/rr-qemu-prepare/tools/openssl/bin/openssl"
+          python3 - <<'PYCHECK'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-qemu-prepare'
+          meta = json.loads((root/'prepare-identity.json').read_text())
+          if meta['source_commit'] != os.environ['HEAD_SHA']:
+              raise SystemExit('prepare identity commit drift')
+          def digest(path):
+              return hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
+          for rel, key in [('bin/rr-dev','rr_dev_sha256'),('bin/rust-reality','candidate_sha256'),('tools/xray/xray','xray_sha256'),('tools/openssl/bin/openssl','openssl_sha256'),('base/base.qcow2','base_sha256')]:
+              if digest(root/rel) != meta[key]:
+                  raise SystemExit('prepare artifact digest mismatch: '+rel)
+          PYCHECK
+          mkdir -m 700 "$RUNNER_TEMP/rr-cloud-fixture"
+          cp "$RUNNER_TEMP/rr-qemu-prepare/base/base.qcow2" "$RUNNER_TEMP/rr-cloud-fixture/base.qcow2"
+          cp "$RUNNER_TEMP/rr-qemu-prepare/base/base.sha256" "$RUNNER_TEMP/rr-cloud-fixture/base.sha256"
+          ( cd "$RUNNER_TEMP/rr-cloud-fixture" && sha256sum --check base.sha256 )
           sudo env FIXTURE="$RUNNER_TEMP/rr-cloud-fixture" python3 - <<'PY'
           import hashlib, json, os, pathlib, subprocess, time
           root = pathlib.Path(os.environ['FIXTURE'])
@@ -181,105 +308,168 @@ jobs:
           (root/'provision-attestation.json').write_text(json.dumps({'source':'https://cloud-images.ubuntu.com/noble/current/','base_sha256':digest(root/'base.qcow2'),'disks':{r:digest(root/r/'disk.qcow2') for r in specs},'ephemeral':True,'operator_credentials_used':False}))
           print('Three isolated guests provisioned and stopped; no qualification claim.')
           PY
-      - name: Exercise maintained ordinary and constrained preflight
-        run: |
-          set -euo pipefail
-          for profile in ordinary constrained; do
-            args=()
-            if test "$profile" = constrained; then args+=(--constrained); fi
-            sudo env XDG_RUNTIME_DIR="$RUNNER_TEMP/rr-cloud-runtime" \
-              "$GITHUB_WORKSPACE/tools/target/release/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-fixture \
-              --fixture "$RUNNER_TEMP/rr-cloud-fixture" \
-              --output "$RUNNER_TEMP/rr-cloud-$profile" "${args[@]}"
-          done
-      - name: Build verified campaign binaries before guest workloads
-        timeout-minutes: 20
-        env:
-          PACKAGE_ARTIFACT: ${{ inputs.package_artifact }}
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
-          test -z "$(git status --porcelain)"
-          if [[ -n "$PACKAGE_ARTIFACT" ]]; then
-            python3 - <<'PYBIND'
-          import hashlib, json, os, pathlib
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'shared-gnu-package'
-          proof = json.loads((root/'receipt.json').read_text())
-          if (proof['schema'] != 'rr-package-execution/v1'
-              or proof['source_commit'] != os.environ['HEAD_SHA']
-              or proof['tier'] != 'linux-x86_64-generic'
-              or proof['primary_error'] is not None or proof['finalization_errors']
-              or proof['runner'] or proof['host_architecture'] != 'x86_64'
-              or len(proof['commands']) != 7
-              or any(c['exit_code'] != 0 or c['error'] is not None for c in proof['commands'])):
-              raise SystemExit('Native GNU package receipt is not acceptable')
-          binary = root/'rust-reality'
-          expected = proof['binary']
-          if (expected['path'] != 'rust-reality' or binary.is_symlink() or not binary.is_file()
-              or expected['before'] != expected['after']
-              or hashlib.file_digest(binary.open('rb'), 'sha256').hexdigest() != expected['before']):
-              raise SystemExit('GNU package executable identity mismatch')
-          binary.chmod(0o755)
-          with open(os.environ['GITHUB_ENV'], 'a') as env:
-              env.write('CANDIDATE_BIN='+str(binary)+'\n')
-          PYBIND
-          else
-            RUST_REALITY_GIT_COMMIT="$HEAD_SHA" cargo build --locked --release
-            echo "CANDIDATE_BIN=$GITHUB_WORKSPACE/target/release/rust-reality" >> "$GITHUB_ENV"
-          fi
-          mkdir -p "$RUNNER_TEMP/rr-cloud-tools/xray"
-          cd "$RUNNER_TEMP/rr-cloud-tools"
-          curl --fail --location --retry 3 --max-time 180 https://github.com/XTLS/Xray-core/releases/download/v26.9.9/Xray-linux-64.zip -o xray.zip
-          echo '1eb9175d0f0a8f8149c9230a7fc5ae66ce332ed20a53155ce61fe62e3f58b7df  xray.zip' | sha256sum --check -
-          unzip -q xray.zip xray LICENSE -d xray
-          chmod +x xray/xray
-          curl --fail --location --retry 3 --max-time 180 https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz -o openssl.tar.gz
-          echo 'deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  openssl.tar.gz' | sha256sum --check -
-          tar -xzf openssl.tar.gz
-          cd openssl-3.5.6
-          ./Configure --prefix="$RUNNER_TEMP/rr-cloud-tools/openssl" --openssldir="$RUNNER_TEMP/rr-cloud-tools/openssl/ssl" no-shared no-tests enable-ssl-trace
-          make -j2
-          make install_sw install_ssldirs
-      - name: Run fixed Handoff and NXR ordinary and constrained cells
-        timeout-minutes: 310
-        run: |
-          set -euo pipefail
+          PROFILE=ordinary
+          case "$MATRIX_CELL" in
+            */constrained) PROFILE=constrained ;;
+          esac
+          PREFLIGHT_ARGS=()
+          if test "$PROFILE" = constrained; then PREFLIGHT_ARGS+=(--constrained); fi
+          sudo env XDG_RUNTIME_DIR="$RUNNER_TEMP/rr-cloud-runtime" \
+            "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-fixture \
+            --fixture "$RUNNER_TEMP/rr-cloud-fixture" \
+            --output "$RUNNER_TEMP/rr-cloud-preflight" "${PREFLIGHT_ARGS[@]}"
           df -h "$RUNNER_TEMP"
           sudo env XDG_RUNTIME_DIR="$RUNNER_TEMP/rr-cloud-runtime" \
             GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" \
-            "$GITHUB_WORKSPACE/tools/target/release/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-run \
-            --fixture "$RUNNER_TEMP/rr-cloud-fixture" --output "$RUNNER_TEMP/rr-cloud-campaign" \
-            --candidate "$CANDIDATE_BIN" \
-            --xray "$RUNNER_TEMP/rr-cloud-tools/xray/xray" \
-            --openssl "$RUNNER_TEMP/rr-cloud-tools/openssl/bin/openssl"
+            "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-run \
+            --fixture "$RUNNER_TEMP/rr-cloud-fixture" --output "$RUNNER_TEMP/rr-cloud-cell" \
+            --candidate "$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality" \
+            --xray "$RUNNER_TEMP/rr-qemu-prepare/tools/xray/xray" \
+            --openssl "$RUNNER_TEMP/rr-qemu-prepare/tools/openssl/bin/openssl" \
+            --cell "$MATRIX_CELL"
+          python3 - <<'PYMARK'
+          import json, os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-cloud-cell'
+          (root/'cell-matrix.json').write_text(json.dumps({
+              'cell': os.environ['MATRIX_CELL'],
+              'slug': os.environ['CELL_SLUG'],
+              'source_commit': os.environ['HEAD_SHA'],
+              'parallelism': 'actions-matrix',
+          }, indent=2) + '\n')
+          staged = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-cell-upload'
+          cell = staged/'cell'
+          if staged.exists():
+              shutil.rmtree(staged)
+          cell.mkdir(parents=True)
+          for item in root.iterdir():
+              target = cell/item.name
+              if item.is_dir():
+                  shutil.copytree(item, target)
+              else:
+                  shutil.copy2(item, target)
+          preflight = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-cloud-preflight'
+          if preflight.is_dir():
+              dest = staged/'preflight'
+              dest.mkdir()
+              for item in preflight.iterdir():
+                  if item.suffix == '.json' or item.name.endswith('-boot-id.txt'):
+                      shutil.copy2(item, dest/item.name)
+          PYMARK
+      - name: Retain one-cell campaign evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-qemu-cell-${{ env.HEAD_SHA }}-${{ env.CELL_SLUG }}
+          path: ${{ runner.temp }}/rr-cell-upload/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9
+      - name: Retain small cell failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hosted-qemu-diagnostics-${{ env.HEAD_SHA }}-${{ env.CELL_SLUG }}
+          path: |
+            ${{ runner.temp }}/rr-cloud-cell/**/*clock-transport*.log
+            ${{ runner.temp }}/rr-cloud-cell/**/*terminal*.json
+            ${{ runner.temp }}/rr-cloud-cell/**/cell-diagnosis.json
+            ${{ runner.temp }}/rr-cloud-cell/cells-summary.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  qemu-aggregate:
+    name: Merge four-cell QEMU evidence
+    needs: qemu-cell
+    if: always() && needs.qemu-cell.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      HEAD_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Restore shared prepare controller
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/rr-qemu-prepare
+      - name: Restore every cell campaign directory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: hosted-qemu-cell-${{ env.HEAD_SHA }}-*
+          path: ${{ runner.temp }}/rr-qemu-cells
+          merge-multiple: false
+      - name: Merge identity-bound cell evidence
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          chmod 0755 "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev"
+          python3 - <<'PY'
+          import os, pathlib, json
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-qemu-cells'
+          expected = {
+              'handoff-ordinary',
+              'nxr-ordinary',
+              'handoff-constrained',
+              'nxr-constrained',
+          }
+          found = {}
+          for evidence in root.rglob('evidence.json'):
+              cell_dir = evidence.parent
+              marker = cell_dir/'cell-matrix.json'
+              if not marker.is_file():
+                  continue
+              meta = json.loads(marker.read_text())
+              slug = meta.get('slug') or meta['cell'].replace('/','-')
+              if slug in found:
+                  raise SystemExit('duplicate cell slug '+slug)
+              found[slug] = cell_dir
+          missing = expected - set(found)
+          if missing:
+              raise SystemExit('missing cell artifacts: '+', '.join(sorted(missing)))
+          args = [str(found[slug]) for slug in sorted(found)]
+          pathlib.Path(os.environ['RUNNER_TEMP'],'merge-args.txt').write_text('\n'.join(args)+'\n')
+          print('merging', len(args), 'cell directories')
+          for arg in args:
+              print(' -', arg)
+          PY
+          mapfile -t CELL_DIRS < "$RUNNER_TEMP/merge-args.txt"
+          MERGE_ARGS=()
+          for dir in "${CELL_DIRS[@]}"; do
+            MERGE_ARGS+=(--cell-dir "$dir")
+          done
+          "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-merge-cells \
+            --output "$RUNNER_TEMP/rr-cloud-campaign" \
+            "${MERGE_ARGS[@]}"
+          # Keep the historical campaign artifact contract for frozen acceptance.
+          cp "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" "$RUNNER_TEMP/rr-cloud-campaign/rr-dev"
+          cp "$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality" "$RUNNER_TEMP/rr-cloud-campaign/rust-reality"
+          cp "$RUNNER_TEMP/rr-qemu-prepare/tools/xray/xray" "$RUNNER_TEMP/rr-cloud-campaign/xray"
+          cp "$RUNNER_TEMP/rr-qemu-prepare/tools/openssl/bin/openssl" "$RUNNER_TEMP/rr-cloud-campaign/openssl"
+          chmod 0755 "$RUNNER_TEMP/rr-cloud-campaign/rr-dev" "$RUNNER_TEMP/rr-cloud-campaign/rust-reality" \
+            "$RUNNER_TEMP/rr-cloud-campaign/xray" "$RUNNER_TEMP/rr-cloud-campaign/openssl"
       - name: Retain campaign evidence without private fixture material
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: hosted-qemu-campaign-${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+          name: hosted-qemu-campaign-${{ env.HEAD_SHA }}
           path: ${{ runner.temp }}/rr-cloud-campaign/
           if-no-files-found: warn
           retention-days: 7
           compression-level: 9
-      - name: Retain small failure diagnostics separately
+      - name: Retain merge diagnosis on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: hosted-qemu-diagnostics-${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+          name: hosted-qemu-diagnostics-${{ env.HEAD_SHA }}
           path: |
-            ${{ runner.temp }}/rr-cloud-campaign/**/*clock-transport*.log
-            ${{ runner.temp }}/rr-cloud-campaign/**/*terminal*.json
-          if-no-files-found: warn
-          retention-days: 7
-      - name: Retain only public preflight receipts
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: hosted-qemu-preflight-${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
-          path: |
-            ${{ runner.temp }}/rr-cloud-ordinary/*.json
-            ${{ runner.temp }}/rr-cloud-ordinary/*-boot-id.txt
-            ${{ runner.temp }}/rr-cloud-constrained/*.json
-            ${{ runner.temp }}/rr-cloud-constrained/*-boot-id.txt
+            ${{ runner.temp }}/rr-cloud-campaign/cells-summary.json
+            ${{ runner.temp }}/rr-cloud-campaign/merge-diagnosis.json
+            ${{ runner.temp }}/rr-cloud-campaign/campaign-terminal.json
+            ${{ runner.temp }}/rr-cloud-campaign/**/cell-diagnosis.json
           if-no-files-found: warn
           retention-days: 7
