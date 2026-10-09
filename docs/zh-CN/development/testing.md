@@ -57,13 +57,13 @@ clippy，在 `--all` 中执行完整工具测试。直接运行方式如下：
 
 ```shell
 cargo test   --manifest-path tools/Cargo.toml --workspace --locked
-
-资格门禁的 `run:` 步骤使用 `tools/ci/gha_pipefail_shell.py`（[ADR 0044](../../adr/0044-signal-safe-gha-pipefail-shell.md)）：
-在关闭继承描述符的前提下运行 bash `-euo pipefail`，并转发取消/超时信号，避免
-`KeyboardInterrupt` 堆栈淹没真实失败。本地验证：
-`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- gha_shell`。
 cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 ```
+
+资格门禁的 `run:` 步骤使用 bash-native Actions shell（[ADR 0044](../../adr/0044-signal-safe-gha-pipefail-shell.md)）：
+`bash --noprofile --norc -e -o pipefail {0}`，避免 Python `KeyboardInterrupt`
+堆栈淹没真实失败。类型化对等命令为 `cargo-dev ci gha-shell`；本地验证：
+`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- ci::`。
 
 工具掌管基准、剖析和互操作验收，因此工具自身未经门禁验证的测量不能作为证据。
 工具工作区曾在生产门禁之外漂移，导致 CLI 驱动、Xray 配置及格式检查失配。

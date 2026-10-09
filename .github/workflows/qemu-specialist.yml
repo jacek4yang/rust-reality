@@ -22,10 +22,9 @@ permissions:
 
 defaults:
   run:
-    # Signal-forwarding bash -euo pipefail + close_fds (tools/ci/gha_pipefail_shell.py).
-    # Relative path: github.* context is illegal in defaults.run.shell (Actions parse).
-    # Replacing bare subprocess.call — cancel must not dump KeyboardInterrupt stacks.
-    shell: python3 tools/ci/gha_pipefail_shell.py {0}
+    # Bash-native Actions shell (ADR 0044): no Python, no KeyboardInterrupt stacks.
+    # Typed local twin: `cargo-dev ci gha-shell`. No github.* context in this field.
+    shell: bash --noprofile --norc -e -o pipefail {0}
 
 concurrency:
   group: qemu-specialist-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
@@ -37,14 +36,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Check out CI shell wrapper
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          ref: ${{ inputs.candidate_sha || github.sha }}
-          sparse-checkout: |
-            tools/ci
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
       - name: Probe actual hosted QEMU acceleration
         run: |
           set -euo pipefail

@@ -76,13 +76,14 @@ are the commands for running it directly:
 
 ```shell
 cargo test   --manifest-path tools/Cargo.toml --workspace --locked
-
-Qualification `run:` steps use `tools/ci/gha_pipefail_shell.py` (ADR 0044): bash
-`-euo pipefail` with closed FDs and signal forwarding so cancel/timeout cannot
-drown failures in `KeyboardInterrupt` tracebacks. Prove locally with
-`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- gha_shell`.
 cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 ```
+
+Qualification `run:` steps use a bash-native Actions shell (ADR 0044):
+`bash --noprofile --norc -e -o pipefail {0}` so cancel/timeout cannot drown
+failures in Python `KeyboardInterrupt` tracebacks. The typed twin is
+`cargo-dev ci gha-shell`; prove locally with
+`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- ci::`.
 
 This coverage is load-bearing rather than tidy. `cargo dev` is the repository's
 benchmark, profiling and interoperability authority, so a measurement the gate

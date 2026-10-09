@@ -403,7 +403,7 @@ pub(super) fn valid_adr_filename(name: &str) -> bool {
 
 /// Host programs that Actions must invoke before `cargo`/`rr-dev` exist on the
 /// runner. Keep this list minimal; prefer `cargo dev` for ordinary tooling.
-const ALLOWED_SCRIPT_PATHS: &[&str] = &["tools/ci/gha_pipefail_shell.py"];
+const ALLOWED_SCRIPT_PATHS: &[&str] = &[];
 
 pub(super) fn is_script_path(path: &str) -> bool {
     Path::new(path)
@@ -530,15 +530,15 @@ mod tests {
     }
 
     #[test]
-    fn allowlisted_gha_pipefail_shell_is_not_an_active_script_violation() {
+    fn python_gha_shell_is_an_active_script_violation() {
         let mut paths = canonical_paths();
         paths.push("tools/ci/gha_pipefail_shell.py");
         let violations = failures(&paths);
         assert!(
             violations
                 .iter()
-                .all(|failure| !failure.contains("tools/ci/gha_pipefail_shell.py")),
-            "{violations:?}"
+                .any(|failure| failure.contains("tools/ci/gha_pipefail_shell.py")),
+            "Python Actions shell must stay forbidden: {violations:?}"
         );
     }
 }
