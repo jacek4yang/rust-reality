@@ -233,13 +233,22 @@ PR 的 `Candidate packages` workflow 检出精确 head，从 `cargo dev release 
 认证事件。其他对端、原因、时间、重复事件、准入限制和配置拒绝仍视为非预期。
 此归类不会改写原始日志或历史判定。
 
-主动重启 LANDING 时，LINE-A 还会在故障边界记录其公网监听端口（夹具端口 9444）上唯一的已建立回环入口连接。
-LANDING 在中止前会短暂固定延迟，以便与 Begin 同调度的 LINE-A 入口普查能先观察到仍存活的入口连接，
-再执行终止；否则同刻杀进程会先拆掉 :9444 而使普查为空。
-只有该精确对端的 Handoff 中继 EPIPE，发生在已验证的终止动作和入口观测之后、
+主动重启 LANDING 时，LINE-A 在其公网监听端口（夹具端口 9444）记录唯一已建立回环入口连接，
+并通过数据面 ACK（`rr-restart-census-ack/v1`，`192.0.2.2:19501`）将该对端发布给 LANDING。
+LANDING 仅在接受恰好一条匹配 ACK 之后才中止。正确性来自握手，而不是挂钟 sleep。
+只有该精确对端的 Handoff 中继 EPIPE，发生在已验证的 ACK 与入口普查之后、
 完整接收前缀所记录的失败时刻加现有时钟保护界限之前，才可归类为一次注入事件。
-缺失或不唯一的连接观测、其他对端、阶段、原因、错误码、重复错误及窗口外错误
+缺失或不唯一的连接观测、缺失/重复/错误 ACK、其他对端、阶段、原因、错误码、重复错误及窗口外错误
 仍会阻止验收。这只为测试夹具增加观测，不修改生产日志或生产行为。
+
+可在数分钟内、无需四单元 QEMU 复现 landing-restart 普查/ACK 契约：
+
+```shell
+cargo dev bench stability-repro --fault landing-restart --output FRESH_DIRECTORY
+```
+
+该命令保留动作回执与 Class A/B/C 的 `diagnosis.json`。合法回执通过；历史空普查与
+ACK 早于普查的形状以 Class B 夹具缺陷 fail-closed。
 
 故障批次在契约规定的边界软停止准入（普通故障为恢复时刻；RTT/丢包为恢复前的
 排空时刻）。到达该边界属于计划内终止，不是传输失败。已提交的尝试及部分结果仍

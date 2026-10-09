@@ -429,6 +429,8 @@ enum BenchCommand {
         #[arg(long)]
         evidence: PathBuf,
     },
+    /// Minutes-scale single-fault stability reproduction (no four-cell QEMU).
+    StabilityRepro(bench::stability::repro::Plan),
     /// List the benchmark suites and the legacy scripts they supersede.
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
@@ -1653,6 +1655,13 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 }
             }
         }
+        BenchCommand::StabilityRepro(plan) => match bench::stability::repro::run(plan) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("bench stability-repro: {error}");
+                ExitCode::FAILURE
+            }
+        },
         BenchCommand::ShapeProxy {
             listen_port,
             upstream_port,

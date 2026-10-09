@@ -314,17 +314,28 @@ logs. Other peers, reasons, timestamps, duplicate events, admission limits and
 configuration rejections remain unexpected. Raw logs and historical verdicts are
 never rewritten by this classification.
 
-For deliberate LANDING restart, LINE-A also records the single established
-loopback ingress connection on its public listener (fixture port 9444) at the
-fault boundary. LANDING delays its abort by a short fixed hold so that co-scheduled
-LINE-A census can observe the live ingress before the kill tears it down. A
-Handoff relay EPIPE can be
-classified as injected only once, for that exact peer, after the verified kill
-and ingress census, and before the intact affected prefix's recorded failure
-plus the existing clock guard. Missing/ambiguous census, a different peer,
-stage, cause or errno, repeated errors, and errors outside that interval remain
-blocking. This adds observation to the test fixture, not a product-log filter
-or a production behavior change.
+For deliberate LANDING restart, LINE-A records the single established loopback
+ingress on its public listener (fixture port 9444) and publishes that peer to
+LANDING over the owned data-plane ACK (`rr-restart-census-ack/v1` on
+`192.0.2.2:19501`). LANDING aborts only after accepting exactly one matching ACK.
+Correctness is the handshake, not a wall-clock hold. A Handoff relay EPIPE can be
+classified as injected only once, for that exact peer, after the verified ACK and
+census, and before the intact affected prefix's recorded failure plus the existing
+clock guard. Missing/ambiguous census, a missing/duplicate/wrong ACK, a different
+peer, stage, cause or errno, repeated errors, and errors outside that interval
+remain blocking. This adds observation to the test fixture, not a product-log
+filter or a production behavior change.
+
+Reproduce the landing-restart census/ACK contract in minutes without four-cell
+QEMU:
+
+```shell
+cargo dev bench stability-repro --fault landing-restart --output FRESH_DIRECTORY
+```
+
+The command retains action receipts and a Class A/B/C `diagnosis.json`. Valid
+receipts pass; historical empty-census and ACK-before-census shapes fail closed
+as Class B harness defects.
 
 Fault batches soft-stop admission at the contracted boundary (restore for
 ordinary faults; restore minus the RTT drain for RTT/loss). Reaching that

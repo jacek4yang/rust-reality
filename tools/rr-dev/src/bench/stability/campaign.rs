@@ -965,26 +965,56 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
         cells: Vec::new(),
     };
     save(&root.join("evidence.json"), &evidence)?;
+    let mut summary = Vec::new();
+    let mut cell_errors = Vec::new();
+    // Cells stay sequential while the fixture HostLock and fixed SSH/SOCKS ports
+    // are process-global. Aggregation still records every attempted cell so a
+    // single INVALID names the failing cell/fault in minutes of triage, not after
+    // discarding siblings. Parallel port pools are tracked in ADR 0041.
     for name in &contract.cells {
         let result = run_cell(plan, root, name, &sources, &evidence.identity, &xray_sha256);
+        let cell_root = root.join(name.replace('/', "-"));
         match result {
-            Ok(cell) => evidence.cells.push(cell),
+            Ok(cell) => {
+                summary.push(json!({"cell":name,"result":"pass","faults":cell.faults.iter().map(|fault|&fault.name).collect::<Vec<_>>()}));
+                evidence.cells.push(cell);
+            }
             Err(error) => {
-                let partial = root.join(name.replace('/', "-")).join("cell.json");
+                let partial = cell_root.join("cell.json");
+                let mut failed_fault = None;
                 if let Ok(bytes) = fs::read(&partial)
-                    && let Ok(cell) = serde_json::from_slice(&bytes)
+                    && let Ok(cell) = serde_json::from_slice::<schema::Cell>(&bytes)
                 {
+                    failed_fault = cell.faults.last().map(|fault| fault.name.clone());
                     evidence.cells.push(cell);
                 }
-                return Err(match save(&root.join("evidence.json"), &evidence) {
-                    Ok(()) => error,
-                    Err(secondary) => {
-                        format!("{error}; evidence finalization also failed: {secondary}")
-                    }
+                let diagnosis = json!({
+                    "cell": name,
+                    "result": "fail-closed",
+                    "last_fault": failed_fault,
+                    "error": error,
+                    "class_hint": if error.contains("restart") || error.contains("census") || error.contains("ACK") || error.contains("ack") {
+                        "B-harness-or-contract"
+                    } else if error.contains("deadline") || error.contains("SSH") || error.contains("QEMU") {
+                        "C-infrastructure-or-evidence"
+                    } else {
+                        "A-or-B-inspect-raw-evidence"
+                    },
                 });
+                let _ = save(&cell_root.join("cell-diagnosis.json"), &diagnosis);
+                summary.push(diagnosis.clone());
+                cell_errors.push(format!("{name}: {error}"));
             }
         }
         save(&root.join("evidence.json"), &evidence)?;
+        let _ = save(&root.join("cells-summary.json"), &summary);
+    }
+    if !cell_errors.is_empty() {
+        let joined = cell_errors.join("; ");
+        return Err(match save(&root.join("evidence.json"), &evidence) {
+            Ok(()) => joined,
+            Err(secondary) => format!("{joined}; evidence finalization also failed: {secondary}"),
+        });
     }
     let report = super::evaluate_path(&root.join("evidence.json"))?;
     save(&root.join("verdict.json"), &report)?;

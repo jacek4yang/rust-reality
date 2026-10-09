@@ -1882,32 +1882,52 @@ fn restart_ingress_censuses_line_a_listener_not_landing_port() {
 }
 
 #[test]
-fn restart_ingress_census_hold_lets_line_a_ss_win_before_landing_abort() {
-    // Begin is co-scheduled: without a LANDING hold, abort (~3ms) finishes before
-    // LINE-A's ss census (~34ms) and empties :9444 (Frozen INVALID 37895293382).
-    // Hold must exceed observed census latency, stay under checkpoint_tolerance_ms.
-    let hold = super::action::RESTART_CENSUS_HOLD_MS;
-    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
-    assert!(hold >= 250, "hold {hold} too short for LINE-A ss census");
-    assert!(hold <= 1000, "hold {hold} longer than needed");
-    assert!(
-        hold < contract.checkpoint_tolerance_ms,
-        "hold {hold} must stay under checkpoint_tolerance_ms {}",
-        contract.checkpoint_tolerance_ms
+fn restart_abort_is_ack_driven_not_sleep_held() {
+    // Correctness is the LINE-A → LANDING census ACK handshake. A wall-clock
+    // hold must not be the acceptance mechanism (owner mandate after 5111bc1).
+    assert!(!schema::CONTRACT.contains("RESTART_CENSUS_HOLD"));
+    assert_eq!(
+        super::action::RESTART_ACK_SEND_ARGV,
+        ["rr-restart-census-ack", "send", "192.0.2.2:19501"]
     );
+    assert_eq!(
+        super::action::RESTART_ACK_RECV_ARGV,
+        ["rr-restart-census-ack", "receive", "0.0.0.0:19501"]
+    );
+    assert_eq!(super::action::RESTART_ACK_MAGIC, "rr-restart-census-ack/v1");
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
-    let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":110,
+    let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":120,
         "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
         "termination_signal":null,"warm_tcp":true,"commands":[{
         "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9444",")"],
-        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"", "stdout":"0 0 127.0.0.1:9444 127.0.0.1:43028\n"}]});
+        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"",
+        "stdout":"0 0 127.0.0.1:9444 127.0.0.1:43028
+"},{
+        "argv":["rr-restart-census-ack","send","192.0.2.2:19501"],
+        "started_unix_ms":110,"completed_unix_ms":118,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:43028
+fixture
+"}]});
     let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
     assert_eq!(
         super::action::restart_ingress(&parse(&value)).unwrap(),
         "127.0.0.1:43028"
+    );
+    let landing = json!({"role":"landing","boot_id":"landing-boot","started_unix_ms":100,"completed_unix_ms":119,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":9,"warm_tcp":null,"commands":[{
+        "argv":["rr-restart-census-ack","receive","0.0.0.0:19501"],
+        "started_unix_ms":101,"completed_unix_ms":117,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:43028
+fixture
+"}]});
+    assert_eq!(
+        super::action::restart_ack(&parse(&landing)).unwrap(),
+        ("127.0.0.1:43028".to_owned(), 117)
     );
     let empty = super::action::restart_ingress(&parse(&{
         let mut changed = value.clone();
@@ -1937,17 +1957,58 @@ fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
         ("/commands/0/stdout", json!("")),
         (
             "/commands/0/stdout",
-            json!("0 0 127.0.0.1:9444 192.0.2.5:43028\n"),
+            json!(
+                "0 0 127.0.0.1:9444 192.0.2.5:43028
+"
+            ),
         ),
         (
             "/commands/0/stdout",
-            json!("0 0 127.0.0.1:9444 127.0.0.1:43028\n0 0 127.0.0.1:9444 127.0.0.1:43029\n"),
+            json!(
+                "0 0 127.0.0.1:9444 127.0.0.1:43028
+0 0 127.0.0.1:9444 127.0.0.1:43029
+"
+            ),
         ),
+        (
+            "/commands/1/stdout",
+            json!(
+                "127.0.0.1:43029
+fixture
+"
+            ),
+        ),
+        (
+            "/commands/1/stdout",
+            json!(
+                "127.0.0.1:43028
+other-boot
+"
+            ),
+        ),
+        ("/commands/1/started_unix_ms", json!(108)),
     ] {
         let mut changed = value.clone();
         *changed.pointer_mut(pointer).unwrap() = new;
         assert!(
             super::action::restart_ingress(&parse(&changed)).is_err(),
+            "{pointer}"
+        );
+    }
+    for (pointer, new) in [
+        ("/commands/0/stdout", json!("192.0.2.5:43028\nfixture\n")),
+        ("/commands/0/stdout", json!("")),
+        ("/commands/0/stdout", json!("127.0.0.1:43028\n")),
+        (
+            "/commands/0/argv",
+            json!(["rr-restart-census-ack", "send", "192.0.2.2:19501"]),
+        ),
+        ("/role", json!("line-a")),
+    ] {
+        let mut changed = landing.clone();
+        *changed.pointer_mut(pointer).unwrap() = new;
+        assert!(
+            super::action::restart_ack(&parse(&changed)).is_err(),
             "{pointer}"
         );
     }

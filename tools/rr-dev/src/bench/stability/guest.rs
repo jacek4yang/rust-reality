@@ -16,7 +16,8 @@ use crate::{
 use clap::{Args, ValueEnum};
 use std::{
     fs,
-    io::Write as _,
+    io::{Read as _, Write as _},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -435,18 +436,21 @@ impl Session<'_> {
         Ok((crate::hash::sha256_hex(&bytes), warm))
     }
 
-    /// Abort LANDING only after LINE-A's co-scheduled ingress census can finish.
+    /// Abort LANDING only after accepting LINE-A's restart census ACK.
     ///
-    /// Begin is co-scheduled across guests. Without
-    /// [`super::action::RESTART_CENSUS_HOLD_MS`], landing kill (~3ms) wins over
-    /// LINE-A's read-only `ss` census on `:9444` (~34ms) and empties the witness
-    /// (Frozen QEMU INVALID on 5e882bb / run 37895293382). Hold stays under
-    /// `checkpoint_tolerance_ms`.
-    fn landing_restart(&mut self, begin: bool) -> Result<(), String> {
+    /// Begin is co-scheduled. Correctness comes from the handshake: LANDING
+    /// listens, LINE-A witnesses `:9444` then publishes the peer, LANDING aborts
+    /// only after that ACK. A missing, duplicate, malformed, or late ACK fails
+    /// closed inside `checkpoint_tolerance_ms` — no race-mitigation sleep.
+    fn landing_restart(
+        &mut self,
+        begin: bool,
+        outcomes: &mut Vec<serde_json::Value>,
+    ) -> Result<(), String> {
         if !begin {
             return self.start_server(true);
         }
-        std::thread::sleep(Duration::from_millis(super::action::RESTART_CENSUS_HOLD_MS));
+        Self::receive_restart_census_ack(&self.plan.boot_id, outcomes)?;
         self.server
             .as_mut()
             .ok_or("missing restart server")?
@@ -457,6 +461,230 @@ impl Session<'_> {
             self.output.join("server-before-restart.log"),
         )
         .map_err(|error| error.to_string())
+    }
+
+    fn restart_ack_deadline() -> Result<u64, String> {
+        let contract: schema::Contract =
+            serde_json::from_str(schema::CONTRACT).expect("compiled contract");
+        collect::unix_ms()?
+            .checked_add(contract.checkpoint_tolerance_ms)
+            .ok_or_else(|| "restart census ACK deadline overflow".to_owned())
+    }
+
+    fn parse_restart_census_ack(
+        buffer: &[u8],
+        landing_boot: &str,
+    ) -> Result<(String, String), String> {
+        let text = std::str::from_utf8(buffer)
+            .map_err(|_| "restart census ACK is not UTF-8".to_owned())?;
+        let mut lines = text.lines();
+        if lines.next() != Some(super::action::RESTART_ACK_MAGIC) {
+            return Err("restart census ACK magic mismatch".to_owned());
+        }
+        let peer = lines
+            .next()
+            .ok_or("restart census ACK missing peer")?
+            .to_owned();
+        let publisher_boot = lines
+            .next()
+            .ok_or("restart census ACK missing publisher boot identity")?
+            .to_owned();
+        if lines.next().is_some() || peer.is_empty() || publisher_boot.is_empty() {
+            return Err("restart census ACK body is malformed".to_owned());
+        }
+        let addr: std::net::SocketAddr = peer
+            .parse()
+            .map_err(|_| "restart census ACK peer is not a socket address")?;
+        if addr.ip() != std::net::IpAddr::from([127, 0, 0, 1]) || addr.port() == 0 {
+            return Err("restart census ACK peer is not the owned loopback client".to_owned());
+        }
+        if publisher_boot == landing_boot {
+            return Err("restart census ACK publisher boot matches LANDING".to_owned());
+        }
+        Ok((peer, publisher_boot))
+    }
+
+    fn receive_restart_census_ack(
+        landing_boot: &str,
+        outcomes: &mut Vec<serde_json::Value>,
+    ) -> Result<String, String> {
+        let started = collect::unix_ms()?;
+        let deadline = Self::restart_ack_deadline()?;
+        let result = (|| {
+            let listener = TcpListener::bind(super::action::RESTART_ACK_BIND)
+                .map_err(|error| format!("restart census ACK listen: {error}"))?;
+            listener
+                .set_nonblocking(true)
+                .map_err(|error| format!("restart census ACK nonblocking: {error}"))?;
+            let (mut stream, peer_addr) = loop {
+                if collect::unix_ms()? > deadline {
+                    return Err("restart census ACK missing before abort deadline".to_owned());
+                }
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => {
+                        return Err(format!("restart census ACK accept: {error}"));
+                    }
+                }
+            };
+            // Reject further publishers: exactly one ACK may authorize abort.
+            drop(listener);
+            let remaining = deadline.saturating_sub(collect::unix_ms()?);
+            stream
+                .set_read_timeout(Some(Duration::from_millis(remaining.max(1))))
+                .map_err(|error| format!("restart census ACK read timeout: {error}"))?;
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 256];
+            loop {
+                if collect::unix_ms()? > deadline {
+                    return Err("restart census ACK body incomplete before deadline".to_owned());
+                }
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        buffer.extend_from_slice(&chunk[..count]);
+                        let complete = std::str::from_utf8(&buffer).is_ok_and(|text| {
+                            let mut lines = text.lines();
+                            lines.next() == Some(super::action::RESTART_ACK_MAGIC)
+                                && lines.next().is_some_and(|peer| !peer.is_empty())
+                                && lines.next().is_some_and(|boot| !boot.is_empty())
+                        });
+                        if complete || buffer.len() > 512 {
+                            break;
+                        }
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            || error.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        return Err("restart census ACK missing before abort deadline".to_owned());
+                    }
+                    Err(error) => return Err(format!("restart census ACK read: {error}")),
+                }
+            }
+            let (peer, publisher_boot) = Self::parse_restart_census_ack(&buffer, landing_boot)?;
+            let reply = format!("{}\n{}\n", super::action::RESTART_ACK_ACCEPTED, peer);
+            stream
+                .write_all(reply.as_bytes())
+                .map_err(|error| format!("restart census ACK accept reply: {error}"))?;
+            let _ = peer_addr;
+            Ok((peer, publisher_boot))
+        })();
+        let completed = collect::unix_ms()?;
+        match result {
+            Ok((peer, boot)) => {
+                outcomes.push(serde_json::json!({
+                    "argv": super::action::RESTART_ACK_RECV_ARGV,
+                    "started_unix_ms": started,
+                    "completed_unix_ms": completed,
+                    "exit_code": 0,
+                    "stdout": format!("{peer}\n{boot}\n"),
+                    "stderr": "",
+                }));
+                Ok(peer)
+            }
+            Err(error) => {
+                outcomes.push(serde_json::json!({
+                    "argv": super::action::RESTART_ACK_RECV_ARGV,
+                    "started_unix_ms": started,
+                    "completed_unix_ms": completed,
+                    "error": error.clone(),
+                }));
+                Err(error)
+            }
+        }
+    }
+
+    fn send_restart_census_ack(
+        &self,
+        peer: &str,
+        outcomes: &mut Vec<serde_json::Value>,
+    ) -> Result<(), String> {
+        let started = collect::unix_ms()?;
+        let deadline = Self::restart_ack_deadline()?;
+        let result = (|| {
+            let payload = format!(
+                "{}\n{}\n{}\n",
+                super::action::RESTART_ACK_MAGIC,
+                peer,
+                self.plan.boot_id
+            );
+            let mut stream = loop {
+                if collect::unix_ms()? > deadline {
+                    return Err(
+                        "restart census ACK publish missed LANDING accept deadline".to_owned()
+                    );
+                }
+                match TcpStream::connect(super::action::RESTART_ACK_ENDPOINT) {
+                    Ok(stream) => break stream,
+                    Err(_) => std::thread::sleep(Duration::from_millis(5)),
+                }
+            };
+            let remaining = deadline.saturating_sub(collect::unix_ms()?);
+            stream
+                .set_read_timeout(Some(Duration::from_millis(remaining.max(1))))
+                .and_then(|()| {
+                    stream.set_write_timeout(Some(Duration::from_millis(remaining.max(1))))
+                })
+                .map_err(|error| format!("restart census ACK timeouts: {error}"))?;
+            stream
+                .write_all(payload.as_bytes())
+                .map_err(|error| format!("restart census ACK publish: {error}"))?;
+            let mut buffer = Vec::new();
+            stream
+                .read_to_end(&mut buffer)
+                .map_err(|error| format!("restart census ACK accept reply: {error}"))?;
+            let text = std::str::from_utf8(&buffer)
+                .map_err(|_| "restart census ACK accept reply is not UTF-8".to_owned())?;
+            let mut lines = text.lines();
+            if lines.next() != Some(super::action::RESTART_ACK_ACCEPTED)
+                || lines.next() != Some(peer)
+                || lines.next().is_some()
+            {
+                return Err("restart census ACK accept reply mismatch".to_owned());
+            }
+            Ok(())
+        })();
+        let completed = collect::unix_ms()?;
+        match result {
+            Ok(()) => {
+                outcomes.push(serde_json::json!({
+                    "argv": super::action::RESTART_ACK_SEND_ARGV,
+                    "started_unix_ms": started,
+                    "completed_unix_ms": completed,
+                    "exit_code": 0,
+                    "stdout": format!("{peer}\n{}\n", self.plan.boot_id),
+                    "stderr": "",
+                }));
+                Ok(())
+            }
+            Err(error) => {
+                outcomes.push(serde_json::json!({
+                    "argv": super::action::RESTART_ACK_SEND_ARGV,
+                    "started_unix_ms": started,
+                    "completed_unix_ms": completed,
+                    "error": error.clone(),
+                }));
+                Err(error)
+            }
+        }
+    }
+
+    fn line_a_restart_census(&self, outcomes: &mut Vec<serde_json::Value>) -> Result<(), String> {
+        Self::command(
+            &super::action::RESTART_INGRESS_COMMAND.map(str::to_owned),
+            outcomes,
+        )?;
+        let stdout = outcomes
+            .last()
+            .and_then(|value| value.get("stdout"))
+            .and_then(|value| value.as_str())
+            .ok_or("missing restart ingress census stdout")?;
+        let peer = super::action::restart_peer_from_census(stdout)?;
+        self.send_restart_census_ack(&peer, outcomes)
     }
 
     fn fault(&mut self, name: &str, begin: bool) -> Result<(), String> {
@@ -503,11 +731,12 @@ impl Session<'_> {
                 .map(str::to_owned),
                 &mut outcomes,
             ),
-            "landing-restart" if begin && self.plan.role == Role::LineA => Self::command(
-                &super::action::RESTART_INGRESS_COMMAND.map(str::to_owned),
-                &mut outcomes,
-            ),
-            "landing-restart" if self.plan.role == Role::Landing => self.landing_restart(begin),
+            "landing-restart" if begin && self.plan.role == Role::LineA => {
+                self.line_a_restart_census(&mut outcomes)
+            }
+            "landing-restart" if self.plan.role == Role::Landing => {
+                self.landing_restart(begin, &mut outcomes)
+            }
             "line-a-partition" | "rtt-50" | "rtt-100" | "rtt-200" | "rtt-100-loss-1" => {
                 self.netem(name, begin, &mut outcomes)
             }

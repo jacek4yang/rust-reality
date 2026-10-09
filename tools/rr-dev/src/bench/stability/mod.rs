@@ -19,6 +19,7 @@ pub mod observation;
 pub mod package;
 pub mod package_bind;
 pub mod qualification;
+pub mod repro;
 pub mod schema;
 pub mod test_receipt;
 pub mod transfer;
@@ -92,7 +93,9 @@ fn product_logs(
                     if killed.is_some() {
                         return Err("repeated landing kill action".to_owned());
                     }
-                    killed = Some(value.started_unix_ms);
+                    // ACK completion is the authorized abort barrier — not action
+                    // start, and not a wall-clock hold before kill.
+                    killed = Some(action::restart_ack(&value)?);
                 }
             }
             let prefix = &fault.affected_prefix;
@@ -114,11 +117,16 @@ fn product_logs(
                 .and_then(|time| time.checked_add(contract.clock_guard_ms()))
                 .ok_or("restart receipt time overflow")?;
             let (peer, census_completed) = ingress.ok_or("missing verified restart ingress")?;
-            let start = killed
-                .ok_or("missing verified landing kill")?
+            let (acked_peer, ack_completed) = killed.ok_or("missing verified landing kill")?;
+            if acked_peer != peer {
+                return Err("restart census ACK peer differs from witnessed ingress".to_owned());
+            }
+            if ack_completed < census_completed {
+                return Err("landing abort ACK predates LINE-A census".to_owned());
+            }
+            let start = ack_completed
                 .checked_add(contract.clock_guard_ms())
-                .ok_or("restart clock guard overflow")?
-                .max(census_completed);
+                .ok_or("restart clock guard overflow")?;
             if end < start {
                 return Err("prefix failure predates landing kill".to_owned());
             }
