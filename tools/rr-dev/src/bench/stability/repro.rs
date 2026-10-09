@@ -28,40 +28,7 @@ pub struct Plan {
     pub output: PathBuf,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum Class {
-    /// Product defect under a coherent contract.
-    A,
-    /// Test harness / contract / evidence defect.
-    B,
-    /// Infrastructure or insufficient evidence.
-    C,
-}
-
-impl Class {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::A => "A-product",
-            Self::B => "B-harness",
-            Self::C => "C-infrastructure-or-evidence",
-        }
-    }
-}
-
-fn classify(message: &str) -> Class {
-    if message.contains("restart requires exactly one witnessed prefix connection")
-        || message.contains("restart census ACK")
-        || message.contains("missing restart")
-        || message.contains("predates")
-        || message.contains("does not match the witnessed ingress")
-    {
-        Class::B
-    } else if message.contains("deadline") || message.contains("timeout") {
-        Class::C
-    } else {
-        Class::A
-    }
-}
+use super::diagnosis::classify;
 
 fn valid_line_a() -> serde_json::Value {
     json!({
@@ -253,6 +220,7 @@ pub fn run(plan: &Plan) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::diagnosis::Class;
     use super::*;
 
     #[test]

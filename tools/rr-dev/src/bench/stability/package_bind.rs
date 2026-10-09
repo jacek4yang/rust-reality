@@ -172,7 +172,11 @@ mod tests {
         assert!(!coordinator.contains("continue-on-error"));
         assert!(!coordinator.contains("contents: write"));
         assert!(!coordinator.contains("cancel-in-progress: true"));
-        assert!(campaign.contains("--candidate \"$CANDIDATE_BIN\""));
+        assert!(campaign.contains("--candidate \"$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality\""));
+        assert!(campaign.contains("bench stability-merge-cells"));
+        assert!(campaign.contains("--cell \"$MATRIX_CELL\""));
+        assert!(campaign.contains("fail-fast: false"));
+        assert!(campaign.contains("hosted-qemu-campaign-${{ env.HEAD_SHA }}"));
         assert!(packages.contains("--receipt-dir"));
         assert!(coordinator.contains(
             "source.name in ['evidence.json','evidence-before.json','evidence-after.json']"

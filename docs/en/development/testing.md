@@ -217,8 +217,15 @@ delay/loss and restoration, an actual stale-socket eviction, the owned SIGKILL
 receipt, stable warm/cold configuration hashes and timely reload publications.
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
---candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` drives
-the four local VM cells. It requires a clean checkout at the candidate's embedded
+--candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY`
+drives the four local VM cells (or a subset with repeatable `--cell NAME`).
+Partial `--cell` runs freeze identity and retain diagnosis but require
+`cargo dev bench stability-merge-cells --output MERGED --cell-dir DIR...`
+before offline Pass evaluation. Hosted qualification runs the four cells as an
+Actions matrix (one cell per runner) and merges with identity binding
+([ADR 0042](../../adr/0042-four-cell-qemu-matrix-parallelism.md); identity `environment.json` binds tool digests only, with per-runner `controller-host.json` beside it); ordinary
+runners keep one cell's vCPU affinity budget under `HostLock` and fixed fixture
+ports. It requires a clean checkout at the candidate's embedded
 commit and preserves source, contract, harness and executable copies. Each stress
 campaign should use the frozen release-built harness:
 `RUST_REALITY_GIT_COMMIT=$(git rev-parse HEAD) cargo build --release --manifest-path tools/Cargo.toml -p rr-dev`,
@@ -335,7 +342,10 @@ cargo dev bench stability-repro --fault landing-restart --output FRESH_DIRECTORY
 
 The command retains action receipts and a Class A/B/C `diagnosis.json`. Valid
 receipts pass; historical empty-census and ACK-before-census shapes fail closed
-as Class B harness defects.
+as Class B harness defects. The same Class labels appear on per-cell
+`cell-diagnosis.json`, `cells-summary.json`, and merge `merge-diagnosis.json`
+so a fail-closed QEMU run names harness vs infrastructure vs product issues in
+minutes rather than as a vague multi-hour INVALID.
 
 Fault batches soft-stop admission at the contracted boundary (restore for
 ordinary faults; restore minus the RTT drain for RTT/loss). Reaching that

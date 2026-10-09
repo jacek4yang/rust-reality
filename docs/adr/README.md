@@ -81,3 +81,4 @@ of the law is what it is.
 | [0039](0039-separate-active-census-from-recovery-ownership.md) | Separate active census from recovery ownership | Accepted |
 | [0040](0040-coherent-rtt-fault-workload.md) | Coherent RTT/loss fault workload | Accepted |
 | [0041](0041-ack-driven-landing-restart-census.md) | ACK-driven LANDING restart census | Accepted |
+| [0042](0042-four-cell-qemu-matrix-parallelism.md) | Four-cell QEMU parallelism via Actions matrix | Accepted |

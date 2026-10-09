@@ -38,6 +38,12 @@ pub struct Plan {
     /// Pinned OpenSSL executable for fresh private fixture certificates.
     #[arg(long)]
     pub openssl: PathBuf,
+    /// Optional contract cell filter (repeatable). Empty runs every cell.
+    ///
+    /// Partial runs freeze identity and retain per-cell diagnosis but skip the
+    /// full offline Pass evaluate — merge cell directories first (ADR 0042).
+    #[arg(long = "cell")]
+    pub cells: Vec<String>,
 }
 
 fn save(path: &Path, value: &impl serde::Serialize) -> Result<(), String> {
@@ -930,9 +936,16 @@ fn freeze(
         &root.join("workload.json"),
         &json!({"contract_sha256":hash::sha256_hex(schema::CONTRACT.as_bytes()),"cycle_first_wave":"4 MiB PUT at 256 KiB/s per transfer","cycle_remaining":"1 MiB GET","fault_count_per_line":100,"rtt_concurrency_per_line":4,"rtt_admission_drain_ms":12000,"rtt_duration_ms":90000,"fault_concurrency_per_line":4,"prefix_target":"LANDING 127.0.0.1:8081 echo","integrity":"1/4 MiB upload/download/concurrent bidirectional"}),
     )?;
+    // Controller host_kernel is observational and runner-local. Matrix cell jobs
+    // (ADR 0042) must share one identity-bound environment digest, so keep only
+    // pinned tool digests here and retain the kernel string beside the freeze.
+    save(
+        &root.join("controller-host.json"),
+        &json!({"host_kernel":Tool::new("uname").arg("-srm").run().map_err(|error| error.to_string())?.stdout}),
+    )?;
     save(
         &root.join("environment.json"),
-        &json!({"host_kernel":Tool::new("uname").arg("-srm").run().map_err(|error| error.to_string())?.stdout,"xray_sha256":xray.sha256,"xray_identity":xray.identity,"openssl_sha256":openssl_sha256}),
+        &json!({"xray_sha256":xray.sha256,"xray_identity":xray.identity,"openssl_sha256":openssl_sha256}),
     )?;
     let art = |name: &str| super::workload::artifact(root, &root.join(name));
     let identity = schema::Identity {
@@ -965,41 +978,44 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
         cells: Vec::new(),
     };
     save(&root.join("evidence.json"), &evidence)?;
+    let selected = selected_cells(plan, &contract)?;
+    let partial = selected.len() != contract.cells.len();
     let mut summary = Vec::new();
     let mut cell_errors = Vec::new();
-    // Cells stay sequential while the fixture HostLock and fixed SSH/SOCKS ports
-    // are process-global. Aggregation still records every attempted cell so a
-    // single INVALID names the failing cell/fault in minutes of triage, not after
-    // discarding siblings. Parallel port pools are tracked in ADR 0041.
-    for name in &contract.cells {
+    // Same-host cells stay sequential: ordinary hosted runners have one cell's
+    // non-overlapping vCPU budget, plus process-global HostLock and fixed fixture
+    // SSH/SOCKS/data ports. Hosted true parallelism is an Actions matrix of
+    // `--cell` jobs merged by `stability-merge-cells` (ADR 0042). Aggregation
+    // still records every attempted cell so INVALID names the failing cell/fault.
+    for name in &selected {
         let result = run_cell(plan, root, name, &sources, &evidence.identity, &xray_sha256);
         let cell_root = root.join(name.replace('/', "-"));
         match result {
             Ok(cell) => {
-                summary.push(json!({"cell":name,"result":"pass","faults":cell.faults.iter().map(|fault|&fault.name).collect::<Vec<_>>()}));
+                summary.push(json!({
+                    "cell": name,
+                    "result": "pass",
+                    "faults": cell.faults.iter().map(|fault| &fault.name).collect::<Vec<_>>(),
+                    "class_hint": null,
+                }));
                 evidence.cells.push(cell);
             }
             Err(error) => {
-                let partial = cell_root.join("cell.json");
+                let partial_cell = cell_root.join("cell.json");
                 let mut failed_fault = None;
-                if let Ok(bytes) = fs::read(&partial)
+                if let Ok(bytes) = fs::read(&partial_cell)
                     && let Ok(cell) = serde_json::from_slice::<schema::Cell>(&bytes)
                 {
                     failed_fault = cell.faults.last().map(|fault| fault.name.clone());
                     evidence.cells.push(cell);
                 }
+                let class = super::diagnosis::classify(&error);
                 let diagnosis = json!({
                     "cell": name,
                     "result": "fail-closed",
                     "last_fault": failed_fault,
                     "error": error,
-                    "class_hint": if error.contains("restart") || error.contains("census") || error.contains("ACK") || error.contains("ack") {
-                        "B-harness-or-contract"
-                    } else if error.contains("deadline") || error.contains("SSH") || error.contains("QEMU") {
-                        "C-infrastructure-or-evidence"
-                    } else {
-                        "A-or-B-inspect-raw-evidence"
-                    },
+                    "class_hint": class.label(),
                 });
                 let _ = save(&cell_root.join("cell-diagnosis.json"), &diagnosis);
                 summary.push(diagnosis.clone());
@@ -1016,6 +1032,23 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
             Err(secondary) => format!("{joined}; evidence finalization also failed: {secondary}"),
         });
     }
+    if partial {
+        save(
+            &root.join("campaign-selection.json"),
+            &json!({
+                "selected": selected,
+                "contract_cells": contract.cells,
+                "partial": true,
+                "merge_required": true,
+                "invocation": "cargo dev bench stability-merge-cells --output MERGED --cell-dir DIR...",
+            }),
+        )?;
+        println!(
+            "Partial VM campaign completed for {}; merge all contract cells before offline Pass evaluate.",
+            selected.join(", ")
+        );
+        return Ok(());
+    }
     let report = super::evaluate_path(&root.join("evidence.json"))?;
     save(&root.join("verdict.json"), &report)?;
     if matches!(
@@ -1031,6 +1064,27 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
         report.verdict
     );
     Ok(())
+}
+
+fn selected_cells(plan: &Plan, contract: &schema::Contract) -> Result<Vec<String>, String> {
+    if plan.cells.is_empty() {
+        return Ok(contract.cells.clone());
+    }
+    let mut selected = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for name in &plan.cells {
+        if !contract.cells.iter().any(|cell| cell == name) {
+            return Err(format!(
+                "unknown stability cell {name}; expected one of {}",
+                contract.cells.join(", ")
+            ));
+        }
+        if !seen.insert(name.clone()) {
+            return Err(format!("duplicate --cell {name}"));
+        }
+        selected.push(name.clone());
+    }
+    Ok(selected)
 }
 
 #[cfg(test)]
@@ -1084,6 +1138,46 @@ mod tests {
     }
 
     #[test]
+    fn cell_filter_rejects_unknown_and_duplicates() {
+        let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+        let plan = Plan {
+            fixture: PathBuf::from("/fixture"),
+            output: PathBuf::from("/out"),
+            candidate: PathBuf::from("/candidate"),
+            xray: PathBuf::from("/xray"),
+            openssl: PathBuf::from("/openssl"),
+            cells: vec!["missing/cell".into()],
+        };
+        assert!(
+            selected_cells(&plan, &contract)
+                .unwrap_err()
+                .contains("unknown")
+        );
+        let plan = Plan {
+            cells: vec!["handoff/ordinary".into(), "handoff/ordinary".into()],
+            ..plan
+        };
+        assert!(
+            selected_cells(&plan, &contract)
+                .unwrap_err()
+                .contains("duplicate")
+        );
+        let plan = Plan {
+            cells: vec!["handoff/ordinary".into()],
+            ..plan
+        };
+        assert_eq!(
+            selected_cells(&plan, &contract).unwrap(),
+            vec!["handoff/ordinary"]
+        );
+        let plan = Plan {
+            cells: vec![],
+            ..plan
+        };
+        assert_eq!(selected_cells(&plan, &contract).unwrap(), contract.cells);
+    }
+
+    #[test]
     fn failed_freeze_retains_primary_and_refuses_to_overwrite_the_attempt() {
         let workspace = Workspace::create("stability-freeze-failure").unwrap();
         let plan = Plan {
@@ -1092,6 +1186,7 @@ mod tests {
             candidate: workspace.join("absent-candidate"),
             xray: workspace.join("absent-xray"),
             openssl: workspace.join("absent-openssl"),
+            cells: Vec::new(),
         };
         let error = run(workspace.path(), &plan).unwrap_err();
         let terminal = plan.output.join("campaign-terminal.json");

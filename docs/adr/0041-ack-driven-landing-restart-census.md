@@ -31,11 +31,12 @@ Replace the hold with an explicit LINE-A → LANDING census ACK handshake:
 the receipt contract and loopback wire handshake in minutes without four-cell
 QEMU, and classifies empty-census / ordering defects as Class B.
 
-Four-cell execution stays sequential under the process-global benchmark
-`HostLock` and fixed fixture SSH/SOCKS ports. Campaign aggregation now retains
-per-cell `cell-diagnosis.json` and `cells-summary.json` so a fail-closed run
-names the failing cell/fault immediately. Parallel port pools remain future
-work and must not weaken identity binding.
+Campaign aggregation retains per-cell `cell-diagnosis.json` and
+`cells-summary.json` so a fail-closed run names the failing cell/fault
+immediately. Same-host four-cell execution remains sequential under
+process-global `HostLock` and fixed fixture ports; hosted true parallelism is
+an Actions matrix of `--cell` jobs merged by `stability-merge-cells`
+([ADR 0042](0042-four-cell-qemu-matrix-parallelism.md)).
 
 ## Consequences and limits
 
