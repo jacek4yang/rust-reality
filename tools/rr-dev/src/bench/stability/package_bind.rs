@@ -176,9 +176,8 @@ mod tests {
         // `workflow` scope publishes the ADR 0042 matrix rewrite.
         assert!(
             campaign.contains("--candidate \"$CANDIDATE_BIN\"")
-                || campaign.contains(
-                    "--candidate \"$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality\""
-                )
+                || campaign
+                    .contains("--candidate \"$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality\"")
         );
         assert!(campaign.contains("bench stability-run"));
         assert!(
