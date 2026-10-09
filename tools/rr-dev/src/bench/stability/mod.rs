@@ -38,6 +38,47 @@ use crate::hash;
 use evaluate::{Report, Verdict};
 use schema::{Artifact, Evidence};
 
+/// Reconstruct log accounting from verified, content-addressed fault evidence.
+fn product_logs(
+    root: &Path,
+    cell: &schema::Cell,
+    role: &schema::Role,
+    contract: &schema::Contract,
+) -> Result<execution::LogCounts, String> {
+    let mut evictions = Vec::new();
+    if role.name == "landing" {
+        for fault in &cell.faults {
+            if fault.name != "stale" {
+                continue;
+            }
+            for reference in &fault.actions {
+                let action = action::parse(&read_artifact(root, reference)?)?;
+                if action.role == role.name && action.begin {
+                    action::verify(&action, role, cell, fault, contract)?;
+                    if !evictions.is_empty() {
+                        return Err("repeated stale eviction action".to_owned());
+                    }
+                    evictions = action::stale_evictions(&action)?;
+                }
+            }
+        }
+    }
+    let mut total = execution::LogCounts::default();
+    let mut hashes = std::collections::BTreeSet::new();
+    for reference in &role.server_logs {
+        if !hashes.insert(&reference.sha256) {
+            return Err("product log reused across process lifetimes".to_owned());
+        }
+        let counts = execution::product_log_with_evictions(
+            &read_artifact(root, reference)?,
+            &mut evictions,
+        )?;
+        total.panics += counts.panics;
+        total.rejections += counts.rejections;
+    }
+    Ok(total)
+}
+
 /// Verify all referenced objects and calculate acceptance without running peers.
 ///
 /// # Errors
@@ -549,15 +590,9 @@ fn verify_cell_execution(
         if role.server_logs.len() != if role.name == "landing" { 2 } else { 1 } {
             return Err("incomplete product process-lifetime logs".to_owned());
         }
-        let mut log_hashes = std::collections::BTreeSet::new();
-        for log in &role.server_logs {
-            if !log_hashes.insert(&log.sha256) {
-                return Err("product log reused across process lifetimes".to_owned());
-            }
-            let counts = execution::product_log(&read_artifact(root, log)?)?;
-            panics += counts.panics;
-            rejections += counts.rejections;
-        }
+        let counts = product_logs(root, cell, role, contract)?;
+        panics += counts.panics;
+        rejections += counts.rejections;
         let baseline = cell
             .cycles
             .first()

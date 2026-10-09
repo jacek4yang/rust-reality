@@ -210,12 +210,22 @@ pub struct LogCounts {
 
 /// Unexpected protocol rejection is never hidden by successful later transfers.
 pub fn product_log(bytes: &[u8]) -> Result<LogCounts, String> {
+    product_log_with_evictions(bytes, &mut Vec::new())
+}
+
+/// Consume each proven injected eviction at most once across all process logs.
+pub(super) fn product_log_with_evictions(
+    bytes: &[u8],
+    evictions: &mut Vec<(String, u64, u64)>,
+) -> Result<LogCounts, String> {
     #[derive(Deserialize)]
     struct Record {
         event: String,
         #[serde(rename = "timestampUnixMs")]
         timestamp_unix_ms: u64,
         level: String,
+        peer: Option<String>,
+        reason: Option<String>,
     }
     let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     if text.is_empty() || !text.ends_with('\n') {
@@ -235,7 +245,21 @@ pub fn product_log(bytes: &[u8]) -> Result<LogCounts, String> {
             event.event.as_str(),
             "connection_rejected" | "configuration_rejected" | "admission_limited"
         ) {
-            counts.rejections += 1;
+            let injected = (event.event == "connection_rejected"
+                && event.reason.as_deref() == Some("authentication"))
+            .then(|| {
+                evictions.iter().position(|(peer, start, end)| {
+                    event.peer.as_ref() == Some(peer)
+                        && event.timestamp_unix_ms >= *start
+                        && event.timestamp_unix_ms <= *end
+                })
+            })
+            .flatten();
+            if let Some(index) = injected {
+                evictions.remove(index);
+            } else {
+                counts.rejections += 1;
+            }
         }
     }
     Ok(counts)

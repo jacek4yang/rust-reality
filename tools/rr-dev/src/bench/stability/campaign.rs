@@ -416,13 +416,9 @@ fn assemble(
             &fs::read(root.join(&role.environment[1].path)).map_err(|error| error.to_string())?,
         )?;
         cell.oom_kills += super::execution::environment_pair(&before, &after, role, cell)?;
-        for log in &role.server_logs {
-            let counts = super::execution::product_log(
-                &fs::read(root.join(&log.path)).map_err(|error| error.to_string())?,
-            )?;
-            cell.panics += counts.panics;
-            cell.unexpected_rejections += counts.rejections;
-        }
+        let counts = super::product_logs(root, cell, role, contract)?;
+        cell.panics += counts.panics;
+        cell.unexpected_rejections += counts.rejections;
     }
     cell.final_processes = checkpoint(root, cell_root, cell, "terminal", 0, true)?
         .samples

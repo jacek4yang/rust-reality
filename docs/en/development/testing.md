@@ -304,3 +304,11 @@ Artifacts are named with the candidate SHA and retained for seven days. The
 package version comes from Cargo metadata; this workflow creates no Git tag and
 has no release publication permission. Passing it establishes package execution,
 not the remaining protocol/resource qualification or authorization to publish.
+
+Injected stale-socket authentication rejections are classified only from verified
+fault-action receipts: exact evicted peer, LANDING boot/role, successful prescribed
+`ss -K` command and its observed start/end interval. Each evicted connection can
+explain at most one matching authentication event across the retained process
+logs. Other peers, reasons, timestamps, duplicate events, admission limits and
+configuration rejections remain unexpected. Raw logs and historical verdicts are
+never rewritten by this classification.

@@ -1728,3 +1728,80 @@ fn active_reload_can_precede_the_next_counter_without_hiding_recovery_retirement
             .is_err()
     );
 }
+
+#[test]
+fn injected_evictions_require_exact_peer_reason_time_and_one_use() {
+    use super::execution::product_log_with_evictions;
+    let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,
+        "peer":"192.0.2.5:43028","reason":"authentication"});
+    let encode = |value: &Value| format!("{value}\n").into_bytes();
+    let proof = || vec![("192.0.2.5:43028".to_owned(), 100, 110)];
+    let mut remaining = proof();
+    assert_eq!(
+        product_log_with_evictions(&encode(&event), &mut remaining)
+            .unwrap()
+            .rejections,
+        0
+    );
+    assert!(remaining.is_empty());
+    assert_eq!(
+        product_log_with_evictions(&encode(&event), &mut remaining)
+            .unwrap()
+            .rejections,
+        1
+    );
+    for (field, value) in [
+        ("peer", json!("192.0.2.5:43029")),
+        ("reason", json!("outbound")),
+        ("event", json!("configuration_rejected")),
+        ("event", json!("admission_limited")),
+        ("timestampUnixMs", json!(99)),
+        ("timestampUnixMs", json!(111)),
+    ] {
+        let mut changed = event.clone();
+        changed[field] = value;
+        assert_eq!(
+            product_log_with_evictions(&encode(&changed), &mut proof())
+                .unwrap()
+                .rejections,
+            1
+        );
+    }
+    let duplicate = format!("{event}\n{event}\n");
+    assert_eq!(
+        product_log_with_evictions(duplicate.as_bytes(), &mut proof())
+            .unwrap()
+            .rejections,
+        1
+    );
+    let duplicate_peer = String::from_utf8(encode(&event))
+        .unwrap()
+        .replace("\"peer\":", "\"peer\":\"192.0.2.5:1\",\"peer\":");
+    assert!(product_log_with_evictions(duplicate_peer.as_bytes(), &mut proof()).is_err());
+}
+
+#[test]
+fn stale_eviction_peers_are_exact_socket_rows_not_substring_matches() {
+    let value = json!({"role":"landing","boot_id":"fixture","started_unix_ms":100,
+        "completed_unix_ms":110,"name":"stale","begin":true,"error":null,
+        "configuration_sha256":"a".repeat(64),"termination_signal":null,"warm_tcp":null,
+        "commands":[{"argv":[],"started_unix_ms":101,"completed_unix_ms":109,
+        "exit_code":0,"stdout":"Netid Recv-Q Send-Q Local Address:Port Peer Address:Port Process\ntcp 0 0 192.0.2.6:9443 192.0.2.5:43028\n","stderr":""}]});
+    let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
+    assert_eq!(
+        super::action::stale_evictions(&parse(&value)).unwrap(),
+        vec![("192.0.2.5:43028".to_owned(), 101, 109)]
+    );
+    for row in [
+        "tcp 0 0 192.0.2.6:9444 192.0.2.5:43028",
+        "tcp 0 0 192.0.2.6:9443 192.0.2.50:43028",
+        "tcp 0 0 192.0.2.6:9443 192.0.2.5:0",
+        "tcp 0 0 192.0.2.6:9443 192.0.2.5:43028 trailing",
+        "tcp 0 0 192.0.2.6:9443 192.0.2.5:43028\ntcp 0 0 192.0.2.6:9443 192.0.2.5:43028",
+        "",
+    ] {
+        let mut changed = value.clone();
+        changed["commands"][0]["stdout"] = json!(format!("header\n{row}\n"));
+        assert!(super::action::stale_evictions(&parse(&changed)).is_err());
+    }
+}

@@ -269,6 +269,37 @@ pub fn verify(
     Ok(())
 }
 
+/// Exact sockets and command interval witnessed by a successful stale eviction.
+/// The caller must verify the action against its cell, role and fixed schedule.
+pub(super) fn stale_evictions(action: &Action) -> Result<Vec<(String, u64, u64)>, String> {
+    if action.name != "stale" || !action.begin || action.role != "landing" {
+        return Ok(Vec::new());
+    }
+    let command = action.commands.first().ok_or("missing eviction command")?;
+    let output = command.stdout.as_deref().ok_or("missing eviction output")?;
+    let mut peers = std::collections::BTreeSet::new();
+    for row in output.lines().skip(1) {
+        let fields: Vec<_> = row.split_whitespace().collect();
+        if fields.len() != 5 || fields[0] != "tcp" || fields[3] != "192.0.2.6:9443" {
+            return Err("unrecognized stale eviction socket row".to_owned());
+        }
+        let peer: std::net::SocketAddr = fields[4].parse().map_err(|_| "invalid eviction peer")?;
+        if peer.ip() != std::net::IpAddr::from([192, 0, 2, 5])
+            || peer.port() == 0
+            || !peers.insert(peer.to_string())
+        {
+            return Err("unexpected or repeated eviction peer".to_owned());
+        }
+    }
+    if peers.is_empty() {
+        return Err("empty stale eviction evidence".to_owned());
+    }
+    Ok(peers
+        .into_iter()
+        .map(|peer| (peer, command.started_unix_ms, command.completed_unix_ms))
+        .collect())
+}
+
 pub fn publication(log: &[u8], action: &Action, tolerance: u64) -> Result<(), String> {
     #[derive(Deserialize)]
     struct Record {
