@@ -122,6 +122,10 @@ mod tests {
                 text.contains("tools/ci/gha_pipefail_shell.py"),
                 "{name} must use the signal-safe shell"
             );
+            assert!(
+                !text.contains("${{ github.workspace }}/tools/ci/gha_pipefail_shell.py"),
+                "{name} must not use github.workspace in defaults.run.shell"
+            );
         }
     }
 }

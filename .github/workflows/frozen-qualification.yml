@@ -40,8 +40,9 @@ jobs:
     defaults:
       run:
         # Signal-forwarding bash -euo pipefail + close_fds (tools/ci/gha_pipefail_shell.py).
+        # Relative path: github.* context is illegal in defaults.run.shell (Actions parse).
         # Replacing bare subprocess.call — cancel must not dump KeyboardInterrupt stacks.
-        shell: python3 ${{ github.workspace }}/tools/ci/gha_pipefail_shell.py {0}
+        shell: python3 tools/ci/gha_pipefail_shell.py {0}
     steps:
       - name: Check out the frozen source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0

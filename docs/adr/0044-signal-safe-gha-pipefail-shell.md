@@ -31,11 +31,14 @@ Replace the bare ``subprocess.call`` one-liner with the checked-in wrapper
    never print a traceback.
 4. Exit with the child status (`128+signal` when killed by signal).
 
-Workflows MUST reference that file via
-`python3 ${{ github.workspace }}/tools/ci/gha_pipefail_shell.py {0}`.
-Jobs that run before a full tree checkout (hosted KVM probe) MUST sparse-check
-out `tools/ci` first. The file is the sole allowlisted active Python path in `cargo dev repo check`
-(`ALLOWED_SCRIPT_PATHS`). Local proof:
+Workflows MUST reference that file via a **relative** path
+`python3 tools/ci/gha_pipefail_shell.py {0}` in `defaults.run.shell`.
+`${{ github.workspace }}` is illegal in that field (Actions rejects the workflow
+with `Unrecognized named-value: 'github'`), and the job cwd is already the
+workspace after checkout. Jobs that run before a full tree checkout (hosted KVM
+probe) MUST sparse-check out `tools/ci` first via a `uses:` checkout step (not a
+`run:` step). The file is the sole allowlisted active Python path in
+`cargo dev repo check` (`ALLOWED_SCRIPT_PATHS`). Local proof:
 `cargo test --manifest-path tools/Cargo.toml -p rr-dev -- gha_shell`.
 
 ## Consequences and limits
