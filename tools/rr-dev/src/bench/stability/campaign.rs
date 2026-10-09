@@ -495,6 +495,7 @@ fn cycles(
                 concurrency: usize::try_from(contract.concurrency[index])
                     .expect("bounded contract"),
                 paced_wave: true,
+                admission_deadline_ms: None,
             })
             .collect();
         let transfers = driver.batch(machines, &batches)?;
@@ -571,6 +572,7 @@ fn faults(
                             concurrency: usize::try_from(contract.fault_concurrency(name))
                                 .expect("bounded contract"),
                             paced_wave: false,
+                            admission_deadline_ms: Some(restored),
                         })
                         .collect();
                     during = driver.batch(machines, &batches)?;
@@ -589,6 +591,7 @@ fn faults(
                         concurrency: usize::try_from(contract.fault_concurrency_per_line)
                             .expect("bounded contract"),
                         paced_wave: false,
+                        admission_deadline_ms: None,
                     })
                     .collect();
                 recovered = driver.batch(machines, &batches)?;

@@ -26,6 +26,8 @@ pub struct Batch<'a> {
     pub count: usize,
     pub concurrency: usize,
     pub paced_wave: bool,
+    /// Absolute campaign-relative restore boundary; never admit after this time.
+    pub admission_deadline_ms: Option<u64>,
 }
 
 /// Shared immutable source files and output owner for host-generated traffic.
@@ -56,6 +58,14 @@ pub fn save(path: &Path, value: &impl serde::Serialize) -> Result<(), String> {
         serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())
+}
+
+fn admission_before(now: u64, deadline: u64) -> Result<(), String> {
+    if now >= deadline {
+        Err("fault workload admission reached the fixed restore boundary".to_owned())
+    } else {
+        Ok(())
+    }
 }
 
 impl Driver<'_> {
@@ -215,6 +225,16 @@ impl Driver<'_> {
                                         let index = next.fetch_add(1, Ordering::Relaxed);
                                         if index >= batch.count {
                                             break;
+                                        }
+                                        if let Some(deadline) = batch.admission_deadline_ms {
+                                            let admitted = self
+                                                .elapsed()
+                                                .and_then(|now| admission_before(now, deadline));
+                                            if let Err(error) = admitted {
+                                                failed.store(true, Ordering::Relaxed);
+                                                results.push(Err(error));
+                                                break;
+                                            }
                                         }
                                         let paced = batch.paced_wave && index < batch.concurrency;
                                         let id = format!("{}-{}-{index:03}", batch.id, batch.line);
@@ -577,6 +597,44 @@ mod tests {
             );
             assert!(workspace.join("prefix-terminal.json").is_file());
         }
+    }
+
+    #[test]
+    fn fault_admission_stops_at_the_boundary_without_relabeling_late_work() {
+        assert!(admission_before(99, 100).is_ok());
+        assert!(admission_before(100, 100).is_err());
+        assert!(admission_before(101, 100).is_err());
+        assert!(admission_before(u64::MAX, u64::MAX).is_err());
+        let workspace = Workspace::create("stability-admission").unwrap();
+        let now = collect::unix_ms().unwrap();
+        let source = Artifact {
+            path: "unused".to_owned(),
+            sha256: "a".repeat(64),
+        };
+        let driver = Driver {
+            root: workspace.path(),
+            output: workspace.path().to_path_buf(),
+            epoch: now - 1,
+            sources: [source.clone(), source],
+            clock: (now, Instant::now()),
+            max_clock_drift_ms: 50,
+        };
+        let results = driver.execute_batch(&[Batch {
+            id: "expired",
+            line: "line-a",
+            socks_port: 1,
+            count: 100,
+            concurrency: 2,
+            paced_wave: false,
+            admission_deadline_ms: Some(0),
+        }]);
+        assert!(!results.is_empty());
+        assert!(
+            results
+                .iter()
+                .all(|result| result.as_ref().unwrap_err().contains("restore boundary"))
+        );
+        assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 0);
     }
 
     #[test]

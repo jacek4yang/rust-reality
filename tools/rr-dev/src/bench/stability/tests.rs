@@ -1731,21 +1731,21 @@ fn active_reload_can_precede_the_next_counter_without_hiding_recovery_retirement
 
 #[test]
 fn injected_evictions_require_exact_peer_reason_time_and_one_use() {
-    use super::execution::product_log_with_evictions;
+    use super::execution::product_log_with_faults;
     let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,
         "peer":"192.0.2.5:43028","reason":"authentication"});
     let encode = |value: &Value| format!("{value}\n").into_bytes();
     let proof = || vec![("192.0.2.5:43028".to_owned(), 100, 110)];
     let mut remaining = proof();
     assert_eq!(
-        product_log_with_evictions(&encode(&event), &mut remaining)
+        product_log_with_faults(&encode(&event), &mut remaining, &mut None)
             .unwrap()
             .rejections,
         0
     );
     assert!(remaining.is_empty());
     assert_eq!(
-        product_log_with_evictions(&encode(&event), &mut remaining)
+        product_log_with_faults(&encode(&event), &mut remaining, &mut None)
             .unwrap()
             .rejections,
         1
@@ -1761,7 +1761,7 @@ fn injected_evictions_require_exact_peer_reason_time_and_one_use() {
         let mut changed = event.clone();
         changed[field] = value;
         assert_eq!(
-            product_log_with_evictions(&encode(&changed), &mut proof())
+            product_log_with_faults(&encode(&changed), &mut proof(), &mut None)
                 .unwrap()
                 .rejections,
             1
@@ -1769,7 +1769,7 @@ fn injected_evictions_require_exact_peer_reason_time_and_one_use() {
     }
     let duplicate = format!("{event}\n{event}\n");
     assert_eq!(
-        product_log_with_evictions(duplicate.as_bytes(), &mut proof())
+        product_log_with_faults(duplicate.as_bytes(), &mut proof(), &mut None)
             .unwrap()
             .rejections,
         1
@@ -1777,7 +1777,7 @@ fn injected_evictions_require_exact_peer_reason_time_and_one_use() {
     let duplicate_peer = String::from_utf8(encode(&event))
         .unwrap()
         .replace("\"peer\":", "\"peer\":\"192.0.2.5:1\",\"peer\":");
-    assert!(product_log_with_evictions(duplicate_peer.as_bytes(), &mut proof()).is_err());
+    assert!(product_log_with_faults(duplicate_peer.as_bytes(), &mut proof(), &mut None).is_err());
 }
 
 #[test]
@@ -1803,5 +1803,94 @@ fn stale_eviction_peers_are_exact_socket_rows_not_substring_matches() {
         let mut changed = value.clone();
         changed["commands"][0]["stdout"] = json!(format!("header\n{row}\n"));
         assert!(super::action::stale_evictions(&parse(&changed)).is_err());
+    }
+}
+
+#[test]
+fn restart_disconnect_matches_only_one_witnessed_handoff_epipe() {
+    use super::execution::product_log_with_faults;
+    let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,
+        "peer":"127.0.0.1:43028","reason":"outbound","failure":{"stage":"handoff_relay","cause":"io","errno":32}});
+    let encode = |v: &Value| format!("{v}\n").into_bytes();
+    let proof = || Some(("127.0.0.1:43028".to_owned(), 100, 110));
+    let mut expected = proof();
+    assert_eq!(
+        product_log_with_faults(&encode(&event), &mut vec![], &mut expected)
+            .unwrap()
+            .rejections,
+        0
+    );
+    assert!(expected.is_none());
+    assert_eq!(
+        product_log_with_faults(&encode(&event), &mut vec![], &mut expected)
+            .unwrap()
+            .rejections,
+        1
+    );
+    for (pointer, value) in [
+        ("/peer", json!("127.0.0.1:43029")),
+        ("/reason", json!("authentication")),
+        ("/failure/stage", json!("connect")),
+        ("/failure/cause", json!("timeout")),
+        ("/failure/errno", json!(104)),
+        ("/timestampUnixMs", json!(99)),
+        ("/timestampUnixMs", json!(111)),
+        ("/event", json!("admission_limited")),
+    ] {
+        let mut changed = event.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        assert_eq!(
+            product_log_with_faults(&encode(&changed), &mut vec![], &mut proof())
+                .unwrap()
+                .rejections,
+            1,
+            "{pointer}"
+        );
+    }
+}
+
+#[test]
+fn duplicate_restart_failure_fields_are_invalid_not_expected() {
+    let bytes = br#"{"event":"connection_rejected","level":"warn","timestampUnixMs":105,"peer":"127.0.0.1:43028","reason":"outbound","failure":{"stage":"handoff_relay","cause":"io","errno":104,"errno":32}}
+"#;
+    let mut proof = Some(("127.0.0.1:43028".to_owned(), 100, 110));
+    assert!(super::execution::product_log_with_faults(bytes, &mut vec![], &mut proof).is_err());
+    assert!(proof.is_some());
+}
+
+#[test]
+fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
+    let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":110,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":null,"warm_tcp":true,"commands":[{
+        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9443",")"],
+        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"", "stdout":"0 0 127.0.0.1:9443 127.0.0.1:43028\n"}]});
+    let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
+    assert_eq!(
+        super::action::restart_ingress(&parse(&value)).unwrap(),
+        "127.0.0.1:43028"
+    );
+    for (pointer, new) in [
+        ("/role", json!("line-b")),
+        ("/begin", json!(false)),
+        ("/commands/0/exit_code", json!(1)),
+        ("/commands/0/stderr", json!("netlink denied")),
+        ("/commands/0/completed_unix_ms", json!(111)),
+        ("/commands/0/stdout", json!("")),
+        (
+            "/commands/0/stdout",
+            json!("0 0 127.0.0.1:9443 192.0.2.5:43028\n"),
+        ),
+        (
+            "/commands/0/stdout",
+            json!("0 0 127.0.0.1:9443 127.0.0.1:43028\n0 0 127.0.0.1:9443 127.0.0.1:43029\n"),
+        ),
+    ] {
+        let mut changed = value.clone();
+        *changed.pointer_mut(pointer).unwrap() = new;
+        assert!(
+            super::action::restart_ingress(&parse(&changed)).is_err(),
+            "{pointer}"
+        );
     }
 }

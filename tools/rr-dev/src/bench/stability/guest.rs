@@ -479,6 +479,10 @@ impl Session<'_> {
                 .map(str::to_owned),
                 &mut outcomes,
             ),
+            "landing-restart" if begin && self.plan.role == Role::LineA => Self::command(
+                &super::action::RESTART_INGRESS_COMMAND.map(str::to_owned),
+                &mut outcomes,
+            ),
             "landing-restart" if self.plan.role == Role::Landing => {
                 if begin {
                     self.server

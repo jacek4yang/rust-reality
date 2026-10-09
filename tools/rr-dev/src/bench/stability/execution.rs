@@ -210,14 +210,22 @@ pub struct LogCounts {
 
 /// Unexpected protocol rejection is never hidden by successful later transfers.
 pub fn product_log(bytes: &[u8]) -> Result<LogCounts, String> {
-    product_log_with_evictions(bytes, &mut Vec::new())
+    product_log_with_faults(bytes, &mut Vec::new(), &mut None)
 }
 
 /// Consume each proven injected eviction at most once across all process logs.
-pub(super) fn product_log_with_evictions(
+pub(super) fn product_log_with_faults(
     bytes: &[u8],
     evictions: &mut Vec<(String, u64, u64)>,
+    restart: &mut Option<(String, u64, u64)>,
 ) -> Result<LogCounts, String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Failure {
+        stage: String,
+        cause: String,
+        errno: Option<i32>,
+    }
     #[derive(Deserialize)]
     struct Record {
         event: String,
@@ -226,6 +234,7 @@ pub(super) fn product_log_with_evictions(
         level: String,
         peer: Option<String>,
         reason: Option<String>,
+        failure: Option<Failure>,
     }
     let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     if text.is_empty() || !text.ends_with('\n') {
@@ -257,6 +266,20 @@ pub(super) fn product_log_with_evictions(
             .flatten();
             if let Some(index) = injected {
                 evictions.remove(index);
+            } else if event.event == "connection_rejected"
+                && event.reason.as_deref() == Some("outbound")
+                && event.failure.as_ref().is_some_and(|failure| {
+                    failure.stage == "handoff_relay"
+                        && failure.cause == "io"
+                        && failure.errno == Some(32)
+                })
+                && restart.as_ref().is_some_and(|(peer, start, end)| {
+                    event.peer.as_ref() == Some(peer)
+                        && event.timestamp_unix_ms >= *start
+                        && event.timestamp_unix_ms <= *end
+                })
+            {
+                restart.take();
             } else {
                 counts.rejections += 1;
             }

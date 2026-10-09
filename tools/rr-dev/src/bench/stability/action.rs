@@ -263,10 +263,61 @@ pub fn verify(
         {
             return Err("stale-pool action evicted no matching sockets".to_owned());
         }
+    } else if action.name == "landing-restart" && action.begin && role.name == "line-a" {
+        restart_ingress(action)?;
     } else if !action.commands.is_empty() {
         return Err("unexpected command outside the prescribed action".to_owned());
     }
     Ok(())
+}
+
+/// Read-only census for the isolated fixture's active ingress prefix flow.
+pub(super) const RESTART_INGRESS_COMMAND: [&str; 11] = [
+    "ss",
+    "-Hnt",
+    "state",
+    "established",
+    "src",
+    "127.0.0.1",
+    "(",
+    "sport",
+    "=",
+    ":9443",
+    ")",
+];
+
+/// Record the single active prefix connection before its injected peer restart.
+pub(super) fn restart_ingress(action: &Action) -> Result<String, String> {
+    if action.name != "landing-restart"
+        || !action.begin
+        || action.role != "line-a"
+        || action.commands.len() != 1
+    {
+        return Err("missing restart ingress census".to_owned());
+    }
+    let output = command(&action.commands[0], &RESTART_INGRESS_COMMAND, action)?;
+    let rows: Vec<_> = output
+        .lines()
+        .filter(|row| !row.trim().is_empty())
+        .collect();
+    if rows.len() != 1 {
+        return Err("restart requires exactly one witnessed prefix connection".to_owned());
+    }
+    let fields: Vec<_> = rows[0].split_whitespace().collect();
+    if fields.len() != 4
+        || fields[2] != "127.0.0.1:9443"
+        || fields[0].parse::<u64>().is_err()
+        || fields[1].parse::<u64>().is_err()
+    {
+        return Err("invalid restart ingress socket row".to_owned());
+    }
+    let peer: std::net::SocketAddr = fields[3]
+        .parse()
+        .map_err(|_| "invalid restart ingress peer")?;
+    if peer.ip() != std::net::IpAddr::from([127, 0, 0, 1]) || peer.port() == 0 {
+        return Err("restart ingress peer is not the owned loopback client".to_owned());
+    }
+    Ok(peer.to_string())
 }
 
 /// Exact sockets and command interval witnessed by a successful stale eviction.

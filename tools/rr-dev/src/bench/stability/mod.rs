@@ -63,15 +63,78 @@ fn product_logs(
             }
         }
     }
+    let mut restart = None;
+    if role.name == "line-a" && cell.name.starts_with("handoff/") {
+        let landing = cell
+            .roles
+            .iter()
+            .find(|role| role.name == "landing")
+            .ok_or("missing landing role")?;
+        for fault in &cell.faults {
+            if fault.name != "landing-restart" {
+                continue;
+            }
+            let mut ingress = None;
+            let mut killed = None;
+            for reference in &fault.actions {
+                let value = action::parse(&read_artifact(root, reference)?)?;
+                if !value.begin {
+                    continue;
+                }
+                if value.role == role.name {
+                    action::verify(&value, role, cell, fault, contract)?;
+                    if ingress.is_some() {
+                        return Err("repeated restart ingress action".to_owned());
+                    }
+                    ingress = Some((action::restart_ingress(&value)?, value.completed_unix_ms));
+                } else if value.role == landing.name {
+                    action::verify(&value, landing, cell, fault, contract)?;
+                    if killed.is_some() {
+                        return Err("repeated landing kill action".to_owned());
+                    }
+                    killed = Some(value.started_unix_ms);
+                }
+            }
+            let prefix = &fault.affected_prefix;
+            if fault.expected_failures.len() != 1
+                || prefix.line != role.name
+                || prefix.started_ms >= fault.started_ms
+                || prefix.completed_ms != fault.expected_failures[0]
+                || prefix.completed_ms < fault.started_ms
+                || prefix.completed_ms > fault.restored_ms
+                || prefix.received_bytes == 0
+                || restart.is_some()
+            {
+                return Err("restart disconnect lacks its bounded intact prefix".to_owned());
+            }
+            verify_transfer_files(root, prefix)?;
+            let end = cell
+                .started_unix_ms
+                .checked_add(prefix.completed_ms)
+                .and_then(|time| time.checked_add(contract.clock_guard_ms()))
+                .ok_or("restart receipt time overflow")?;
+            let (peer, census_completed) = ingress.ok_or("missing verified restart ingress")?;
+            let start = killed
+                .ok_or("missing verified landing kill")?
+                .checked_add(contract.clock_guard_ms())
+                .ok_or("restart clock guard overflow")?
+                .max(census_completed);
+            if end < start {
+                return Err("prefix failure predates landing kill".to_owned());
+            }
+            restart = Some((peer, start, end));
+        }
+    }
     let mut total = execution::LogCounts::default();
     let mut hashes = std::collections::BTreeSet::new();
     for reference in &role.server_logs {
         if !hashes.insert(&reference.sha256) {
             return Err("product log reused across process lifetimes".to_owned());
         }
-        let counts = execution::product_log_with_evictions(
+        let counts = execution::product_log_with_faults(
             &read_artifact(root, reference)?,
             &mut evictions,
+            &mut restart,
         )?;
         total.panics += counts.panics;
         total.rejections += counts.rejections;
