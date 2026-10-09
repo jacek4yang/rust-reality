@@ -331,7 +331,11 @@ fn json_in_to_out(value: crate::perf::json_in::Value) -> Json {
     }
 }
 
-fn git_head_commit(repo: &Path) -> Result<String, String> {
+pub(crate) fn git_head_commit_for_smoke(repo: &Path) -> Result<String, String> {
+    git_head_commit(repo)
+}
+
+pub(crate) fn git_head_commit(repo: &Path) -> Result<String, String> {
     let out = Tool::new("git")
         .args(["-C"])
         .arg(repo.to_string_lossy().into_owned())

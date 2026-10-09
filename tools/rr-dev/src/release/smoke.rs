@@ -28,7 +28,7 @@ use crate::{
 /// a failed binary invocation, or a `doctor` report that does not name exactly
 /// one compatible cover matching the one supplied.
 pub fn smoke(
-    _repo: &Path,
+    repo: &Path,
     tag: &str,
     tier_id: &str,
     asset_dir: &Path,
@@ -41,6 +41,7 @@ pub fn smoke(
     let archive = format!("rust-reality-{tag}-{}.tar.gz", tier.id);
     let runner = std::env::var("RUST_REALITY_SMOKE_RUNNER").unwrap_or_default();
     let runner_parts = runner.split_whitespace().map(str::to_owned).collect();
+    let source_commit = super::package::git_head_commit_for_smoke(repo)?;
     let mut collector = super::smoke_receipt::Collector::new(
         tag,
         tier_id,
@@ -48,10 +49,19 @@ pub fn smoke(
         runner_parts,
         asset_dir,
         receipt_dir,
+        &source_commit,
     )?;
     let work = tempdir("rust-reality-release-smoke");
     let attempted = match &work {
-        Ok(work) => smoke_package(tag, tier, asset_dir, &archive, work.path(), &mut collector),
+        Ok(work) => smoke_package(
+            tag,
+            tier,
+            asset_dir,
+            &archive,
+            work.path(),
+            &source_commit,
+            &mut collector,
+        ),
         Err(error) => Err(error.clone()),
     };
     collector.finish(attempted)
@@ -63,6 +73,7 @@ fn smoke_package(
     asset_dir: &Path,
     archive: &str,
     work: &Path,
+    source_commit: &str,
     collector: &mut super::smoke_receipt::Collector,
 ) -> Result<String, String> {
     let version = tag.trim_start_matches('v');
@@ -112,12 +123,18 @@ fn smoke_package(
     let binary = collector.bind_binary(&binary)?;
     let mut run = |args: &[&str]| collector.run(&binary, args);
 
-    // --version must match exactly.
+    // --version must match exactly, including the embedded candidate commit.
     let version_line = run(&["--version"])?;
     let expected_version = format!("rust-reality {version}");
+    let expected_commit = format!("commit: {source_commit}");
     if !version_line.lines().any(|line| line == expected_version) {
         return Err(format!(
             "version mismatch: expected {expected_version:?}, got {version_line:?}"
+        ));
+    }
+    if !version_line.lines().any(|line| line == expected_commit) {
+        return Err(format!(
+            "packaged binary commit mismatch: expected {expected_commit:?}, got {version_line:?}"
         ));
     }
     run(&["--help"])?;
