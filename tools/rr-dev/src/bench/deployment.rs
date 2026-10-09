@@ -965,6 +965,7 @@ struct RunState<'a> {
     plan: &'a RunPlan,
     rust: Binary,
     xray: Binary,
+    harness_sha256: String,
     run: RunDirectory,
     workspace: Workspace,
     lock: HostLock,
@@ -1095,6 +1096,7 @@ pub(crate) fn run(plan: &RunPlan) -> Result<RunOutcome, String> {
         plan,
         rust,
         xray,
+        harness_sha256: hash::sha256_file(Path::new("/proc/self/exe"))?,
         run,
         workspace,
         lock,
@@ -1106,23 +1108,22 @@ pub(crate) fn run(plan: &RunPlan) -> Result<RunOutcome, String> {
         .run
         .write_new("plan.json", &plan.program.to_json().to_python_json())?;
     write_environment(&state)?;
-    let fixture = prepare_shared_fixture(&mut state)?;
-    if plan.program.sections.contains(&Section::Routing) {
-        run_routing_section(&mut state, &fixture)?;
-    }
-    if plan.program.sections.contains(&Section::Cost) {
-        run_cost_section(&mut state, &fixture)?;
-    }
-    if plan.program.sections.contains(&Section::Nxr) {
-        run_topology_section(&mut state, &fixture)?;
-    }
-    if plan.program.sections.contains(&Section::Rtt) {
-        run_rtt_section(&mut state, &fixture)?;
-    }
-    if plan.program.sections.contains(&Section::Longflow) {
-        run_longflow_section(&mut state, &fixture)?;
-    }
-    let summary = deployment_run_summary(&state)?;
+    let attempted = execute_sections(&mut state).and_then(|()| deployment_run_summary(&state));
+    let checks = [
+        (
+            "file:rust-reality".to_owned(),
+            super::no_ccs::assert_unchanged(&state.rust),
+        ),
+        (
+            "file:xray".to_owned(),
+            super::no_ccs::assert_unchanged(&state.xray),
+        ),
+        (
+            "image:harness".to_owned(),
+            super::slot::verify_running_image(std::process::id(), &state.harness_sha256, "harness"),
+        ),
+    ];
+    let summary = soak::finalize_native_attempt(&state.run, attempted, &checks)?;
     let summary_path = state
         .run
         .write_new("summary.json", &summary.to_python_json())?;
@@ -1137,6 +1138,27 @@ pub(crate) fn run(plan: &RunPlan) -> Result<RunOutcome, String> {
         summary_path,
         marker_path,
     })
+}
+
+fn execute_sections(state: &mut RunState<'_>) -> Result<(), String> {
+    let plan = state.plan;
+    let fixture = prepare_shared_fixture(state)?;
+    if plan.program.sections.contains(&Section::Routing) {
+        run_routing_section(state, &fixture)?;
+    }
+    if plan.program.sections.contains(&Section::Cost) {
+        run_cost_section(state, &fixture)?;
+    }
+    if plan.program.sections.contains(&Section::Nxr) {
+        run_topology_section(state, &fixture)?;
+    }
+    if plan.program.sections.contains(&Section::Rtt) {
+        run_rtt_section(state, &fixture)?;
+    }
+    if plan.program.sections.contains(&Section::Longflow) {
+        run_longflow_section(state, &fixture)?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -2930,6 +2952,7 @@ fn write_environment(state: &RunState<'_>) -> Result<(), String> {
         ("schemaVersion", Json::Int(1)),
         ("runId", Json::string(&state.plan.run_id)),
         ("harnessCommit", Json::string(commit.trimmed_stdout())),
+        ("harnessSha256", Json::string(&state.harness_sha256)),
         (
             "rustRealityBin",
             Json::string(state.rust.path.display().to_string()),

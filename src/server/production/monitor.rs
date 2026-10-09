@@ -1,4 +1,4 @@
-//! The three periodic tasks that keep a running generation honest.
+//! Periodic resource maintenance, adaptation, and network refresh.
 //!
 //! None of them sits in a data path. The resource monitor samples once a
 //! second, the adaptive controller ticks once every five, and the route
@@ -31,21 +31,19 @@ use super::{
 /// can never show up in a profile of the data path.
 const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Samples the bounded memory signal and publishes the combined pressure state.
-///
-/// This is the only place the pressure gauge is written outside tests. It
-/// runs on a fixed interval — never in a read, write or record loop — folds
-/// the descriptor dimension in from the budget's own hysteresis watermarks,
-/// and logs transitions only, so a sustained condition costs two log lines
-/// rather than one per second.
+/// Reclaims expired replay occupancy in every resource mode. When a memory
+/// watch exists, also samples pressure and publishes transitions. Debug ownership
+/// observations share this fixed cadence, outside all data paths.
 pub(super) async fn run_resource_monitor(
     runtime: Arc<RuntimeStore>,
-    watch: MemoryWatch,
+    watch: Option<MemoryWatch>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let mut memory_state = ResourcePressure::Normal;
     let mut last_usage: Option<u64> = None;
-    let mut last_source = watch.sampler.configured_source();
+    let mut last_source = watch
+        .as_ref()
+        .map(|watch| watch.sampler.configured_source());
     loop {
         tokio::select! {
             changed = shutdown.changed() => {
@@ -58,22 +56,36 @@ pub(super) async fn run_resource_monitor(
         if *shutdown.borrow() {
             break;
         }
+        // Logical expiry was already enforced on admission. Reclaim idle
+        // occupancy on the maintenance cadence as well, without shortening any
+        // authentication/replay deadline or rebuilding a cache on reload.
+        runtime.replay.purge_expired();
+        for replay in runtime.listener_replays.handoff.values() {
+            replay.purge_expired();
+        }
+        for replay in runtime.listener_replays.nxr.values() {
+            replay.purge_expired();
+        }
+        emit_ownership(&runtime);
+        let Some(watch) = watch.as_ref() else {
+            continue;
+        };
         let fd_state = ResourcePressure::from(runtime.fd_budget.pressure());
         if let Some(reading) = watch.sampler.sample() {
             // An unreadable sample keeps the previous state: a monitoring gap
             // must never itself raise or clear an alarm. A sampler that falls
             // back to a different source reports the source actually used,
             // so a fallback can never masquerade as the configured source.
-            if reading.source != last_source {
+            if Some(reading.source) != last_source {
                 let snapshot = runtime.load();
                 emit(
                     &snapshot.logger,
                     &LogEvent::MemorySamplerChanged {
-                        from: last_source.as_str(),
+                        from: last_source.unwrap_or(reading.source).as_str(),
                         to: reading.source.as_str(),
                     },
                 );
-                last_source = reading.source;
+                last_source = Some(reading.source);
             }
             last_usage = Some(reading.bytes);
             memory_state = watch.plan.classify(memory_state, reading.bytes);
@@ -93,6 +105,98 @@ pub(super) async fn run_resource_monitor(
             );
         }
     }
+}
+
+// Debug-only observations on the existing maintenance cadence, never on a
+// connection, record, or relay path. No endpoint, credential or packet data.
+fn emit_ownership(runtime: &RuntimeStore) {
+    let snapshot = runtime.load();
+    if !snapshot.logger.debug_enabled() {
+        return;
+    }
+    let (warm_ready, warm_connecting) = runtime.authorities.warm_pools.counts();
+    #[cfg(target_os = "linux")]
+    let pipes = runtime.tcp_relay.pipe_pool_stats();
+    #[cfg(target_os = "linux")]
+    let (retained_pipe_pairs, retained_pipe_bytes, pipe_pair_capacity) =
+        pipes.map_or((Some(0), Some(0), Some(0)), |pipes| {
+            (
+                Some(pipes.retained_pairs),
+                pipes.pending_bytes,
+                Some(pipes.retained_capacity),
+            )
+        });
+    #[cfg(not(target_os = "linux"))]
+    let (retained_pipe_pairs, retained_pipe_bytes, pipe_pair_capacity) = (None, None, None);
+    let governor = &runtime.policy.governor;
+    let admission = &runtime.authorities.governor;
+    let mut replay_capacity = u64::from(governor.max_replay_entries);
+    let mut replay_expiry_ms = governor
+        .replay_retention_ms
+        .max(governor.handshake_timeout_ms);
+    for (capacity, retention) in runtime
+        .listener_replays
+        .handoff
+        .values()
+        .map(|cache| cache.retention_policy())
+        .chain(
+            runtime
+                .listener_replays
+                .nxr
+                .values()
+                .map(|cache| cache.retention_policy()),
+        )
+    {
+        replay_capacity = replay_capacity.saturating_add(capacity as u64);
+        replay_expiry_ms =
+            replay_expiry_ms.max(u64::try_from(retention.as_millis()).unwrap_or(u64::MAX));
+    }
+    emit(
+        &snapshot.logger,
+        &LogEvent::ResourceOwnership {
+            handshakes: admission.in_flight(crate::runtime::AdmissionKind::Handshake),
+            fallbacks: admission.in_flight(crate::runtime::AdmissionKind::Fallback),
+            crypto_operations: admission.in_flight(crate::runtime::AdmissionKind::CryptoOperation),
+            dns_lookups: admission.in_flight(crate::runtime::AdmissionKind::DnsLookup),
+            pre_auth_idle_connections: admission
+                .in_flight(crate::runtime::AdmissionKind::PreAuthIdle),
+            pre_auth_idle_capacity: u64::from(governor.max_pre_auth_idle_connections),
+            fd_capacity: runtime.fd_budget.capacity(),
+            pipe_pair_capacity,
+            warm_socket_capacity: runtime.authorities.warm_pools.capacity(),
+            replay_capacity,
+            replay_expiry_ms,
+            retirement_deadline_ms: governor
+                .fallback_timeout_ms
+                .max(governor.handshake_timeout_ms)
+                .max(governor.connect_timeout_ms)
+                .max(governor.client_hello_timeout_ms)
+                .max(
+                    u64::try_from(crate::io_activity::WRITE_STALL_TIMEOUT.as_millis())
+                        .unwrap_or(u64::MAX),
+                ),
+            generation: snapshot.generation,
+            admitted_connections: admission.in_flight(crate::runtime::AdmissionKind::Connection),
+            replay_entries: admission.in_flight(crate::runtime::AdmissionKind::ReplayEntry)
+                + runtime
+                    .listener_replays
+                    .handoff
+                    .values()
+                    .map(|cache| cache.entry_count() as u64)
+                    .sum::<u64>()
+                + runtime
+                    .listener_replays
+                    .nxr
+                    .values()
+                    .map(|cache| cache.entry_count() as u64)
+                    .sum::<u64>(),
+            fd_units_in_use: runtime.fd_budget.in_use(),
+            retained_pipe_pairs,
+            retained_pipe_bytes,
+            warm_ready,
+            warm_connecting,
+        },
+    );
 }
 
 /// Builds the adaptive soft-ceiling controller when the tuning mode selects one.
@@ -216,6 +320,55 @@ mod tests {
         config::node::fixture,
         server::production::{ProductionServer, fixture::unused_loopback_port},
     };
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn idle_landing_replay_entries_are_reclaimed_without_another_admission() {
+        use crate::{protocol::handoff::HandoffReplayCache, server::nxr::NxrReplayCache};
+        use std::sync::Arc;
+        use tokio::sync::watch;
+        for memory_enabled in [false, true] {
+            let config = crate::server::production::fixture::entry_config(unused_loopback_port());
+            let mut server = ProductionServer::from_config(config).unwrap();
+            let handoff = HandoffReplayCache::new(8, Duration::from_nanos(1)).unwrap();
+            let nxr = NxrReplayCache::new(8, Duration::from_nanos(1)).unwrap();
+            handoff.reserve([1; 16]).unwrap();
+            nxr.reserve([2; 16]).unwrap();
+            assert_eq!(handoff.entry_count(), 1);
+            assert_eq!(nxr.entry_count(), 1);
+            let runtime = Arc::get_mut(&mut server.runtime).unwrap();
+            let address = "127.0.0.1:1".parse().unwrap();
+            runtime
+                .listener_replays
+                .handoff
+                .insert(address, handoff.clone());
+            runtime.listener_replays.nxr.insert(address, nxr.clone());
+            let memory = super::MemoryWatch {
+                sampler: crate::runtime::machine::MachineReport::conservative().memory_sampler(),
+                plan: crate::runtime::machine::MemoryPlan::derive(1_073_741_824).unwrap(),
+            };
+            let (stop, shutdown) = watch::channel(false);
+            let task = tokio::spawn(super::run_resource_monitor(
+                server.runtime.clone(),
+                memory_enabled.then_some(memory),
+                shutdown,
+            ));
+            tokio::task::yield_now().await;
+            time::advance(Duration::from_secs(2)).await;
+            tokio::task::yield_now().await;
+            stop.send(true).unwrap();
+            task.await.unwrap();
+            assert_eq!(
+                handoff.entry_count(),
+                0,
+                "idle Handoff expiry must release occupancy"
+            );
+            assert_eq!(
+                nxr.entry_count(),
+                0,
+                "idle NXR expiry must release occupancy"
+            );
+        }
+    }
 
     #[test]
     fn the_adaptive_controller_is_built_only_in_adaptive_mode() {

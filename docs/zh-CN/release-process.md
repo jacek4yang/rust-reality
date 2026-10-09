@@ -17,18 +17,97 @@ v2 二进制升级期间，生产配置字节、身份、路由、systemd 语义
 | 层级 | 阻塞发布 | 时间预算 | 回答的问题 |
 | --- | --- | --- | --- |
 | A — 聚焦形式门禁 | 是 | 约 10–20 分钟 | 精确生产二进制是否实现目标机制、保持完整性且未回退受保护路径？ |
-| B — 双 VPS 主动 canary | 是 | 约 10 分钟 | 精确候选能否在真实 WAN 部署，承受 churn、reload、LANDING 重启并回收资源？ |
+| B — 压力与隔离多节点资格验证 | 是 | 有界工作量与明确故障用例 | 精确候选在重复负载、reload、分区和重启下是否保持完整性并回收有界资源？QEMU 系统虚拟机可以达标。 |
 | C — 长期 soak | 否 | 数小时或整夜 | 长期运行是否暴露保持性或罕见网络问题？ |
 
-C 层可用于 nightly、发布后监控或泄漏调查，但不再是发布前置条件，也不能阻塞
-下一 worktree。十分钟 canary 只能表述为高密度生命周期证据，不能宣称证明长期
-绝无泄漏。每份证据保留 commit、二进制 SHA-256、ELF Build ID、版本、rustc、
-target、features、主机、内核、负载、原始样本和完整性结果；证据按实际代码依赖
-失效，而不是机械重跑一切。
+B 层可以完全在隔离的 QEMU 系统虚拟机中完成；发布不再要求具备真实双 VPS。
+真实 WAN canary 单独作为部署证据。C 层仍可用于 nightly、发布后监控或针对性调查，
+但发布不要求额外的数小时、整夜或多日 soak。已有必需的原生检查不能因为被称为
+soak 就被跳过或改为可选。
+
+压力压缩的是操作次数，不是时间。提高并发不能证明一个月的 uptime，不能触发
+尚未经过的定时边界，也不能凭空复现真实 WAN。时间相关边界需要确定性测试；
+未覆盖的日历、内核和网络行为必须明确披露。决策依据见
+[ADR 0033](../adr/0033-stress-and-virtual-machines-qualify-releases.md)。
+
+每份证据保留 commit、二进制 SHA-256、ELF Build ID、版本、rustc、target、features、
+主机、内核、负载、原始样本和完整性结果。传输源码变化重跑传输与多节点验证；
+仅文档变化不使不可变传输二进制的证据失效；打包变化重跑包与官方产物 smoke。
+
+### B 层：压力与隔离多节点资格验证
+
+以下是发布验收合约；启动虚拟机或完成一次吞吐测试并不足以达标：
+
+1. **身份与隔离。** 使用不可变发布候选及固定版本的 stock Xray。记录二进制哈希、
+   build identity、fixture/controller/evaluator 源码哈希、命令、guest 镜像、
+   加速模式、内核、不同的 boot ID、CPU/RAM/swap 限额及网络拓扑。使用两个 LINE
+   guest 和一个 LANDING guest，各有独立内核；user-mode QEMU 或同一 guest 内的
+   三个进程不等价。主机端口转发仅绑定 loopback；故障只影响自有 guest 链路，
+   不修改主机或生产网络。
+2. **互操作与资源压力。** 保留现有精确候选原生互操作、机制和描述符压力门禁，
+   合约不变。两条 LINE 都通过 stock Xray 覆盖 Handoff 与 NXR。除常规多 worker
+   场景外，加入 1 vCPU/1 GiB LANDING 的资源与恢复场景。不得出现 OOM、panic、
+   非预期进程退出、认证/协议回退或字节损坏。
+3. **重复有限压力。** 每种拓扑至少完成八个负载／排空／恢复循环，期间不得重启
+   daemon。每轮每条 LINE 至少完成 100 次认证传输，覆盖并发 8 与 32、稳态和
+   burst。记录尝试、成功操作、字节、错误和静默恢复检查点，而不只记录耗时。
+   非故障传输必须全部成功。允许有界容量保持；不接受恢复后仍无法解释的活资源增长。
+4. **生命周期与故障矩阵。** LINE reload 期间保持双向流进展，证明旧 generation
+   退休和新连接准入。覆盖 warm reuse、stale retirement 与 cold fallback。
+   杀死／重启 LANDING；隔离 LINE-A 数据链路 10 秒，同时证明 LINE-B 正常进展；
+   覆盖 50/100/200 ms RTT 及 100 ms/1% 丢包。每次故障恢复后，首次新准入必须在
+   已声明恢复上界内成功，随后连续 100 次新传输成功，且每次均在 deadline 内。
+   杀死进程不要求保住旧 TCP 流，但已接收前缀必须逐字节正确。每次诱发失败必须
+   计数并绑定故障时间窗；不得接受 authentication/protocol rejection，或把重启循环
+   伪装成恢复。
+5. **完整性与资源。** 对 1 MiB 及更大载荷的下载、上传和并发双向传输验证精确
+   字节/SHA-256；上传回执必须是本次唯一路径的新追加记录。每个角色至少保留
+   12 个绑定身份的资源样本，覆盖基线、负载、峰值与恢复；每轮压力恢复都采样，
+   不允许替换 PID。恢复后的 LANDING 描述符和内存生命周期证据采用冻结的
+   [所有权契约](../../benchmarks/contracts/stability.json) 及
+   [ADR 0034](../adr/0034-qualify-resource-ownership-and-lifetime.md)。保留 LINE FD
+   768/2,048、LANDING 峰值 FD 1,024、线程基线 +8/+16、RSS 基线 +32/+96 MiB。
+   记录 PSS、匿名内存与
+   进程启动时间用于归因。RSS 不必逐字节回到起点，不能仅凭驻留量判断泄漏，
+   也不能把短测试外推为一个月的内存预测。
+6. **时间边界。** 保留相关 replay/TTL、generation/credential 退休、共享不活动、
+   write-stall、half-close 与取消合约的确定性测试。在支持处使用显式时间输入
+   或受控测试 runtime 时钟；不得缩短生产 deadline、在产品生命周期内调整时钟，
+   或用更多连接次数替代这些测试。启动前的客体时钟校准用于绑定主机时间表，
+   不得加速任何生产期限。
+7. **可审查判定。** 保留全部用例及失败、原始样本、完整性回执和按上述条件执行的
+   fail-closed 审计。fixture 与 evaluator 源码必须可审查且经过验证；手写 success
+   Boolean 不是证据。缺失用例仍标记未执行。范围使用 `LOCAL_QEMU` 或 `LOCAL_KVM`，
+   不得标为 `dual-vps-active-release-canary`。发布 PR 必须列出精确证据并记录审查者
+   的验收。
+
+仓库拥有的部分使用 `cargo dev perf freeze`、`cargo dev check --all`、
+`cargo dev bench run --suite no-ccs-interop`、带 `--deployment-plan mechanism`
+的 `--suite deployment`，以及 `--suite descriptor-pressure`；传入同一个冻结
+`--rust-bin` 与固定 reference 二进制。VM fixture 补充 guest 隔离与故障／压力用例，
+不能替代这些命令。现有 `cargo dev deploy canary` 评估器仍专属于 WAN；不得伪造
+SSH/防火墙断言，把本地运行包装成 VPS 运行。
+
+
+负载期间分别检查内核资源上限与新鲜所有权计数的容量，不再用较新的描述符快照
+减去周期日志中的旧配额。既有固定恢复检查点仍要求完整对账及短期任务退休。
+恢复证据时间不一致时标记 INVALID，不仅凭时间差判程序故障，也不能当作通过。
+允许有界连接池保持，不改变容量、期限或生产准入规则。参见
+[ADR 0039](../adr/0039-separate-active-census-from-recovery-ownership.md)。
+
+每个受支持层级打包后，运行
+`cargo dev release smoke TAG TIER ASSETS --receipt-dir FRESH_DIRECTORY` 保留绑定
+发布包的执行证明；该目录应放在待汇总的资产目录之外。证据包含归档、实际执行
+的二进制、工具、层级元数据、主机 CPU 观察及严格的 `receipt.json`。命令保留
+进程身份、退出状态和输出哈希；生成的密钥与凭据只用于私有临时配置，不写入回执。
+失败仍保留已有观察及最终归档／二进制／工具身份核验的尝试。稳定性离线校验核对
+全部七个命令、原生主机架构、精确层级元数据及绑定归档中的二进制。GNU 包的
+二进制必须与 VM 测试候选完全相同，其余层级绑定同一来源。仿真 smoke 仅证明
+功能，不能满足原生发布包资格认证。候选包标签不会创建 Git tag 或授权发布。
 
 ## v1.7 执行顺序
 
-1. 只读复核 Git、GitHub PR/check/release、worktree 与两台 SSH 主机。
+1. 只读复核 Git、GitHub PR/check/release 与 worktree；发布本身不需要生产 SSH 连接。
 2. 在聚焦分支完成单元/性质、重放、资源、reload、fuzz、sanitizer、主动探测、
    stock Xray 与打包门禁。
 3. 以生产构建的平衡 ABBA 50/100/200 ms Handoff/NXR/SOCKS5 cold/warm 作为
@@ -41,6 +120,12 @@ target、features、主机、内核、负载、原始样本和完整性结果；
    经 release PR 合并后建立不可变 worktree 和精确候选。
 
 ## 永久 LINE 部署模型
+
+本节和后续双 VPS canary 仅用于独立授权的真实部署；B 层在 QEMU 中达标后，
+它们不再是额外的发布前提。仓库审查／合并、tag／发布和生产主机操作的授权
+彼此独立。部署前才检查两个逻辑 SSH 角色及服务、二进制／配置哈希、监听、
+用户、限额与防火墙；不得公开秘密。未知或异常服务阻止部署，但不阻止独立本地
+验证，也不授权盲目修复。真实 WAN 报告与 gate identity 必须与本地 VM 证据分开。
 
 `rust-reality-vps` 是日常节点。22 是永久 SSH 基础设施，443 是唯一公网代理端口。
 二进制代际位于 `/opt/rust-reality/releases/`，root 管理的兼容配置代际位于
@@ -119,8 +204,9 @@ payload 必须更大。下载、上传和并发双向检查要求内容/SHA-256 
 精确 main 的 A/B 层通过后创建 annotated tag，推送并以 `gh run watch` 监控现有
 全有或全无 workflow。验证 tag commit、完整矩阵、`SHA256SUMS`、
 `release-manifest.json`、generic/musl smoke 与 aarch64 策略。下载校验官方产物，
-以它替换预发布候选，再做一次兼容/完整性 smoke；成功后留在日常节点运行。失败则
-恢复 PREVIOUS 并通过适当 patch release 向前修复。
+在已验证的隔离环境中重复兼容／完整性 smoke。发布本身不要求生产部署。
+对于另行授权的真实 rollout，以官方产物替换候选，重复部署 canary 并保留 PREVIOUS；
+部署失败恢复 PREVIOUS，通过适当 patch release 向前修复。
 
 ## v1.8 到 v2.0
 
@@ -140,3 +226,31 @@ v2.0 必须代表 runtime-independent Session Engine、显式 Runtime Adapter/Tr
 大量 core/alloc 兼容纯逻辑、受支持客户端、经证明才启用的 EarlyPrepare、成熟 fuzz、
 有界资源、stock Xray 互操作，以及逐路径 allocation/copy/syscall/cache/CPU/延迟审计；
 发布次数本身不是 v2.0 的理由。
+
+## 原生产物执行回执
+
+候选包工作流使用 `--receipt-dir` 将各平台 smoke 执行证据保留为独立的
+`package-receipt-SHA-TIER` 工件；失败时也保留可获得的尝试记录。回执目录
+不得混入 `candidate-SHA-*` 可分发产物聚合。仅成功上传安装包不能证明
+执行来源一致，也不等于完整稳定性验收 PASS。GNU 包中的二进制必须与
+VM 验收候选逐字节相同，其他平台必须绑定相同源码。
+
+用 `cargo dev bench stability-bind-package --evidence BUNDLE/evidence.json --receipt-dir RECEIPT`
+导入保留的原生包回执。导入器核对冻结合同、源码、七条原始执行记录、归档内容
+和原生平台后才追加检查；拒绝重复尝试、路径逃逸、符号链接以及不同的 GNU
+候选二进制。失败尝试不替换原聚合文件，导入成功仍须用冻结评估器完成其余
+检查及 VM 场景验收，不能单独作为发布 PASS。
+
+## 单次构建的冻结验收协调
+
+`Frozen candidate qualification` 在显式转为待审或手动调度时运行。先构建
+原生安装包矩阵，再把保留的 GNU 包二进制交给 QEMU。后续原生验收任务
+恢复该场景的精确评估器与候选，采集完整门禁、生命周期、互通、机制、
+压力、资源和 600 秒连接回执，绑定四个平台包与精确提交 CI/Security，
+最后必须由 `stability-evaluate` 返回 PASS。缺失、跳过或失败的组件不能
+形成聚合通过，也不能用重新构建的另一份二进制替换已测试产物。独立
+Native/QEMU 入口仍用于诊断与回归，单独成功不等于协调后的发布验收。
+
+聚合只发布所引用的证据和采集器终结记录，不任意上传整个基准工作目录
+或生成的私钥；各次尝试使用独立工件名。恢复后先核对源码与执行文件
+哈希。此流程不创建 tag、不发布 release、不部署，也不增加仓库写权限。

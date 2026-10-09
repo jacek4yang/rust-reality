@@ -4,8 +4,38 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Speculative warm pools back off after descriptor-pressure shedding, preventing
+  rapid refill/shed loops when their own released permits clear hysteresis.
+  Active sessions and cold-path admission remain unchanged.
+
+- CLI startup preserves intentionally inherited descriptors, including
+  configurations passed through `/proc/self/fd`. Qualification launchers isolate
+  runner descriptors instead of closing application descriptors in production.
+
 ### Changed
 
+- Active stability samples check resource ceilings independently of periodic
+  ownership counters. Fixed recovery checkpoints still require reconciliation;
+  asynchronous evidence is not labeled a product leak. Numeric limits and
+  recovery deadlines are unchanged; production admission is unaffected.
+
+- Stability evidence uses a strict offline ownership contract with distinct
+  PASS, FAIL, NOT_RUN and INVALID verdicts. Historical resource failures retain
+  their original verdicts; replacement qualification requires a frozen candidate.
+  The maintained local VM runner records fixed-cycle transfers, received prefixes,
+  fault actions and guest observations; separate required checks remain mandatory.
+  Required local, CI/security and lifecycle checks retain command execution and
+  final identity receipts through the maintained stability check collector.
+  Release smoke can retain secret-free package execution receipts and bound
+  archives for offline qualification across all supported tiers.
+
+- Release qualification accepts isolated QEMU multi-node stress and fault
+  evidence without mandatory dual-VPS access or an additional long soak.
+  Exact-head quality/security gates, resource bounds, temporal-boundary tests
+  and release-artifact checks remain required; real-WAN rollout validation
+  and production authorization stay separate.
 - Connection-task bookkeeping submits the accepted future directly rather than
   wrapping it in another large async state, reducing task storage without an
   extra allocation, lock, or change to connection limits and cancellation.
@@ -15,6 +45,16 @@ All notable user-facing changes to this project are documented in this file.
 
 ### Fixed
 
+- Idle replay entries release occupancy on the one-second resource maintenance
+  cadence in both resource modes, without changing replay deadlines. Debug logs
+  expose bounded resource ownership and generation retirement for qualification.
+
+- Native soak failures retain collected observations and attempt final identity
+  checks; terminal evidence preserves the original error if finalization fails.
+
+- Established Vision/NXR socket failures (including a broken pipe when LANDING
+  exits) retain typed outbound, timeout, or resource-limit diagnostics instead
+  of being misreported as malformed protocol input.
 - Initial short replies whose available prefix already rules out nested TLS
   (for example `ack` or `pong`) are forwarded without waiting for five bytes or
   origin EOF. Plausible partial TLS headers retain existing classification and

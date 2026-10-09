@@ -1,0 +1,229 @@
+name: Candidate packages
+
+on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact source commit selected by the qualification coordinator
+        required: true
+        type: string
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/candidate-packages.yml'
+      - '.github/workflows/release.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'src/**'
+      - 'crates/**'
+      - 'tools/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+# Qualification artifacts only: no tag, release or repository write permission.
+concurrency:
+  group: candidate-packages-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Derive package version without creating a Git tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --format-version 1 > "$RUNNER_TEMP/metadata.json"
+          python3 - "$RUNNER_TEMP/metadata.json" >> "$GITHUB_OUTPUT" <<'PYVERSION'
+          import json, sys
+          packages = json.load(open(sys.argv[1]))['packages']
+          versions = [p['version'] for p in packages if p['name'] == 'rust-reality']
+          if len(versions) != 1:
+              raise SystemExit('Expected one product package')
+          print('tag=v' + versions[0])
+          PYVERSION
+      - name: Export canonical release tier matrix
+        id: matrix
+        run: cargo dev release matrix --github-matrix >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build, package, and smoke ${{ matrix.tier }}
+    needs: prepare
+    if: github.repository == 'jacek4yang/rust-reality'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out exact candidate source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install musl target and linker
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          command -v musl-gcc
+
+      - name: Verify native build host
+        # GNU and aarch64 tiers use a matching rustc host. The musl tier is
+        # cross-libc but same-ISA: cargo tests and the packaged binary execute
+        # directly on real x86_64 hardware, so measuredNatively remains true.
+        run: |
+          host_target="$(rustc -vV | sed -n 's/^host: //p')"
+          if [[ "${{ matrix.target }}" == x86_64-unknown-linux-musl ]]; then
+            test "$host_target" = x86_64-unknown-linux-gnu
+            test "$(uname -m)" = x86_64
+          else
+            test "$host_target" = "${{ matrix.target }}"
+          fi
+          test "${{ matrix.measured-natively }}" = true
+
+      - name: Build tier release
+        run: cargo dev release build "${{ matrix.tier }}"
+
+      - name: Verify musl binary is fully static
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          binary=target/x86_64-musl/x86_64-unknown-linux-musl/release/rust-reality
+          test -x "$binary"
+          readelf -h "$binary" | grep -F 'Machine:' | grep -F 'X86-64'
+          if readelf -l "$binary" | grep -Eq '(^|[[:space:]])INTERP([[:space:]]|$)'; then
+            printf '%s\n' 'musl release unexpectedly requires a dynamic loader' >&2
+            exit 1
+          fi
+          if readelf -d "$binary" | grep -F '(NEEDED)'; then
+            printf '%s\n' 'musl release unexpectedly requires a shared library' >&2
+            exit 1
+          fi
+          "$binary" --version | grep -Fx "rust-reality ${RELEASE_TAG#v}"
+
+      - name: Package tier asset
+        run: cargo dev release package "$RELEASE_TAG" "${{ matrix.tier }}" dist
+
+      # The runner owns the smoke test's TLS peer rather than the tool starting
+      # one for itself. `cargo dev release smoke` has always honoured these
+      # overrides; using them here keeps the release job's fixtures in the
+      # release job, and it is what let the historical v1.9.0 artifacts be built
+      # from immutable source after its in-tool cover was found to hang. The
+      # in-tool cover stays for local runs and has its own regression tests.
+      - name: Start the TLS 1.3 cover the smoke test probes
+        run: |
+          set -Eeuo pipefail
+          work="$(mktemp -d)"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj /CN=localhost -addext subjectAltName=DNS:localhost \
+            -keyout "$work/cover.key" -out "$work/cover.crt"
+          port=44443
+          openssl s_server -tls1_3 -quiet -accept "$port" \
+            -cert "$work/cover.crt" -key "$work/cover.key" \
+            </dev/null >/dev/null 2>&1 &
+          for _ in $(seq 1 100); do
+            # A completed connect is the whole of the evidence: the cover is
+            # listening. Do not read from it — it says nothing until a TLS
+            # handshake, and waiting for a byte is what hung v1.9.0.
+            if timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+              printf 'cover ready on 127.0.0.1:%s\n' "$port"
+              printf 'RUST_REALITY_SMOKE_COVER_TARGET=127.0.0.1:%s\n' "$port" \
+                  >> "$GITHUB_ENV"
+              printf 'RUST_REALITY_SMOKE_SERVER_NAME=localhost\n' >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 0.1
+          done
+          printf 'the TLS cover did not become ready\n' >&2
+          exit 1
+
+      - name: Smoke-test packaged tier asset
+        run: |
+          cargo dev release smoke "$RELEASE_TAG" "${{ matrix.tier }}" dist \
+            --receipt-dir "$RUNNER_TEMP/package-receipt-${{ matrix.tier }}"
+
+      - name: Preserve native package execution evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-receipt-${{ env.CANDIDATE_SHA }}-${{ matrix.tier }}
+          path: ${{ runner.temp }}/package-receipt-${{ matrix.tier }}/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Preserve verified tier asset
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-${{ env.CANDIDATE_SHA }}-${{ matrix.tier }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: Aggregate full-matrix release assets
+    needs: [prepare, build]
+    if: github.repository == 'jacek4yang/rust-reality'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out exact candidate source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Restore all tier assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: candidate-${{ env.CANDIDATE_SHA }}-*
+          path: dist/
+          merge-multiple: true
+
+      - name: Build combined manifest and checksums
+        # Requires every tier of the release matrix; a failed or missing
+        # required tier fails the release here, so partial publishes are
+        # impossible.
+        run: cargo dev release aggregate "$RELEASE_TAG" dist
+
+      - name: Preserve aggregated release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-packages-${{ env.CANDIDATE_SHA }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+

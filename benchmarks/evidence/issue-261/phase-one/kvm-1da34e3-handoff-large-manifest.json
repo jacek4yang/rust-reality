@@ -1,0 +1,83 @@
+{
+  "scope": "LOCAL_KVM",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "candidateElfSha256": "47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a",
+  "cell": "handoff-large",
+  "claim": "raw evidence; verdict remains in evaluator receipts, never inferred from archive creation",
+  "exclusions": [
+    "secret-bearing configurations",
+    "SSH credentials",
+    "executables",
+    "deterministic payload binaries"
+  ],
+  "members": [
+    {
+      "path": "controller/Cargo.lock",
+      "bytes": 6659,
+      "sha256": "8ce4be86766be170f1fb9fc65a5672958e1d6f02c54a564c069a27ccfb1f232e"
+    },
+    {
+      "path": "controller/Cargo.toml",
+      "bytes": 167,
+      "sha256": "00f69c2b950031c5a530f1f30da589a67ded7153bd66a13eeb15a84bf5d33731"
+    },
+    {
+      "path": "controller/src/main.rs",
+      "bytes": 36083,
+      "sha256": "44ea1822256117264388c74d42b417d4a5950b3c7be1b4185c2ae1c9a0372ee6"
+    },
+    {
+      "path": "evaluators/audit-faults.py",
+      "bytes": 5085,
+      "sha256": "87860e59873585de25a6284dbcf69467138cafb689c6ac310e2708844980af6b"
+    },
+    {
+      "path": "evaluators/audit-lifecycle.py",
+      "bytes": 4926,
+      "sha256": "bf062a605c7cfd46380cec95cc0397cffd3be7cb71518e05928c976d16ee56c3"
+    },
+    {
+      "path": "evaluators/audit-stress.py",
+      "bytes": 5074,
+      "sha256": "1a9da09d015a7382fc37e5004f64f1fabcb56419afd3690cd966e4118279fd10"
+    },
+    {
+      "path": "evaluators/large-integrity.py",
+      "bytes": 2448,
+      "sha256": "580608ab8e1a2cd264c5d10b36773fe8f7cb7e0a5575f8c0ff25186ddfaa0ff4"
+    },
+    {
+      "path": "metadata/handoff-oom-audit.json",
+      "bytes": 17650,
+      "sha256": "73c994c82acca897466ab13150324b26add683cdb9754f3fe4d0388e43355825"
+    },
+    {
+      "path": "metadata/provision-attestation.json",
+      "bytes": 8313,
+      "sha256": "ec5becc24705ee9623a39fd0649c68031f3e6290e4f08fd4fdc8227016fdec71"
+    },
+    {
+      "path": "metadata/scope.json",
+      "bytes": 568,
+      "sha256": "55d9d47695c84b9d056417ecb7107cff178757aed1390261b48b7c068f3121f2"
+    },
+    {
+      "path": "raw/complete.json",
+      "bytes": 1713,
+      "sha256": "0f0104897b57aa3aa36909a3d196bdca874080fcdcfa4270fa67236d5afa2c0d"
+    },
+    {
+      "path": "raw/new-access-rows.jsonl",
+      "bytes": 788,
+      "sha256": "0a10dd541b0dd399218f8580e6be57ece8b8fd63b43679ee4743e1c75ef414d5"
+    }
+  ],
+  "originalArchiveSha256": "c090684c53bb9ad67f2e4ab7e7cabfd0737a045b8c61d05c9520fa58292eb6fb",
+  "archives": [
+    {
+      "path": "kvm-1da34e3-handoff-large.tar.xz",
+      "bytes": 18856,
+      "sha256": "c090684c53bb9ad67f2e4ab7e7cabfd0737a045b8c61d05c9520fa58292eb6fb"
+    }
+  ]
+}

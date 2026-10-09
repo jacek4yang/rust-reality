@@ -180,8 +180,8 @@ reservation owns an RAII permit and rolls back on parse failure, timeout,
 cancellation, duplicate detection, allocation failure, and counter exhaustion.
 
 Robustness is continuously checked by bounded parser fuzz targets, truncation
-and field-mutation equivalence properties, and scheduled ASan/LSan plus TSan
-gates. These tests do not claim mathematical absence of all defects, but they
+and field-mutation equivalence properties, and ASan/LSan checks and ordinary concurrent regression tests
+(see [ADR 0035](../adr/0035-remove-thread-sanitizer-gate.md)). These tests do not claim mathematical absence of all defects, but they
 make unhandled input, resource, arithmetic, and race states explicit release
 criteria.
 

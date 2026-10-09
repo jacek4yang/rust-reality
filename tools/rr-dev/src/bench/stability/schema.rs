@@ -1,0 +1,518 @@
+//! Strict stability evidence vocabulary, shared verbatim with the fuzz target.
+//!
+//! No I/O or verdict calculation lives here. Integer observations reject NaN,
+//! infinity, negative values and overflow at the deserialization boundary.
+#![allow(missing_docs)]
+
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+pub const CONTRACT: &str = include_str!("../../../../../benchmarks/contracts/stability.json");
+pub const MAX_EVIDENCE_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Contract {
+    pub schema: String,
+    pub resource_sampling: String,
+    pub cycles: usize,
+    pub transfers_per_line: u64,
+    pub concurrency: Vec<u64>,
+    pub checkpoint_offsets_ms: Vec<u64>,
+    pub checkpoint_tolerance_ms: u64,
+    pub clock_max_offset_ms: u64,
+    pub clock_max_roundtrip_ms: u64,
+    pub clock_max_drift_ms: u64,
+    pub cycle_interval_ms: u64,
+    pub load_start_ms: u64,
+    pub fault_interval_ms: u64,
+    pub fault_duration_ms: u64,
+    pub rtt_duration_ms: u64,
+    pub rtt_concurrency_per_line: u64,
+    pub fault_concurrency_per_line: u64,
+    pub integrity_duration_ms: u64,
+    pub integrity_recovery_ms: u64,
+    pub fault_checkpoint_offsets_ms: Vec<u64>,
+    pub native_recovery_offsets_ms: Vec<u64>,
+    pub native_recovered_rss_growth_kib: u64,
+    pub native_peak_hwm_growth_kib: u64,
+    pub native_thread_growth: u64,
+    pub native_duration_ms: u64,
+    pub native_minimum_rounds: usize,
+    pub native_roles: Vec<String>,
+    pub recovery_deadline_ms: u64,
+    pub transfer_deadline_ms: u64,
+    pub recovered_rss_growth_kib: u64,
+    pub peak_rss_growth_kib: u64,
+    pub recovered_thread_growth: u64,
+    pub peak_thread_growth: u64,
+    pub recovered_line_fds: u64,
+    pub peak_line_fds: u64,
+    pub peak_landing_fds: u64,
+    pub long_lived_minimum_ms: u64,
+    pub long_lived_test: String,
+    pub cells: Vec<String>,
+    pub roles: Vec<String>,
+    pub faults: Vec<String>,
+    pub payload_bytes: Vec<u64>,
+    pub directions: Vec<String>,
+    pub required_checks: Vec<String>,
+    pub deterministic_tests: BTreeMap<String, Vec<String>>,
+}
+
+impl Contract {
+    pub fn clock_guard_ms(&self) -> u64 {
+        self.clock_max_offset_ms
+            .saturating_add(self.clock_max_drift_ms.saturating_mul(2))
+    }
+    pub fn fault_concurrency(&self, name: &str) -> u64 {
+        if name.starts_with("rtt-") {
+            self.rtt_concurrency_per_line
+        } else {
+            self.fault_concurrency_per_line
+        }
+    }
+
+    pub fn fault_duration(&self, name: &str) -> u64 {
+        if name.starts_with("rtt-") {
+            self.rtt_duration_ms
+        } else {
+            self.fault_duration_ms
+        }
+    }
+
+    pub fn integrity_start(&self) -> u64 {
+        (self.cycles as u64) * self.cycle_interval_ms
+            + (self.faults.len() as u64) * self.fault_interval_ms
+    }
+
+    pub fn integrity_offsets(&self) -> [u64; 4] {
+        [
+            0,
+            10_000,
+            self.integrity_duration_ms,
+            self.integrity_duration_ms + self.integrity_recovery_ms,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Artifact {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Identity {
+    pub source_commit: String,
+    pub source_archive: Artifact,
+    pub candidate: Artifact,
+    pub evaluator: Artifact,
+    pub contract: Artifact,
+    pub environment: Artifact,
+    pub workload: Artifact,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Evidence {
+    pub schema: String,
+    pub identity: Identity,
+    pub checks: Vec<Check>,
+    pub cells: Vec<Cell>,
+}
+
+/// A tool-owned command receipt, with raw output and exact candidate binding.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Check {
+    pub name: String,
+    pub source_commit: String,
+    pub candidate_sha256: String,
+    pub argv: Vec<String>,
+    pub exit_code: Option<i32>,
+    pub completed: bool,
+    pub executed_cases: u64,
+    pub failed_cases: u64,
+    /// Collector terminal receipt, or the native package smoke receipt itself.
+    pub execution: Artifact,
+    pub output: Artifact,
+    pub observations: Vec<Artifact>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cell {
+    pub name: String,
+    pub started_unix_ms: u64,
+    pub started: bool,
+    pub completed: bool,
+    pub roles: Vec<Role>,
+    pub final_processes: Vec<ProcessBinding>,
+    pub cycles: Vec<Cycle>,
+    pub faults: Vec<Fault>,
+    pub integrity: Vec<Transfer>,
+    pub integrity_checkpoints: Vec<Checkpoint>,
+    pub unexpected_exits: u64,
+    pub panics: u64,
+    pub oom_kills: u64,
+    pub unexpected_rejections: u64,
+    pub terminal: Artifact,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub start_ticks: u64,
+    pub boot_id: String,
+    pub executable_sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessBinding {
+    pub role: String,
+    pub identity: ProcessIdentity,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Role {
+    pub name: String,
+    pub process: ProcessIdentity,
+    pub vcpus: u64,
+    pub memory_limit_bytes: u64,
+    pub swap_limit_bytes: u64,
+    pub policy: Policy,
+    pub startup: Artifact,
+    pub environment: [Artifact; 2],
+    pub clocks: [Artifact; 2],
+    pub terminal_status: Artifact,
+    pub server_logs: Vec<Artifact>,
+}
+
+/// Capacities derived from actual startup policy, never fitted to observations.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Policy {
+    pub runtime_unix_sockets: u64,
+    pub fixed_fds: u64,
+    pub fixed_descriptor_targets: Vec<String>,
+    pub listener_sockets: u64,
+    pub idle_inbound_capacity: u64,
+    pub dynamic_fd_budget: u64,
+    pub pipe_pair_capacity: u64,
+    pub warm_socket_capacity: u64,
+    pub active_socket_capacity: u64,
+    pub relay_fd_capacity: u64,
+    pub soft_fd_limit: u64,
+    pub replay_capacity: u64,
+    pub replay_expiry_ms: u64,
+    pub retirement_deadline_ms: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cycle {
+    pub index: usize,
+    pub started_ms: u64,
+    pub concurrency: u64,
+    pub transfers: Vec<Transfer>,
+    pub checkpoints: Vec<Checkpoint>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Checkpoint {
+    pub offset_ms: u64,
+    pub observed_ms: u64,
+    pub samples: Vec<Sample>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sample {
+    pub observation: Artifact,
+    pub role: String,
+    pub process: ProcessIdentity,
+    pub rss_kib: u64,
+    pub hwm_kib: u64,
+    pub pss_kib: u64,
+    pub anonymous_kib: u64,
+    pub threads: u64,
+    pub descriptors: Descriptors,
+    pub owners: Owners,
+}
+
+/// Raw census and separately timestamped owner counters. Reconciliation is
+/// present only at checkpoints that require post-load ownership accounting.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Descriptors {
+    pub runtime_unix_sockets: u64,
+    pub idle_inbound_sockets: u64,
+    pub total: u64,
+    pub fixed: u64,
+    pub listener_sockets: u64,
+    pub warm_sockets: u64,
+    pub observed_tcp_sockets: u64,
+    pub observed_pipe_fds: u64,
+    pub reconciliation: Option<DescriptorReconciliation>,
+    pub retained_pipe_pairs: u64,
+    pub dirty_retained_pipe_bytes: u64,
+    pub held_dynamic_permits: u64,
+    pub unexplained: u64,
+}
+
+/// Derived only when a quiet checkpoint can reconcile the separate records.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptorReconciliation {
+    pub active_sockets: u64,
+    pub active_relay_fds: u64,
+    pub reserved_dynamic_permits: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Owners {
+    pub handshakes: u64,
+    pub fallbacks: u64,
+    pub crypto_operations: u64,
+    pub dns_lookups: u64,
+    pub pre_auth_idle_connections: u64,
+    pub admitted_connections: u64,
+    pub tracked_connection_tasks: u64,
+    pub retired_generations: u64,
+    pub replay_entries: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Transfer {
+    pub id: String,
+    pub line: String,
+    pub direction: String,
+    pub started_ms: u64,
+    pub completed_ms: u64,
+    pub expected_bytes: u64,
+    pub received_bytes: u64,
+    pub expected_sha256: String,
+    pub received_sha256: String,
+    pub source: Artifact,
+    pub download: Option<Artifact>,
+    pub upload: Option<UploadReceipt>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UploadReceipt {
+    pub access_log_before: Artifact,
+    pub access_log_after: Artifact,
+    pub path: String,
+    pub log_boundary: u64,
+    pub receipt_offset: u64,
+    pub appended_matches: u64,
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fault {
+    pub name: String,
+    pub actions: Vec<Artifact>,
+    pub started_ms: u64,
+    pub restored_ms: u64,
+    pub first_admission_ms: u64,
+    pub before_processes: Vec<ProcessBinding>,
+    pub after_processes: Vec<ProcessBinding>,
+    pub checkpoints: Vec<Checkpoint>,
+    pub during_transfers: Vec<Transfer>,
+    pub recovery_transfers: Vec<Transfer>,
+    pub affected_prefix: Transfer,
+    pub expected_failures: Vec<u64>,
+    pub unexpected_failures: u64,
+}
+
+pub fn parse(bytes: &[u8]) -> Result<Evidence, String> {
+    if bytes.len() > MAX_EVIDENCE_BYTES {
+        return Err("stability evidence exceeds 64 MiB".to_owned());
+    }
+    serde_json::from_slice(bytes).map_err(|error| format!("invalid stability evidence: {error}"))
+}
+
+/// Raw native-resource receipt referenced by the required native-resources check.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEvidence {
+    pub source_commit: String,
+    pub candidate_sha256: String,
+    pub evaluator_sha256: String,
+    pub contract_sha256: String,
+    pub duration_ms: u64,
+    pub workload_started_unix_ms: Option<u64>,
+    pub recovery_started_unix_ms: Option<u64>,
+    pub policies: Vec<NativePolicy>,
+    pub checkpoints: Vec<NativeCheckpoint>,
+    pub primary_error: Option<String>,
+    pub finalization_errors: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePolicy {
+    pub role: String,
+    pub policy: Policy,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCheckpoint {
+    pub phase: String,
+    pub started_unix_ms: u64,
+    pub observations: Vec<Artifact>,
+    pub samples: Vec<Sample>,
+    pub errors: Vec<String>,
+}
+
+pub fn parse_native(bytes: &[u8]) -> Result<NativeEvidence, String> {
+    if bytes.len() > MAX_EVIDENCE_BYTES {
+        return Err("native evidence exceeds 64 MiB".to_owned());
+    }
+    serde_json::from_slice(bytes).map_err(|error| format!("invalid native evidence: {error}"))
+}
+
+/// One descriptor-directory sweep, retained even if descriptors disappeared.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DescriptorRead {
+    /// Successfully resolved descriptor targets in this sweep.
+    #[serde(deserialize_with = "unique_descriptors")]
+    pub descriptors: BTreeMap<u32, String>,
+    /// Entries removed between enumeration and readlink.
+    pub closed_during_read: Vec<u32>,
+    /// Non-race read failures, which stop collection without retries.
+    pub errors: Vec<String>,
+}
+
+/// A fixed work bound, independent of observed resource counts or acceptance.
+pub(super) const MAX_DESCRIPTOR_READS: usize = 6;
+
+pub(super) fn complete_descriptor_pair(reads: &[DescriptorRead]) -> bool {
+    let Some(pair) = reads.last_chunk::<2>() else {
+        return false;
+    };
+    pair.iter()
+        .all(|read| read.errors.is_empty() && read.closed_during_read.is_empty())
+        && pair[0].descriptors == pair[1].descriptors
+}
+
+/// One attempted observation, including partial evidence on failure.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Observation {
+    /// Requested PID; qualification separately binds its expected identity.
+    pub pid: u32,
+    /// UTC milliseconds before the first read.
+    pub started_unix_ms: u64,
+    /// UTC milliseconds after the final identity attempt.
+    pub completed_unix_ms: u64,
+    /// Start-time identity before inspection.
+    pub initial_start_ticks: Option<String>,
+    /// Start-time identity after inspection.
+    pub final_start_ticks: Option<String>,
+    /// Guest kernel boot identity.
+    pub boot_id: Option<String>,
+    /// Hash of the actual running executable, before inspection.
+    pub initial_executable_sha256: Option<String>,
+    /// Hash of the actual running executable, after inspection.
+    pub final_executable_sha256: Option<String>,
+    /// Unmodified Linux process status.
+    pub status: Option<String>,
+    /// Unmodified proportional/anonymous memory observation.
+    pub smaps_rollup: Option<String>,
+    /// Unmodified process descriptor limits.
+    pub limits: Option<String>,
+    /// Each successfully resolved descriptor, keyed by its actual number.
+    #[serde(deserialize_with = "unique_descriptors")]
+    pub descriptors: BTreeMap<u32, String>,
+    /// Every census sweep, ending at the first consecutive equal complete pair.
+    pub descriptor_reads: Vec<DescriptorRead>,
+    /// Kernel Unix-socket rows referenced by this process's descriptors only.
+    pub unix_sockets: Option<String>,
+    /// Descriptor numbers whose target disappeared during inspection.
+    pub closed_during_read: Vec<u32>,
+    /// Full debug log at this checkpoint, not a retrospectively selected tail.
+    pub ownership_log: Option<String>,
+    /// Failed observations. An empty vector does not itself establish PASS.
+    pub errors: Vec<String>,
+}
+
+pub fn parse_observation(bytes: &[u8]) -> Result<Observation, String> {
+    if bytes.len() > MAX_EVIDENCE_BYTES {
+        return Err("stability observation exceeds 64 MiB".to_owned());
+    }
+    serde_json::from_slice(bytes).map_err(|error| format!("invalid stability observation: {error}"))
+}
+
+/// The three-role local KVM fixture supplied for qualification.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmFixture {
+    pub landing: VmSpec,
+    #[serde(rename = "line-a")]
+    pub line_a: VmSpec,
+    #[serde(rename = "line-b")]
+    pub line_b: VmSpec,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmSpec {
+    pub command: Vec<String>,
+    #[serde(rename = "sshPort")]
+    pub ssh_port: u16,
+    #[serde(rename = "socksPort")]
+    pub socks_port: u16,
+    pub cpus: u16,
+    #[serde(rename = "ramMiB")]
+    pub ram_mib: u32,
+    pub cores: String,
+}
+
+pub fn parse_vm_fixture(bytes: &[u8]) -> Result<VmFixture, String> {
+    if bytes.len() > 65536 {
+        return Err("VM fixture exceeds 64 KiB".to_owned());
+    }
+    serde_json::from_slice(bytes).map_err(|error| format!("invalid VM fixture: {error}"))
+}
+
+fn unique_descriptors<'de, D>(deserializer: D) -> Result<BTreeMap<u32, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Unique;
+    impl<'de> serde::de::Visitor<'de> for Unique {
+        type Value = BTreeMap<u32, String>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("distinct numeric descriptor identities")
+        }
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            let mut entries = BTreeMap::new();
+            while let Some((number, target)) = map.next_entry::<u32, String>()? {
+                if entries.insert(number, target).is_some() {
+                    return Err(serde::de::Error::custom("duplicate descriptor identity"));
+                }
+            }
+            Ok(entries)
+        }
+    }
+    deserializer.deserialize_map(Unique)
+}

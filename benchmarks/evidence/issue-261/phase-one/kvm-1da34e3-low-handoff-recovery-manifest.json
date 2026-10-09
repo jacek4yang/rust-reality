@@ -1,0 +1,198 @@
+{
+  "scope": "LOCAL_KVM",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "candidateElfSha256": "47bd2151d9348562ec547c0867f3cbd9b72d35b28255cce8e7fd240f30deec9a",
+  "cell": "handoff-recovery",
+  "claim": "raw evidence; verdict remains in evaluator receipts, never inferred from archive creation",
+  "exclusions": [
+    "secret-bearing configurations",
+    "SSH credentials",
+    "executables",
+    "deterministic payload binaries"
+  ],
+  "members": [
+    {
+      "path": "controller/Cargo.lock",
+      "bytes": 6659,
+      "sha256": "8ce4be86766be170f1fb9fc65a5672958e1d6f02c54a564c069a27ccfb1f232e"
+    },
+    {
+      "path": "controller/Cargo.toml",
+      "bytes": 167,
+      "sha256": "00f69c2b950031c5a530f1f30da589a67ded7153bd66a13eeb15a84bf5d33731"
+    },
+    {
+      "path": "controller/src/main.rs",
+      "bytes": 36083,
+      "sha256": "44ea1822256117264388c74d42b417d4a5950b3c7be1b4185c2ae1c9a0372ee6"
+    },
+    {
+      "path": "evaluators/attest-candidate-kvm.py",
+      "bytes": 2468,
+      "sha256": "292464fd0415c8c4341cde43a2bc1a170af29469e00e2b9be210a8fc418e6dfd"
+    },
+    {
+      "path": "evaluators/attest-no-oom.py",
+      "bytes": 930,
+      "sha256": "a8f467d79454709aac10861f7dbb792b21b739cf9de26fd2d1df6a8e93c53acb"
+    },
+    {
+      "path": "evaluators/audit-faults.py",
+      "bytes": 5085,
+      "sha256": "87860e59873585de25a6284dbcf69467138cafb689c6ac310e2708844980af6b"
+    },
+    {
+      "path": "evaluators/audit-lifecycle.py",
+      "bytes": 4926,
+      "sha256": "bf062a605c7cfd46380cec95cc0397cffd3be7cb71518e05928c976d16ee56c3"
+    },
+    {
+      "path": "evaluators/audit-stress.py",
+      "bytes": 5074,
+      "sha256": "1a9da09d015a7382fc37e5004f64f1fabcb56419afd3690cd966e4118279fd10"
+    },
+    {
+      "path": "evaluators/audit-warm-lifecycle.py",
+      "bytes": 1567,
+      "sha256": "d8adf6304c27e13c8f683bf58ae6d8e82c359b6e7348b2a18aa886c46ee41d88"
+    },
+    {
+      "path": "evaluators/large-integrity.py",
+      "bytes": 2448,
+      "sha256": "580608ab8e1a2cd264c5d10b36773fe8f7cb7e0a5575f8c0ff25186ddfaa0ff4"
+    },
+    {
+      "path": "evaluators/run-low-matrix.py",
+      "bytes": 3992,
+      "sha256": "f8cb4f3d1658f32d3b085949a907d551bb46849be960a3bc8a2f06b3b944af91"
+    },
+    {
+      "path": "metadata/handoff-constrained-audit.json",
+      "bytes": 10534,
+      "sha256": "950a326e0ebf0bddb0525e7e0bfde51030080c4ef5071f8f1bd63b3b7043d1e7"
+    },
+    {
+      "path": "metadata/handoff-oom-audit.json",
+      "bytes": 17535,
+      "sha256": "3258fb33bbc15062bc87c60d8d8c02364f72debaad12fe136c6e880d742643ce"
+    },
+    {
+      "path": "metadata/landing-identity.txt",
+      "bytes": 4891,
+      "sha256": "8b07aa21d73c84a0eb4b00aa711915e7ee9bb1b8e6ba448b3e004b9f2c111e90"
+    },
+    {
+      "path": "metadata/line-a-identity.txt",
+      "bytes": 4917,
+      "sha256": "4da4fb1d761ff870870ef5a44261266d1e1264ea5ce8430c8ea4d58d88a6a07a"
+    },
+    {
+      "path": "metadata/line-b-identity.txt",
+      "bytes": 4917,
+      "sha256": "4da4fb1d761ff870870ef5a44261266d1e1264ea5ce8430c8ea4d58d88a6a07a"
+    },
+    {
+      "path": "metadata/provision-attestation.json",
+      "bytes": 8311,
+      "sha256": "3b1158e892c594b55ee630678d4c662ffbe1ca8ee8c3203caa7b79cdef876164"
+    },
+    {
+      "path": "metadata/scope.json",
+      "bytes": 612,
+      "sha256": "24c60f28e82fe5d10f02f4cbbefdc6c330dee640ce3a15e91bf253a14cb11967"
+    },
+    {
+      "path": "raw/guests.json",
+      "bytes": 4618,
+      "sha256": "f87f43bdb8f8c12db095f1d13c9fdbe49d14653c676626db429f892ce69089ab"
+    },
+    {
+      "path": "raw/restart-probe/events.jsonl",
+      "bytes": 47583,
+      "sha256": "d6b6c4f981b45c33dc36b4558b12784bf862342195f9e19ab41c3d7a4643e442"
+    },
+    {
+      "path": "raw/restart-probe/landing-cover-18186.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "raw/restart-probe/landing-cover-2151.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "raw/restart-probe/landing-origin-17976.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "raw/restart-probe/landing-origin-1943.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "raw/restart-probe/landing-server-1732.log",
+      "bytes": 372246,
+      "sha256": "712a8d989983a67fa341e70ae5ed184927c4b2eaeca078cf7b74bf04d40d8203"
+    },
+    {
+      "path": "raw/restart-probe/landing-server-17767.log",
+      "bytes": 25510,
+      "sha256": "e3b0d752ef1fa20fb7fb456a1b29a6532a1a2914dcb501678176659a518fc230"
+    },
+    {
+      "path": "raw/restart-probe/line-a-client-1092.log",
+      "bytes": 67955,
+      "sha256": "9692f378a7b030583a948f9f190852c4261ce5093583ad999f064f46b85e75ef"
+    },
+    {
+      "path": "raw/restart-probe/line-a-client-17126.log",
+      "bytes": 72142,
+      "sha256": "cbeaa1cda41a0962e9372b51a173e23d96a63b8f9dee18e53d76b05d7969227b"
+    },
+    {
+      "path": "raw/restart-probe/line-a-server-16915.log",
+      "bytes": 748488,
+      "sha256": "62773301935fc44c2390e2e2243e166bed5c11bca86c60ae8fbac52f63c89fe9"
+    },
+    {
+      "path": "raw/restart-probe/line-a-server-881.log",
+      "bytes": 704921,
+      "sha256": "259c313df3cd84f19be59cb17762818e40730f18079b44598488a01c60734f44"
+    },
+    {
+      "path": "raw/restart-probe/line-b-client-1518.log",
+      "bytes": 67955,
+      "sha256": "f835b08958f396fc23e99bddc3a7a413a3fee8435dfd850eea75c2a41c12e9e8"
+    },
+    {
+      "path": "raw/restart-probe/line-b-client-17553.log",
+      "bytes": 72142,
+      "sha256": "34932ca518e528602f5581485f90cd17a1992930702c6237d0ffca0207f01ce6"
+    },
+    {
+      "path": "raw/restart-probe/line-b-server-1310.log",
+      "bytes": 704929,
+      "sha256": "05062c9942f0b73b2f603202f2966eabfd92d08033fdea2c59a989b5efa724b8"
+    },
+    {
+      "path": "raw/restart-probe/line-b-server-17346.log",
+      "bytes": 748497,
+      "sha256": "9e3b02c4d5d0c20ebfc9568091fcfc0e3cc3474a7bf1230bc1220b6a67c555b8"
+    },
+    {
+      "path": "raw/restart-probe/upload-receipts.jsonl",
+      "bytes": 750,
+      "sha256": "1a016a75b8929b38ffc1e9fef568e58abbb158471114d9c39fe53feaf38cd0e1"
+    }
+  ],
+  "originalArchiveSha256": "6c6ee0193694e86ef6c98425f4bf481fb76b6c29e89966d3511207492302136f",
+  "archives": [
+    {
+      "path": "kvm-1da34e3-low-handoff-recovery.tar.xz",
+      "bytes": 151404,
+      "sha256": "6c6ee0193694e86ef6c98425f4bf481fb76b6c29e89966d3511207492302136f"
+    }
+  ]
+}

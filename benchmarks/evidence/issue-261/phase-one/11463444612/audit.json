@@ -1,0 +1,105 @@
+[
+  {
+    "artifact": 11463444612,
+    "source": "63c3523cf400b54a9e61d0066e23bbc9e4b816dc",
+    "binary": "43ed02c8aeb5b1007940306a3206847270df9841d05a45613f36fc79e5aa17d6",
+    "verifiedMembers": 45,
+    "bindings": {
+      "interop": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "dab5db0b2dfe58c03a45ff9c012d55fda68eee11185c31e8051a47a3bd19fbc6"
+      },
+      "mechanism": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "4cd26965d81cd1b7f9fa3d6eec95b1d0805d4716d6d58beddee3bbccd7c2bc57"
+      },
+      "pressure": {
+        "status": "COMPLETE",
+        "exitCode": 0,
+        "sha256": "ee25d8ea32daa91ddc264cdf91a5de06068e6192aad9320485b6cdeb26f66b71"
+      },
+      "soak": "NOT RETAINED"
+    },
+    "missing": [
+      "soak/environment.json",
+      "soak/completion.json"
+    ],
+    "samples": 274,
+    "aggregateTailMiBPerHour": 2.35147583271776,
+    "roles": {
+      "handoff-landing": {
+        "growthMiB": 0.9931640625,
+        "tailMiBPerHour": 0.025719884572032302,
+        "pidStarttimes": [
+          [
+            56663,
+            "327293"
+          ]
+        ]
+      },
+      "handoff-line": {
+        "growthMiB": 0.2783203125,
+        "tailMiBPerHour": 0.34484007800087724,
+        "pidStarttimes": [
+          [
+            56668,
+            "327295"
+          ]
+        ]
+      },
+      "nxr-landing": {
+        "growthMiB": 0.23828125,
+        "tailMiBPerHour": 0.09088050859242702,
+        "pidStarttimes": [
+          [
+            56683,
+            "327299"
+          ]
+        ]
+      },
+      "nxr-line": {
+        "growthMiB": 0.5927734375,
+        "tailMiBPerHour": 0.39635665072355414,
+        "pidStarttimes": [
+          [
+            56688,
+            "327301"
+          ]
+        ]
+      },
+      "socks-line": {
+        "growthMiB": 0.5615234375,
+        "tailMiBPerHour": 0.22901255289211211,
+        "pidStarttimes": [
+          [
+            56708,
+            "327307"
+          ]
+        ]
+      },
+      "standalone": {
+        "growthMiB": 1.21875,
+        "tailMiBPerHour": 1.2646661579367566,
+        "pidStarttimes": [
+          [
+            56731,
+            "327312"
+          ]
+        ]
+      }
+    },
+    "reload": [
+      {
+        "label": "before-reload",
+        "monotonicSeconds": 907.894577305
+      },
+      {
+        "label": "after-reload",
+        "monotonicSeconds": 909.349641121
+      }
+    ],
+    "summaryVerdict": false
+  }
+]

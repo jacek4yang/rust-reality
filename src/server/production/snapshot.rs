@@ -174,6 +174,10 @@ impl RuntimeSnapshot {
             tag: Arc::from(config.role().as_str()),
             governor: authorities.governor.clone(),
             handler,
+            _retirement: GenerationRetirement {
+                generation,
+                logger: logger.clone(),
+            },
         });
         let mut connections = HashMap::new();
         let bound: Vec<SocketAddr> = config
@@ -296,6 +300,27 @@ pub(super) struct ConnectionRuntime {
     pub(super) tag: Arc<str>,
     pub(super) governor: ResourceGovernor,
     pub(super) handler: ConnectionHandler,
+    // Declared last so the event follows handler destruction. Connections keep
+    // this Arc after releasing the configuration snapshot that selected it.
+    _retirement: GenerationRetirement,
+}
+
+struct GenerationRetirement {
+    generation: u64,
+    logger: Logger,
+}
+
+impl Drop for GenerationRetirement {
+    fn drop(&mut self) {
+        if self.logger.debug_enabled() {
+            emit(
+                &self.logger,
+                &LogEvent::GenerationRetired {
+                    generation: self.generation,
+                },
+            );
+        }
+    }
 }
 
 pub(super) enum ConnectionHandler {

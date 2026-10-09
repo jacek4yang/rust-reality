@@ -163,9 +163,10 @@ v1.8.0 是架构发布：不改变任何 wire 字节、配置结构或部署身�
 四处 panic 点减少了 256 字节，之后的改动没有新增任何机器码。
 
 本证据的两点局限明确说明而非暗示：这些 leg 覆盖 REALITY setup、fallback、
-Vision framed、Vision Direct 与双向传输，**不**覆盖 Handoff 与 NXR——后者在发布
-时由双 VPS 主动 canary 覆盖；此外先前的 Xray 对比头条数据是在 v1.7.0 与 v1.6.1
-二进制上测得，这里沿用是因为已正式确立中性，而非在此重新测量。
+Vision framed、Vision Direct 与双向传输，**不**覆盖 Handoff 与 NXR——后者需要
+独立的[多节点发布资格验证](release-process.md#分层证据)。此外先前的 Xray 对比
+头条数据是在 v1.7.0 与 v1.6.1 二进制上测得，这里沿用是因为已正式确立中性，
+而非在此重新测量。
 
 [docs/en/operations/memory-audit-v1.8.md](../en/operations/memory-audit-v1.8.md) 记录所有权映射、拷贝台账、分配台账与异步 future
 尺寸，包括一处仍存在于 v1.8 的实测重复——因为它的修复未通过受保护路径门禁。
@@ -375,7 +376,8 @@ IPv6 27.46 ns、最大头 425.01 ns；四项相对紧邻基线都在 Criterion �
 
 重放缓存用哈希表做精确重复检测，用 deadline 最小堆做过期。REALITY 只清理目标
 分片；NXR/Handoff 的常态 reserve 也只处理目标分片，只有真正触及全局容量才
-扫描全部 16 个分片。已有 4096 个存活 nonce 时，连续预留 64 个 nonce 从旧版
+扫描全部 16 个分片。数据路径之外的维护任务还会每秒回收闲置的过期条目，
+不改变预留路径算法或认证期限。已有 4096 个存活 nonce 时，连续预留 64 个 nonce 从旧版
 全量 retain 的 593.18 µs 降到 17.43 µs（**34.0×**）；对无过期存活集合做 purge
 约为与基数无关的 282 ns，而不是 10.54 µs。REALITY key 本来就是服务端计算的
 SHA-256 digest，因此该表直接使用另一个独立的 64-bit digest word，不再对全部
@@ -420,8 +422,8 @@ VLESS 解码器）、Vision framing、Handoff 头、Handoff blob 和完整 Hando
 解析属性门禁对一个 533 字节最大请求的每个前缀，以及每个字节替换为 0/1/255 的情况，
 比较 owned 与 borrowed VLESS 解码结果，要求错误或字段完全一致。重放、准入、FD 和
 relay 测试覆盖取消、锁 poison 恢复、容量回收与并发争用。定时 CI 还会在
-AddressSanitizer/LeakSanitizer 下跑完整测试，并在 ThreadSanitizer 下跑 REALITY 重放
-并发竞态测试。单调 deadline 和计数器使用 checked 算术；时间域耗尽会返回明确的
+AddressSanitizer/LeakSanitizer 下跑完整测试。REALITY 重放并发测试保留在常规套件；
+ADR 0035 移除 ThreadSanitizer，并明确放弃其动态数据竞争检测覆盖。单调 deadline 和计数器使用 checked 算术；时间域耗尽会返回明确的
 unavailable，而不会饱和后错误放行。
 
 ## framed 路径成本分解

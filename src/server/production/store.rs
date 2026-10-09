@@ -297,6 +297,29 @@ mod tests {
     }
 
     #[test]
+    fn retired_connection_runtime_is_released_after_its_last_connection() {
+        let config = entry_config(unused_loopback_port());
+        let server = ProductionServer::from_config(config.clone()).expect("server must compile");
+        let snapshot = server.runtime.load();
+        let old_snapshot = Arc::downgrade(&snapshot);
+        let connection = only_listener(&snapshot);
+        let old_runtime = Arc::downgrade(&connection);
+        drop(snapshot);
+
+        server
+            .runtime
+            .publish(with_extra_outbound(
+                config.node().listeners()[0].port,
+                "replacement",
+            ))
+            .expect("hot publication must succeed");
+        assert!(old_snapshot.upgrade().is_none());
+        assert!(old_runtime.upgrade().is_some());
+        drop(connection);
+        assert!(old_runtime.upgrade().is_none());
+    }
+
+    #[test]
     fn retiring_a_generation_deactivates_only_its_own_pre_auth_pool() {
         let config = entry_config(unused_loopback_port());
         let server = ProductionServer::from_config(config.clone()).expect("server must compile");

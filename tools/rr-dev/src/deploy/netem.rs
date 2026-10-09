@@ -79,8 +79,20 @@ pub struct NetemReport {
 /// # Errors
 ///
 /// Returns a message when inputs cannot be read or parsed at all.
-#[allow(clippy::too_many_lines)]
 pub fn validate(args: &NetemArgs) -> Result<NetemReport, String> {
+    validate_observations(args, read_text)
+}
+
+/// Evaluate retained observations with a caller-owned raw-file reader.
+/// The filesystem command and offline evidence verifier share the same rules.
+///
+/// # Errors
+/// Rejects unreadable, malformed or incomplete observations.
+#[allow(clippy::too_many_lines)]
+pub fn validate_observations(
+    args: &NetemArgs,
+    mut read_raw: impl FnMut(&Path) -> Result<String, String>,
+) -> Result<NetemReport, String> {
     if args.samples <= 0 || args.connections <= 0 {
         return Err("samples and connections must be positive".to_owned());
     }
@@ -104,8 +116,9 @@ pub fn validate(args: &NetemArgs) -> Result<NetemReport, String> {
         * i64::try_from(LEGS.len()).unwrap_or(0)
         * i64::try_from(expected_profile_count).unwrap_or(0);
 
-    let profile_rows = read_jsonl(&args.profiles)?;
-    let (pool_summaries, pool_errors) = read_pool_summaries(&args.pool_summaries)?;
+    let profile_rows = json_in::parse_lines(&read_raw(&args.profiles)?)
+        .map_err(|error| format!("{}: {error}", args.profiles.display()))?;
+    let (pool_summaries, pool_errors) = read_pool_summaries(&read_raw(&args.pool_summaries)?)?;
 
     let mut profiles_out: Vec<Json> = Vec::new();
     let mut mechanism_profiles: Vec<MechanismProfile> = Vec::new();
@@ -169,7 +182,10 @@ pub fn validate(args: &NetemArgs) -> Result<NetemReport, String> {
                     errors.push(format!("{leg}: raw path is not absolute"));
                     continue;
                 }
-                let rows = match read_jsonl(&path) {
+                let rows = match read_raw(&path).and_then(|text| {
+                    json_in::parse_lines(&text)
+                        .map_err(|error| format!("{}: {error}", path.display()))
+                }) {
                     Ok(rows) => rows,
                     Err(error) => {
                         errors.push(format!("{leg}: {error}"));
@@ -732,16 +748,12 @@ fn format_loss(loss: f64) -> String {
     }
 }
 
-fn read_jsonl(path: &Path) -> Result<Vec<json_in::Value>, String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    json_in::parse_lines(&text).map_err(|error| format!("{}: {error}", path.display()))
+fn read_text(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn read_pool_summaries(path: &Path) -> Result<(Vec<Json>, Vec<String>), String> {
-    let text =
-        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let value = json_in::parse(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+fn read_pool_summaries(text: &str) -> Result<(Vec<Json>, Vec<String>), String> {
+    let value = json_in::parse(text)?;
     let json_in::Value::Array(rows) = value else {
         return Ok((
             Vec::new(),
@@ -823,7 +835,7 @@ pub fn parse_f64_list(raw: &str) -> Result<Vec<f64>, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Write;
 
@@ -908,7 +920,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let (profiles, pool) = build_fixture(&root, false);
-        let report = validate(&NetemArgs {
+        let args = NetemArgs {
             profiles,
             pool_summaries: pool,
             rtts: vec![0, 20],
@@ -917,8 +929,10 @@ mod tests {
             samples: 2,
             connections: 3,
             evaluate_performance: false,
-        })
-        .expect("validate");
+        };
+        let report = validate(&args).expect("validate");
+        let retained = validate_observations(&args, read_text).expect("retained observations");
+        assert_eq!(report.json, retained.json);
         assert!(report.passed, "{}", report.json);
         assert!(report.json.contains("\"dataQualityVerdict\": \"PASS\""));
         assert!(report.json.contains("\"expectedRawRecordCount\": 96"));
@@ -953,7 +967,11 @@ mod tests {
     /// `removed_rtt_fraction` 1.0 yields a point estimate of 1.0 (PASS); 0.2
     /// yields 0.2 (FAIL the 0.65..1.35 gate). Bootstrap is exercised but the
     /// pass/fail assertion is on the gate logic, not bit-identical intervals.
-    fn build_mechanism_fixture(root: &Path, removed_rtt_fraction: f64) -> (PathBuf, PathBuf) {
+    pub(crate) fn build_mechanism_fixture(
+        root: &Path,
+        removed_rtt_fraction: f64,
+        connections: i64,
+    ) -> (PathBuf, PathBuf) {
         let mut profile_lines = Vec::new();
         for rtt in MECHANISM_RTTS_MS {
             let mut raw_fields = Vec::new();
@@ -973,7 +991,7 @@ mod tests {
                         0.0
                     };
                     let p50 = warm_seconds + removed_seconds;
-                    rows.push(row_with_p50(1, sample, 512, p50));
+                    rows.push(row_with_p50(1, sample, connections, p50));
                 }
                 write_jsonl(&path, &rows);
                 raw_fields.push(format!(
@@ -1003,7 +1021,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rr-netem-mech-pass-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let (profiles, pool) = build_mechanism_fixture(&root, 1.0);
+        let (profiles, pool) = build_mechanism_fixture(&root, 1.0, 512);
         let report = validate(&NetemArgs {
             profiles,
             pool_summaries: pool,
@@ -1034,7 +1052,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rr-netem-mech-fail-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let (profiles, pool) = build_mechanism_fixture(&root, 0.2);
+        let (profiles, pool) = build_mechanism_fixture(&root, 0.2, 512);
         let report = validate(&NetemArgs {
             profiles,
             pool_summaries: pool,

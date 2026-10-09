@@ -1,0 +1,519 @@
+{
+  "scope": "LOCAL_KVM_PACKAGE_SMOKE",
+  "sourceCommit": "1da34e37a2b38a774eb3fc14764c108356606963",
+  "status": "six package/topology cells PASS; not a waiver of failed native PSS or high-profile NXR stress FD gate",
+  "members": [
+    {
+      "path": "complete.json",
+      "bytes": 13975,
+      "sha256": "d8979ea0c132dd6554896c36f0ec2cbd92769f01f28c2289a608cfd269164cd3"
+    },
+    {
+      "path": "controller/large-integrity.py",
+      "bytes": 2448,
+      "sha256": "580608ab8e1a2cd264c5d10b36773fe8f7cb7e0a5575f8c0ff25186ddfaa0ff4"
+    },
+    {
+      "path": "controller/main.rs",
+      "bytes": 36083,
+      "sha256": "44ea1822256117264388c74d42b417d4a5950b3c7be1b4185c2ae1c9a0372ee6"
+    },
+    {
+      "path": "controller/smoke-candidate-packages.py",
+      "bytes": 2742,
+      "sha256": "778bd797c543544b423e56989b6bbeafd4304151bc94bc74467ab58ac910416a"
+    },
+    {
+      "path": "linux-x86_64-generic/configs-handoff/landing-identity.txt",
+      "bytes": 4895,
+      "sha256": "c9dc2f563f5a4cf619a108c2a945c9b63ba33a5f47fbd77aa810d5104da671be"
+    },
+    {
+      "path": "linux-x86_64-generic/configs-handoff/line-a-identity.txt",
+      "bytes": 4917,
+      "sha256": "2d1177075924cdb4fdfb75b05b973788dee4057c5cc84b17c879efa7558bbac1"
+    },
+    {
+      "path": "linux-x86_64-generic/configs-handoff/line-b-identity.txt",
+      "bytes": 4917,
+      "sha256": "b8981174dc3c86fad41487fa476a87e7f09618e4b196c4d1859b2420bf6a3076"
+    },
+    {
+      "path": "linux-x86_64-generic/configs-nxr/landing-identity.txt",
+      "bytes": 4891,
+      "sha256": "18c1c0a6256272aa46fc80b9aca09c2c6614df3ebe504e1843f9259ec5282631"
+    },
+    {
+      "path": "linux-x86_64-generic/configs-nxr/line-a-identity.txt",
+      "bytes": 4913,
+      "sha256": "1e58780bf920784d1f5c8b852249d8149ebd7ee7ec14bfaf92953c437d4d928b"
+    },
+    {
+      "path": "linux-x86_64-generic/configs-nxr/line-b-identity.txt",
+      "bytes": 4913,
+      "sha256": "c1d6dc759b29b5fa9a291bb44ab0993e27a285cf962bb618d35cb82826914750"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-large/complete.json",
+      "bytes": 1713,
+      "sha256": "b5d8c11d8a97685a2dc48728d5d6b54340696195b6968f47b0eab9b98a17ef95"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-large/new-access-rows.jsonl",
+      "bytes": 788,
+      "sha256": "050938789d944816123e943734108bc5e195a0c11b59b5dbb6e7a3457ff2967e"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-package-audit.json",
+      "bytes": 2050,
+      "sha256": "9f15937de111c7977bf5f454b830238820ad58e9dc371b08ed55413be5039a0d"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/events.jsonl",
+      "bytes": 37739,
+      "sha256": "09de860ad8d9c7fac96e3f60cde6a2584bcbc42612cc508281fb31a41ed055be"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/landing-cover-9273.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/landing-origin-9076.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/landing-server-8884.log",
+      "bytes": 24145,
+      "sha256": "4420ea113ed7f681e45b1d27bf8560c27bfe6cceb7ae60ad50caaa69ce542a6f"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/line-a-client-8284.log",
+      "bytes": 4439,
+      "sha256": "a0eda56f80b329227b74438ac59535929b7459d45c1db7c5f029cac32c8e7f8c"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/line-a-server-8078.log",
+      "bytes": 44001,
+      "sha256": "7ef8f0717502f7d56d560e0eda252cfa47888767f035abb92bb6f5e428ff435c"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/line-b-client-8685.log",
+      "bytes": 4597,
+      "sha256": "bbbd4b413d13cc45b2bd25b801cae4dec8b71aeaa935b6dbcece8ae29acb2ce6"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/line-b-server-8483.log",
+      "bytes": 45645,
+      "sha256": "3ee39fe8e1920bbd9c6c9aedfdfe9c5547bcbfe2b35a21aaf13999d83376d018"
+    },
+    {
+      "path": "linux-x86_64-generic/handoff-smoke/upload-receipts.jsonl",
+      "bytes": 750,
+      "sha256": "ad0d1f7ad24587e079cafc4cfc69e1076599eec7755cb1ac246e515e584a4577"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-large/complete.json",
+      "bytes": 1692,
+      "sha256": "0aba63ff6575978815f2a1e56bf375ebd93ce68007a95ebf1768390389c7397f"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-large/new-access-rows.jsonl",
+      "bytes": 780,
+      "sha256": "7393ef685cbe0dd3c0918a3f27658fa88786908a7853363c618a94cf79d8d0e0"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-package-audit.json",
+      "bytes": 2025,
+      "sha256": "206d81b94aa499940aa0e09ead7b5246ce2d531888594683adba093922cb5fb1"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/events.jsonl",
+      "bytes": 37897,
+      "sha256": "c368699aa175dd69a4ccba764c20fd53e4f16a12c92ed6777c04efb77ae0c928"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/landing-cover-8801.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/landing-origin-8612.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/landing-server-8417.log",
+      "bytes": 24145,
+      "sha256": "9ce1087d4462eb5a410ab7c0cd396efe3451407392625eb15c54d0e6300645bd"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/line-a-client-7826.log",
+      "bytes": 4435,
+      "sha256": "269944c755ed1dcb5259240ab347e67d7dfa8b7b666a3f78ba3ae93c22772893"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/line-a-server-7620.log",
+      "bytes": 41141,
+      "sha256": "c128ceada3a457c54ec6793c63eec3446b1d8abf98e120829bc9b2142e1adfc6"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/line-b-client-8223.log",
+      "bytes": 4593,
+      "sha256": "b840b31ff430f96bf2f51548530f69daf8172b278102d9142f48b503abf96f8d"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/line-b-server-8023.log",
+      "bytes": 42675,
+      "sha256": "c5851f317573ff0180a53c55b6c559eb3bf2d2e239a997cdaeffbd04d2656df3"
+    },
+    {
+      "path": "linux-x86_64-generic/nxr-smoke/upload-receipts.jsonl",
+      "bytes": 742,
+      "sha256": "456ed8c5548aa6413b4bfb228a139c95811520b8183d526d2d1870800990adae"
+    },
+    {
+      "path": "linux-x86_64-generic/scope.json",
+      "bytes": 249,
+      "sha256": "7da0a352418ab8e616dfbb85f5c7681cca93c220ec1ae5f54fdea37d53dda854"
+    },
+    {
+      "path": "linux-x86_64-musl/configs-handoff/landing-identity.txt",
+      "bytes": 4895,
+      "sha256": "ca7db268b0013e4a71d1afcff8ad98436a2c7613b10ce06784707531d5df18fe"
+    },
+    {
+      "path": "linux-x86_64-musl/configs-handoff/line-a-identity.txt",
+      "bytes": 4917,
+      "sha256": "04b5c81652c660e2deb1cec78aa8e4dfc1d02a8cd847e586eb0ceae0d5e083ef"
+    },
+    {
+      "path": "linux-x86_64-musl/configs-handoff/line-b-identity.txt",
+      "bytes": 4917,
+      "sha256": "7fe8a346eb571a85bec0d326fae22b396b6f84fa180ad5f126c96b361e71fbdd"
+    },
+    {
+      "path": "linux-x86_64-musl/configs-nxr/landing-identity.txt",
+      "bytes": 4891,
+      "sha256": "c04c4bbcd82d9c2d4ce4de128aa2df4d264f8dd5b03c5b8ae78882d04265f1fe"
+    },
+    {
+      "path": "linux-x86_64-musl/configs-nxr/line-a-identity.txt",
+      "bytes": 4913,
+      "sha256": "50cb66a16279a60c349f4a6230d698e6cd29bfe89a0730b8832349ae8cf6bdf1"
+    },
+    {
+      "path": "linux-x86_64-musl/configs-nxr/line-b-identity.txt",
+      "bytes": 4913,
+      "sha256": "2afd9d5d0cb6c5df9003c7d86fedcde98c141a6114fdeabf627ecc4ec98ba6ca"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-large/complete.json",
+      "bytes": 1712,
+      "sha256": "0fdfd8d1aee381c5f99b089b14c8142a1fdfd2f7f546d1153d384f47f64349d1"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-large/new-access-rows.jsonl",
+      "bytes": 788,
+      "sha256": "d57d5212a6dea7133d02770472fa81ebe1df8ae6ac8cfe7afebc601d367a3c57"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-package-audit.json",
+      "bytes": 2046,
+      "sha256": "cf7cd512601487fccdf1eea876223809d891481efcef847a70e4116dbbeea554"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/events.jsonl",
+      "bytes": 37722,
+      "sha256": "0681981e34376911ff586c5ef2c4da3fe9cd8e8581250354889c8af63656b859"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/landing-cover-9428.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/landing-origin-9226.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/landing-server-9037.log",
+      "bytes": 24145,
+      "sha256": "3709d7941a26dfbd6d907cc15e61428188b3e61cf3dcc530c1f0f724ee09c351"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/line-a-client-8445.log",
+      "bytes": 4597,
+      "sha256": "18f3336b41ef011fc0b8394bbe89de79e7514bf5f8d29915aee2dba846689273"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/line-a-server-8237.log",
+      "bytes": 45645,
+      "sha256": "92ab3818fa057fb528e9176026c01cbc472c1039ed3f126ec7b4c5b01b191beb"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/line-b-client-8844.log",
+      "bytes": 4439,
+      "sha256": "4a77d058ceb32942dd4d888b7b2390003ede28341b99d4242d7974ce45ed985a"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/line-b-server-8644.log",
+      "bytes": 44001,
+      "sha256": "c7c65d68696b186d1d16e52232e981542f3c6bbda11f47c637bc5c14b7efadb3"
+    },
+    {
+      "path": "linux-x86_64-musl/handoff-smoke/upload-receipts.jsonl",
+      "bytes": 750,
+      "sha256": "8692bbae90413d36d4129d1d71082015c6a27d6a15c49c9368c0c3cef1a36d9d"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-large/complete.json",
+      "bytes": 1692,
+      "sha256": "fcf51d183a305fa41088f2828313aa3e0174c85af86b6064de719517a83c7863"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-large/new-access-rows.jsonl",
+      "bytes": 780,
+      "sha256": "9ce953d1c59f9bda4b9c8a28ac43541315558aef7e4326a7be17599879651244"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-package-audit.json",
+      "bytes": 2022,
+      "sha256": "e59e0b21614e0b39ab3a066b2452bc63e664767bc3545ab14dd258b9fb740c53"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/events.jsonl",
+      "bytes": 37856,
+      "sha256": "44e1ae249959f783a40b7d4fd179bde998da4a42f0d4bea1d6fa205117758965"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/landing-cover-9317.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/landing-origin-9119.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/landing-server-8925.log",
+      "bytes": 24145,
+      "sha256": "3cd2efd614c6378d588c6fcdaafe8d383b661f4c780424fdb76bbba7d2a33deb"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/line-a-client-8316.log",
+      "bytes": 4514,
+      "sha256": "a61e43e0733c0e8d08a8b9b447949d3e7ecc3366c201f49f72ae46977bc06d9e"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/line-a-server-8113.log",
+      "bytes": 41908,
+      "sha256": "3b58a3425aba5f5e9f9c726ec76bacdac6600c112fd328566b5b740e65603d3a"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/line-b-client-8735.log",
+      "bytes": 4514,
+      "sha256": "a8c5c6c7748e230db52a7afc0423b70bb5b4b40ccaafe160eede33ae71414a3b"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/line-b-server-8527.log",
+      "bytes": 41908,
+      "sha256": "3a1123b8bbf2940c90df6220d5265ce2bee2b4689fbc8e691a1ff7e314b9e017"
+    },
+    {
+      "path": "linux-x86_64-musl/nxr-smoke/upload-receipts.jsonl",
+      "bytes": 742,
+      "sha256": "d338b1995ac61de1fa46201371c16bd16106ed6fdf3607fe4e831b3471b8480a"
+    },
+    {
+      "path": "linux-x86_64-musl/scope.json",
+      "bytes": 246,
+      "sha256": "79ef652d281aa9981447ffeac3cae3164b0162002c8fbd4872e723ce0d7c9c75"
+    },
+    {
+      "path": "linux-x86_64-v3/configs-handoff/landing-identity.txt",
+      "bytes": 4895,
+      "sha256": "d6ff751329cea300119577f3436b48ab7aaf03a38e9e77313160a3c77c50e045"
+    },
+    {
+      "path": "linux-x86_64-v3/configs-handoff/line-a-identity.txt",
+      "bytes": 4917,
+      "sha256": "5c76ba88f31a84e8bcac3f8fcb7b70371ad311153c9037c1b5694ec99a0ad799"
+    },
+    {
+      "path": "linux-x86_64-v3/configs-handoff/line-b-identity.txt",
+      "bytes": 4917,
+      "sha256": "15582f86abce355076b55d289e8d753d73237cae4e037a1901fd642bd82063de"
+    },
+    {
+      "path": "linux-x86_64-v3/configs-nxr/landing-identity.txt",
+      "bytes": 4891,
+      "sha256": "129541467f44e88d7b0e8cdd167de5e45120f373f04fed649dc6673909ce8cd4"
+    },
+    {
+      "path": "linux-x86_64-v3/configs-nxr/line-a-identity.txt",
+      "bytes": 4913,
+      "sha256": "6307d4e3bf2d2feea83a45d5e29a5fc060b3b1ac37d8e863d6014d3272a75298"
+    },
+    {
+      "path": "linux-x86_64-v3/configs-nxr/line-b-identity.txt",
+      "bytes": 4913,
+      "sha256": "8d53b43c64fef905f583361fcc63aba00b752afe852bda3621ba10cc445ec2cb"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-large/complete.json",
+      "bytes": 1713,
+      "sha256": "603d6c4a70fb33023891d61168749ceb6c3d4040dc6e2df357a37c9a9bcf264e"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-large/new-access-rows.jsonl",
+      "bytes": 788,
+      "sha256": "17c0a539482bda4abd3a93073d952d4d8edce7525122f68d967cb65bcefc7863"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-package-audit.json",
+      "bytes": 2045,
+      "sha256": "92a5beda68271c4a484b850b6a6ec468c5b14c600dead0a29554dd2610352120"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/events.jsonl",
+      "bytes": 37662,
+      "sha256": "344de89538ed9b29dfbc1ac9585de78e3a52c79ae17f4b6cbd10c39f3b5d62f2"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/landing-cover-9346.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/landing-origin-9146.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/landing-server-8951.log",
+      "bytes": 24145,
+      "sha256": "b249cc8f1c9046bf1fc0f0e2d1dbf20e29f72be26bded9014700ab14392a4c3b"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/line-a-client-8359.log",
+      "bytes": 4597,
+      "sha256": "52256382735a1a462ee760659ccb188309fe9baa063b4d07a44cdd2f80a705cc"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/line-a-server-8152.log",
+      "bytes": 45645,
+      "sha256": "ff8c4247c19589d2589e21070d5fd72fa7f1c86a8fe89ed3319aa513ef435c22"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/line-b-client-8759.log",
+      "bytes": 4439,
+      "sha256": "0bd8089cbd4f2d679e9f9e0800d0573f259d80d713e993acc53f001ca57ecc8c"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/line-b-server-8558.log",
+      "bytes": 44001,
+      "sha256": "3b3b1b0d84cb36312e563c4ee04640aea5c8455a199a0d5e38d3d3dd534d3838"
+    },
+    {
+      "path": "linux-x86_64-v3/handoff-smoke/upload-receipts.jsonl",
+      "bytes": 750,
+      "sha256": "8692bbae90413d36d4129d1d71082015c6a27d6a15c49c9368c0c3cef1a36d9d"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-large/complete.json",
+      "bytes": 1693,
+      "sha256": "29cc591a1a290b3a748727ff83d1a1be803004f99a22cd978cea9affc7d8cee7"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-large/new-access-rows.jsonl",
+      "bytes": 780,
+      "sha256": "9bbd6b4f7acdc0ecfae022d2fc5d0aa1028ae02b375e36df806426acada31ead"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-package-audit.json",
+      "bytes": 2021,
+      "sha256": "5ede53259317d5ce52a469f7f283bb71512409978b4304c9c9901de04ffbdaaf"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/events.jsonl",
+      "bytes": 37622,
+      "sha256": "58bea039cd15f275589b045e35f41a3cf694d3f7d443904dd5ba5ea86cd225c0"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/landing-cover-9772.log",
+      "bytes": 19,
+      "sha256": "c8da06e837627e2a082bd3d2d7618d64d8756ad04e55efe6b82021cb7bfcd78d"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/landing-origin-9570.log",
+      "bytes": 21,
+      "sha256": "2bb2556239546c5c472e16554295c777180fbc7a3fb196e4591ff1b32f223d3d"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/landing-server-9371.log",
+      "bytes": 24145,
+      "sha256": "2894c5c6eb2eb573e45f81ae01d8780288e052e75f0245517486dbfde8905495"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/line-a-client-8778.log",
+      "bytes": 4593,
+      "sha256": "5e036d941f4500a955d531c75be52b4587bb7659a0f5353668fe8bbf1192a1a4"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/line-a-server-8572.log",
+      "bytes": 42675,
+      "sha256": "25ea28cb406aff62da4b35cf1061556e73e2f0653ed52be6f825409717f5152f"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/line-b-client-9178.log",
+      "bytes": 4435,
+      "sha256": "ed7a2a1edbc0d245d881cecf75fae9df45ffb14be46da64895c166c9e02d84ee"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/line-b-server-8977.log",
+      "bytes": 41141,
+      "sha256": "16e1bd9ce621f0acce047b08fd13860d8c608fe9631c05fa3f748228e622cd25"
+    },
+    {
+      "path": "linux-x86_64-v3/nxr-smoke/upload-receipts.jsonl",
+      "bytes": 742,
+      "sha256": "d338b1995ac61de1fa46201371c16bd16106ed6fdf3607fe4e831b3471b8480a"
+    },
+    {
+      "path": "linux-x86_64-v3/scope.json",
+      "bytes": 244,
+      "sha256": "7398eb073dd54ae514dad775bbc8227ac5d1463008186b5f89ac65dde7820c6c"
+    },
+    {
+      "path": "provision-attestation.json",
+      "bytes": 8313,
+      "sha256": "ec5becc24705ee9623a39fd0649c68031f3e6290e4f08fd4fdc8227016fdec71"
+    },
+    {
+      "path": "receipt/result.json",
+      "bytes": 500,
+      "sha256": "44ce45f37c8b33a88c94d33a97641200d6d46233fff817aff59bb7effd94a0f2"
+    },
+    {
+      "path": "receipt/start.json",
+      "bytes": 211,
+      "sha256": "3648062549992b72f80abf53a55b4a22a6989f25e7e2a5060a4068b17cbfdefe"
+    },
+    {
+      "path": "receipt/stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "receipt/stdout",
+      "bytes": 10246,
+      "sha256": "09ab2b2fe6c92779eeae15350d1c228197d33db7789c28446e8b66a122238c32"
+    }
+  ],
+  "archiveBytes": 73568,
+  "archiveSha256": "bdc24e7d44918be438e9c88ed2d3c872de155d9cd966ff5f94026a7b9a9d8133"
+}

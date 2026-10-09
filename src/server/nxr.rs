@@ -207,8 +207,11 @@ impl NxrReplayCache {
         removed
     }
 
-    #[cfg(test)]
-    fn entry_count(&self) -> usize {
+    pub(crate) fn retention_policy(&self) -> (usize, Duration) {
+        (self.inner.capacity, self.inner.retention)
+    }
+
+    pub(crate) fn entry_count(&self) -> usize {
         self.inner.used.load(Ordering::Acquire)
     }
 }

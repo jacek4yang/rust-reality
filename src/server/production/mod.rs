@@ -36,6 +36,8 @@ mod supervisor;
 
 #[cfg(test)]
 mod fixture;
+#[cfg(test)]
+mod reload_io;
 
 pub use error::{ProductionServerError, RuntimeUpdateError};
 

@@ -82,8 +82,14 @@ impl WarmPoolAuthority {
         self.pressure.state() == ResourcePressure::Normal
     }
 
-    #[cfg(test)]
-    fn counts(&self) -> (u64, u64) {
+    pub(crate) fn capacity(&self) -> u64 {
+        self.ready
+            .inner
+            .capacity
+            .saturating_add(self.connecting.inner.capacity)
+    }
+
+    pub(crate) fn counts(&self) -> (u64, u64) {
         (self.ready.in_use(), self.connecting.in_use())
     }
 }
@@ -222,6 +228,7 @@ struct PoolState {
     last_demand: Instant,
     failure_streak: u32,
     backoff_until: Option<Instant>,
+    pressure_resume_at: Option<Instant>,
 }
 
 struct ReadySocket {
@@ -338,6 +345,7 @@ impl AdaptiveTcpPool {
                     last_demand: now,
                     failure_streak: 0,
                     backoff_until: None,
+                    pressure_resume_at: None,
                 }),
                 notify: Notify::new(),
                 metrics: PoolMetrics {
@@ -595,7 +603,22 @@ fn cancel_speculative_dials(inner: &PoolInner, dials: &mut FuturesUnordered<Dial
     dials.clear();
     let mut state = lock(&inner.state);
     state.connecting = 0;
+    defer_pressure_refill(&mut state, Instant::now());
     inner.metrics.connecting.store(0, Ordering::Release);
+}
+
+// Shedding speculative resources can itself clear FD hysteresis. Do not let
+// that self-induced transition immediately start the same speculative work.
+// This runs only on the pool controller, under its existing state lock.
+fn defer_pressure_refill(state: &mut PoolState, now: Instant) {
+    let until = now + BASE_BACKOFF;
+    // A successful concurrent dial may clear failure backoff, but must not
+    // erase a pressure cooldown caused by another dial's released permit.
+    state.pressure_resume_at = Some(
+        state
+            .pressure_resume_at
+            .map_or(until, |current| current.max(until)),
+    );
 }
 
 /// Schedules only work that can change state. A stable minimum pool wakes for
@@ -615,7 +638,7 @@ fn next_maintenance_deadline(inner: &PoolInner, now: Instant) -> Instant {
             shrink_at
         });
     }
-    if let Some(backoff_until) = state.backoff_until {
+    if let Some(backoff_until) = state.backoff_until.max(state.pressure_resume_at) {
         next = next.min(backoff_until.max(now + Duration::from_millis(1)));
     }
     for ready in &state.ready {
@@ -639,6 +662,7 @@ fn prune_and_adjust(inner: &Arc<PoolInner>, now: Instant) {
     let before = state.ready.len();
     let mut expired = 0_usize;
     if pressure {
+        defer_pressure_refill(&mut state, now);
         state.ready.clear();
     } else {
         state.ready.retain(|ready| {
@@ -731,10 +755,15 @@ fn reconcile(inner: &Arc<PoolInner>, dials: &mut FuturesUnordered<DialFuture>) {
     }
     let now = Instant::now();
     let mut state = lock(&inner.state);
-    if state.backoff_until.is_some_and(|deadline| deadline > now) {
+    if state
+        .backoff_until
+        .max(state.pressure_resume_at)
+        .is_some_and(|deadline| deadline > now)
+    {
         return;
     }
     state.backoff_until = None;
+    state.pressure_resume_at = None;
     let occupied = saturating_u32(state.ready.len()).saturating_add(state.connecting);
     let deficit = state.target_ready.saturating_sub(occupied);
     let local_slots = inner.policy.max_connecting.saturating_sub(state.connecting);
@@ -803,7 +832,14 @@ fn handle_dial_completion(inner: &Arc<PoolInner>, outcome: DialOutcome) {
                 .ready
                 .store(saturating_u32(state.ready.len()), Ordering::Release);
         }
-        Ok(_) => {}
+        Ok(connection) => {
+            // Observe pressure before dropping the connection releases its FD
+            // permit; otherwise this controller can erase its own signal.
+            if inner.fd_budget.pressure() != FdPressure::Normal {
+                defer_pressure_refill(&mut state, now);
+            }
+            drop(connection);
+        }
         Err(_) => record_dial_failure(inner, &mut state, now),
     }
 }
@@ -890,7 +926,7 @@ mod tests {
         network::NetworkEnvironment,
         runtime::{PressureGauge, ResourcePressure},
         server::connector::DestinationConnector,
-        transport::FdBudget,
+        transport::{FdBudget, FdPressure},
     };
 
     struct CoverFixture {
@@ -1235,6 +1271,76 @@ mod tests {
         pressure.set(ResourcePressure::Normal);
         pool.deactivate();
         assert_eq!(fd_budget.underflows(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fd_pressure_reclaims_ready_permits_and_recovers() {
+        let fixture = CoverFixture::start().await;
+        let policy = policy();
+        let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+        let fd_budget = FdBudget::new(64);
+        let pool = pool(&fixture, 61, &policy, authority.clone(), fd_budget.clone());
+        {
+            let now = time::Instant::now();
+            let later = now + Duration::from_secs(3);
+            let mut state = super::lock(&pool.inner.state);
+            state.backoff_until = Some(later);
+            super::defer_pressure_refill(&mut state, now);
+            assert_eq!(state.backoff_until, Some(later));
+            assert_eq!(state.pressure_resume_at, Some(now + super::BASE_BACKOFF));
+            // Success resets only network-failure backoff, not pressure.
+            state.backoff_until = None;
+            assert!(state.pressure_resume_at.is_some());
+            state.pressure_resume_at = None;
+        }
+        assert!(pool.activate());
+        wait_for(|| pool.snapshot().ready == policy.min_ready).await;
+
+        // External holders keep pressure above the low watermark even after
+        // the pool sheds its own ready sockets. No async interleaving here.
+        let mut held = Vec::new();
+        while fd_budget.pressure() == FdPressure::Normal {
+            held.push(fd_budget.try_acquire(1).expect("budget below capacity"));
+        }
+        assert_eq!(fd_budget.pressure(), FdPressure::High);
+        wait_for(|| pool.snapshot().ready == 0 && pool.snapshot().connecting == 0).await;
+        wait_for(|| authority.counts() == (0, 0)).await;
+        assert_eq!(fd_budget.in_use(), held.len() as u64);
+
+        drop(held);
+        wait_for(|| fd_budget.pressure() == FdPressure::Normal).await;
+        wait_for(|| pool.snapshot().ready == policy.min_ready).await;
+        pool.deactivate();
+        wait_for(|| authority.counts() == (0, 0) && fd_budget.in_use() == 0).await;
+        assert_eq!(fd_budget.underflows(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fd_pressure_backoff_bounds_refill_churn() {
+        let fixture = CoverFixture::start().await;
+        let policy = policy();
+        let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+        let budget = FdBudget::new(16);
+        let pool = pool(&fixture, 62, &policy, authority.clone(), budget.clone());
+        assert!(pool.activate());
+        wait_for(|| pool.snapshot().ready == policy.min_ready).await;
+        let initial = pool.snapshot().refill;
+        let held = budget.try_acquire(13).expect("external pressure units");
+        let began = time::Instant::now();
+        time::sleep(Duration::from_millis(200)).await;
+        let elapsed = began.elapsed();
+        let refills = pool.snapshot().refill - initial;
+        let limit = (elapsed.as_millis() / super::BASE_BACKOFF.as_millis() + 2)
+            * u128::from(policy.refill_batch);
+        eprintln!("pressure churn: {refills} refills in {elapsed:?}, limit {limit}");
+        drop(held);
+        pool.deactivate();
+        wait_for(|| authority.counts() == (0, 0) && budget.in_use() == 0).await;
+        assert_eq!(budget.underflows(), 0);
+        assert!(
+            u128::from(refills) <= limit,
+            "pressure must not cause a refill storm"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

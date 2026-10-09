@@ -170,15 +170,13 @@ combined prebuilt-cover plus warm-LANDING, protected-path, and soak evidence
 remain separate retained release artifacts; no missing artifact is inferred
 from this focused matrix.
 
-Release evidence has three tiers. Tier A is the mandatory focused mechanism
-gate above and is budgeted for approximately 10–20 minutes. Tier B is the
-mandatory approximately ten-minute dual-VPS active canary evaluated by
-`cargo dev deploy canary`. Tier C is an optional hours-long or overnight
-soak. Tier C may find long-horizon retention defects, but it no longer blocks
-publication or the next development worktree. The Tier B memory gate compares
-baseline, burst peak, and post-recovery FD/thread/RSS envelopes; it does not
-extrapolate a precise MiB/hour slope from ten minutes or claim equivalence to
-long-duration evidence.
+Release acceptance is defined in the [release process](release-process.md#evidence-tiers-and-invalidation).
+Tier A retains the focused mechanism gate. Tier B requires repeated pressure/
+recovery and isolated multi-node fault evidence; QEMU system VMs can satisfy
+it without real dual-VPS access. Tier C extended soak is optional. Existing
+required native checks and resource thresholds remain unchanged. Operation
+counts do not simulate elapsed months, and local VM evidence is not WAN
+evidence; see [ADR 0033](../adr/0033-stress-and-virtual-machines-qualify-releases.md).
 
 ## Canonical v1.0.0 samples
 
@@ -291,8 +289,9 @@ target runs in bounded, time-based CI shards, with a deeper scheduled budget.
 The parser property gate still covers
 every maximum-request prefix plus three byte mutations at every position.
 Local restricted-shell runs disable only LSan's ptrace-unsupported leak
-detector; CI retains leak detection, while TSan covers the replay duplicate
-race.
+detector; CI retains leak detection and ordinary replay-duplicate race tests.
+The former ThreadSanitizer gate was removed by ADR 0035; historical failures
+remain evidence and are not reclassified as passes.
 
 ## Methodology rules (and the traps that invalidated earlier numbers)
 
@@ -858,10 +857,27 @@ the repository.
 
 ### Failed native soak resource gates
 
-A native soak that reaches resource acceptance retains resource and distributed
-samples before evaluating the unchanged limits. A rejection writes a partial
-`soak-summary.json` with `ok=false`, the failing scope and aggregate/per-process
-metrics; final binary-identity checks are marked not run. No successful
-`environment.json` or completion marker is published. These diagnostics do not
-qualify the run. Earlier transfer, sampling or process failures can still exit
-before this resource-stage retention point.
+A native soak writes `execution-terminal.json` on success or failure after its
+fresh output directory is created. Once workload execution starts, every error
+path retains collected resource/distributed observations, origin logs, and
+attempts every final process and executable identity check while children are
+still owned. `attempt-environment.json` retains binary identities and workload
+parameters before setup; `attempt-terminal.json` records workload/finalization
+errors independently. Setup failures explicitly mark final verification as not
+reached. A finalization error never replaces the original workload failure.
+
+A resource rejection additionally writes `soak-summary.json` with `ok=false`,
+the failing scope and aggregate/per-process metrics. Success-only
+`environment.json` and `completion.json` are not published for these failures.
+An interrupted process can leave incomplete evidence; missing terminal records
+never establish success.
+
+Native resource acceptance uses the ownership contract in
+`benchmarks/contracts/stability.json`. Before workload, it fixes each process's
+descriptor inventory and actual authority capacities. Every round and the fixed
+5/60/180-second recovery checkpoints retain raw observations and normalized
+ownership verdicts. Only pending listener accepts may retain unopened permits
+at recovery. Aggregate and per-process RSS +32 MiB, HWM +64 MiB and thread +8
+envelopes remain enforced; RSS/PSS slopes and FD growth are diagnostics.
+Missing or inconsistent ownership evidence fails qualification. CI preserves
+these secret-free observations and attempted final identities on failure.

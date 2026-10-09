@@ -392,6 +392,43 @@ enum DeployPlanOperation {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum BenchCommand {
+    /// Execute the fixed stability workload in the owned local KVM fixture.
+    StabilityRun(bench::stability::campaign::Plan),
+    /// Execute and retain a required check for an existing frozen campaign.
+    StabilityCheck(bench::stability::qualification::Plan),
+    /// Verify and bind one retained native package smoke receipt.
+    StabilityBindPackage(bench::stability::package_bind::Plan),
+    /// Owned-fixture child: execute the fixed guest campaign schedule.
+    #[command(hide = true)]
+    StabilityGuest(bench::stability::guest::Plan),
+    /// Verify boot/identity of the owned KVM fixture, then stop those guests.
+    /// This preflight does not run or pass candidate qualification.
+    StabilityFixture {
+        /// Preserved three-guest fixture directory supplied by the operator.
+        #[arg(long)]
+        fixture: PathBuf,
+        /// Fresh directory for launch, boot, serial and final-identity receipts.
+        #[arg(long)]
+        output: PathBuf,
+        /// Use the required 1-vCPU/1-GiB LANDING profile.
+        #[arg(long)]
+        constrained: bool,
+    },
+    /// Collect a raw, process-bound Linux observation inside an owned fixture.
+    StabilityObserve {
+        /// Exact local PID selected by the fixture controller.
+        #[arg(long)]
+        pid: u32,
+        /// Full debug log of that process.
+        #[arg(long)]
+        log: PathBuf,
+    },
+    /// Evaluate a frozen stability evidence bundle offline.
+    StabilityEvaluate {
+        /// Strict evidence JSON; referenced objects are relative to its directory.
+        #[arg(long)]
+        evidence: PathBuf,
+    },
     /// List the benchmark suites and the legacy scripts they supersede.
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
@@ -943,6 +980,9 @@ enum ReleaseCommand {
         /// Directory containing the packaged assets.
         #[arg(default_value = "dist")]
         assets: PathBuf,
+        /// Retain a secret-free execution receipt and bound artifacts in a fresh directory.
+        #[arg(long)]
+        receipt_dir: Option<PathBuf>,
     },
     /// Aggregate the complete tier matrix into a manifest and SHA256SUMS.
     Aggregate {
@@ -1417,9 +1457,12 @@ fn run_release(repo: &std::path::Path, command: ReleaseCommand) -> ExitCode {
                 )
             })
         }
-        ReleaseCommand::Smoke { tag, tier, assets } => {
-            release::smoke::smoke(repo, &tag, &tier, &assets)
-        }
+        ReleaseCommand::Smoke {
+            tag,
+            tier,
+            assets,
+            receipt_dir,
+        } => release::smoke::smoke(repo, &tag, &tier, &assets, receipt_dir.as_deref()),
         ReleaseCommand::Aggregate { tag, dist } => release::aggregate::aggregate(&dist, &tag),
     };
 
@@ -1518,6 +1561,98 @@ fn resolve_targets(
 #[allow(clippy::too_many_lines)]
 fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
     match command {
+        BenchCommand::StabilityBindPackage(plan) => match bench::stability::package_bind::run(plan)
+        {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        },
+        BenchCommand::StabilityCheck(plan) => {
+            match bench::stability::qualification::run(repo, plan) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::StabilityRun(plan) => match bench::stability::campaign::run(repo, plan) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        },
+        BenchCommand::StabilityGuest(plan) => match bench::stability::guest::run(plan) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        },
+        BenchCommand::StabilityFixture {
+            fixture,
+            output,
+            constrained,
+        } => {
+            match bench::stability::fixture::Machines::start(fixture, output, *constrained)
+                .and_then(|mut machines| machines.finalize())
+            {
+                Ok(()) => {
+                    println!(
+                        "Owned fixture boot and process identities verified; candidate qualification NOT RUN."
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::StabilityObserve { pid, log } => {
+            match bench::stability::collect::observe(*pid, log) {
+                Ok(observation) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&observation).expect("serializable observation")
+                    );
+                    if observation.errors.is_empty() && observation.closed_during_read.is_empty() {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        BenchCommand::StabilityEvaluate { evidence } => {
+            match bench::stability::evaluate_path(evidence) {
+                Ok(report) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).expect("serializable verdict")
+                    );
+                    if report.verdict == bench::stability::evaluate::Verdict::Pass {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
+                }
+                Err(error) => {
+                    println!(
+                        "{}",
+                        serde_json::json!({"verdict": "INVALID", "error": error})
+                    );
+                    ExitCode::FAILURE
+                }
+            }
+        }
         BenchCommand::ShapeProxy {
             listen_port,
             upstream_port,

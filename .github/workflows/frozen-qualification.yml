@@ -1,0 +1,234 @@
+name: Frozen candidate qualification
+
+# One source and one packaged GNU executable across VM, native and package proof.
+# Explicit review freeze only; ordinary draft edits keep their existing fast gates.
+on:
+  pull_request:
+    types: [ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: frozen-qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  packages:
+    uses: ./.github/workflows/candidate-packages.yml
+    with:
+      candidate_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  virtual-machines:
+    needs: packages
+    uses: ./.github/workflows/qemu-specialist.yml
+    with:
+      candidate_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      package_artifact: package-receipt-${{ github.event.pull_request.head.sha || github.sha }}-linux-x86_64-generic
+
+  acceptance:
+    name: Frozen native receipts and aggregate verdict
+    needs: [packages, virtual-machines]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
+      CARGO_TERM_COLOR: never
+    defaults:
+      run:
+        shell: python3 -c "import subprocess,sys; sys.exit(subprocess.call(['bash','--noprofile','--norc','-e','-o','pipefail',sys.argv[1]], close_fds=True))" {0}
+    steps:
+      - name: Check out the frozen source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare native check tools
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain)"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential perl libtext-template-perl binutils curl ca-certificates tar gzip unzip util-linux iproute2 iputils-ping
+          rustup toolchain install
+          mkdir -p "$RUNNER_TEMP/frozen-runtime" "$RUNNER_TEMP/frozen-cache"
+          echo "XDG_RUNTIME_DIR=$RUNNER_TEMP/frozen-runtime" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$RUNNER_TEMP/frozen-cache" >> "$GITHUB_ENV"
+          echo "BUNDLE=$RUNNER_TEMP/frozen-acceptance" >> "$GITHUB_ENV"
+          df -h "$RUNNER_TEMP"
+      - name: Install nextest
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-nextest@0.9.140
+      - name: Install dependency policy tool
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-deny@0.19.4
+      - name: Install RustSec audit
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-audit@0.22.2
+      - name: Restore immutable VM evidence and evaluator
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-campaign-${{ env.HEAD_SHA }}
+          path: ${{ env.BUNDLE }}
+      - name: Restore every native package receipt separately
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: package-receipt-${{ env.HEAD_SHA }}-*
+          path: ${{ runner.temp }}/package-receipts
+      - name: Verify frozen executable identities before execution
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['BUNDLE'])
+          evidence = json.loads((root/'evidence.json').read_text())
+          identity = evidence['identity']
+          if identity['source_commit'] != os.environ['HEAD_SHA']:
+              raise SystemExit('Frozen source differs from checkout')
+          for key, name in [('candidate','rust-reality'),('evaluator','rr-dev')]:
+              record = identity[key]
+              path = root/name
+              if record['path'] != name or path.is_symlink() or not path.is_file():
+                  raise SystemExit('Invalid frozen executable path')
+              if hashlib.file_digest(path.open('rb'),'sha256').hexdigest() != record['sha256']:
+                  raise SystemExit('Frozen executable digest mismatch')
+          environment_path = root/'environment.json'
+          if (identity['environment']['path'] != 'environment.json'
+              or environment_path.is_symlink() or not environment_path.is_file()
+              or hashlib.file_digest(environment_path.open('rb'),'sha256').hexdigest() != identity['environment']['sha256']):
+              raise SystemExit('Frozen environment identity mismatch')
+          environment = json.loads(environment_path.read_text())
+          for name, key in [('xray','xray_sha256'),('openssl','openssl_sha256')]:
+              path = root/name
+              if path.is_symlink() or not path.is_file() or hashlib.file_digest(path.open('rb'),'sha256').hexdigest() != environment[key]:
+                  raise SystemExit('External fixture executable digest mismatch')
+          for name in ['rr-dev','rust-reality','xray','openssl']:
+              (root/name).chmod(0o755)
+          PY
+      - name: Capture unchanged full gate and lifecycle receipts
+        timeout-minutes: 60
+        run: |
+          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case local-full-gate
+          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case lifecycle
+      - name: Capture native interoperability, mechanism, pressure and resource receipts
+        timeout-minutes: 75
+        run: |
+          for check in native-interop native-mechanism native-descriptor-pressure native-resources; do
+            "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case "$check"
+          done
+      - name: Capture the fixed 600-second connection receipt
+        timeout-minutes: 25
+        run: |
+          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case long-lived-connections
+      - name: Bind native package receipts without rebuilding them
+        run: |
+          for tier in linux-x86_64-generic linux-x86_64-musl linux-x86_64-v3 linux-aarch64-generic; do
+            "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-bind-package \
+              --evidence "$BUNDLE/evidence.json" \
+              --receipt-dir "$RUNNER_TEMP/package-receipts/package-receipt-$HEAD_SHA-$tier"
+          done
+      - name: Bind successful exact-head CI and Security
+        timeout-minutes: 5
+        run: |
+          for entry in 'ci.yml exact-head-ci' 'security.yml exact-head-security'; do
+            read -r workflow check <<< "$entry"
+            gh run list --repo "$GITHUB_REPOSITORY" --commit "$HEAD_SHA" --workflow "$workflow" \
+              --limit 1 --json headSha,status,conclusion,databaseId > "$RUNNER_TEMP/selected-run.json"
+            run_id=$(python3 - <<'PY'
+          import json, os, pathlib
+          runs=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'selected-run.json').read_text())
+          if len(runs)!=1 or runs[0]['headSha']!=os.environ['HEAD_SHA'] or runs[0]['status']!='completed' or runs[0]['conclusion']!='success':
+              raise SystemExit('Latest exact-head required workflow is missing or unsuccessful')
+          print(runs[0]['databaseId'])
+          PY
+            )
+            "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check \
+              --evidence "$BUNDLE/evidence.json" --case "$check" --run-id "$run_id"
+          done
+      - name: Require the complete frozen offline verdict
+        run: |
+          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-evaluate \
+            --evidence "$BUNDLE/evidence.json" > "$BUNDLE/final-verdict.json"
+      - name: Stage only referenced evidence and collector terminal records
+        if: always()
+        run: |
+          python3 - <<'PYPUBLIC'
+          import hashlib, json, os, pathlib, shutil
+          root=pathlib.Path(os.environ['BUNDLE'])
+          public=pathlib.Path(os.environ['RUNNER_TEMP'])/'frozen-acceptance-public'
+          public.mkdir()
+          queue=[]
+          for name in ['evidence.json','final-verdict.json','campaign-terminal.json']:
+              if (root/name).is_file(): queue.append((name,None))
+          # Collector records only, never arbitrary benchmark output directories,
+          # generated configurations, fixture keys or TLS traces.
+          for directory in root.glob('required-*'):
+              if directory.is_symlink() or not directory.is_dir(): continue
+              for name in ['command.json','terminal.json','evidence-before.json','evidence-after.json','receipt.json']:
+                  path=directory/name
+                  if path.is_file(): queue.append((str(path.relative_to(root)),None))
+          seen={}
+          def references(value):
+              if isinstance(value,dict):
+                  if set(value)=={'path','sha256'} and isinstance(value['path'],str) and isinstance(value['sha256'],str):
+                      queue.append((value['path'],value['sha256']))
+                  else:
+                      for child in value.values(): references(child)
+              elif isinstance(value,list):
+                  for child in value: references(child)
+          while queue:
+              name,expected=queue.pop()
+              relative=pathlib.PurePosixPath(name)
+              if relative.is_absolute() or '..' in relative.parts:
+                  raise SystemExit('Escaped evidence reference')
+              source=root/relative
+              component=root
+              for part in relative.parts:
+                  component=component/part
+                  if component.is_symlink(): raise SystemExit('Symlink in evidence path')
+              if source.suffix.lower() in {'.pem','.key','.p12','.pfx'}:
+                  raise SystemExit('Private fixture/trust material is not publishable evidence')
+              if source.is_symlink() or not source.is_file() or not source.resolve().is_relative_to(root.resolve()):
+                  raise SystemExit('Non-regular or missing evidence reference')
+              digest=hashlib.file_digest(source.open('rb'),'sha256').hexdigest()
+              if expected is not None and digest!=expected:
+                  raise SystemExit('Evidence changed before publication')
+              if name in seen:
+                  if seen[name]!=digest: raise SystemExit('Evidence changed while staging')
+                  continue
+              if len(seen)>=200000: raise SystemExit('Evidence reference bound exceeded')
+              seen[name]=digest
+              destination=public/relative
+              destination.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copyfile(source,destination)
+              if hashlib.file_digest(destination.open('rb'),'sha256').hexdigest()!=digest:
+                  raise SystemExit('Evidence copy changed')
+              # Walk only the typed aggregate snapshots. Native summaries also
+              # contain informational absolute {path,sha256} pairs; those are
+              # not bundle references and must never authorize filesystem reads.
+              if source.name in ['evidence.json','evidence-before.json','evidence-after.json']:
+                  if source.stat().st_size>64*1024*1024: raise SystemExit('Oversized aggregate')
+                  references(json.loads(source.read_text()))
+              elif source.name=='terminal.json' and relative.parts[0].startswith('required-'):
+                  if source.stat().st_size>64*1024*1024: raise SystemExit('Oversized terminal record')
+                  terminal=json.loads(source.read_text())
+                  for key in ['stdout','stderr']:
+                      value=terminal.get(key)
+                      if isinstance(value,dict) and set(value)=={'path','sha256'}:
+                          queue.append((value['path'],value['sha256']))
+          (public/'SHA256SUMS').write_text(''.join(digest+'  '+name+'\n' for name,digest in sorted(seen.items())))
+          PYPUBLIC
+      - name: Retain aggregate and attempted check evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frozen-acceptance-${{ env.HEAD_SHA }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/frozen-acceptance-public/
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 9

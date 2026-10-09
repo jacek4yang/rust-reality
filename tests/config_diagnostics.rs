@@ -26,6 +26,29 @@ fn check(path: &PathBuf) -> std::process::Output {
         .expect("the binary must run")
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn check_can_read_an_intentionally_inherited_configuration_descriptor() {
+    let path = workspace("inherited-config", VALID);
+    let output = Command::new("bash")
+        .args([
+            "--noprofile",
+            "--norc",
+            "-c",
+            "exec 9<\"$1\"; exec \"$2\" check --config /proc/self/fd/9",
+            "rr-inherited-config",
+        ])
+        .arg(&path)
+        .arg(env!("CARGO_BIN_EXE_rust-reality"))
+        .output()
+        .expect("isolated descriptor-passing child must run");
+    assert!(
+        output.status.success(),
+        "intentional configuration descriptor must remain readable: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// A valid standalone entry node: the shortest configuration that runs.
 const VALID: &str = r#"{
   "role": "entry",

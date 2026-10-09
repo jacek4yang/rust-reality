@@ -53,6 +53,7 @@ struct OutputLogs {
     stdout: PathBuf,
     stderr: PathBuf,
     append: bool,
+    capture: bool,
 }
 
 /// Argument values that must never appear in a diagnostic.
@@ -335,8 +336,23 @@ impl Tool {
             stdout: stdout.into(),
             stderr: stderr.into(),
             append: false,
+            capture: true,
         });
         self
+    }
+
+    /// Stream bounded output to fresh files without retaining it in memory.
+    /// Outcome output strings are empty; callers inspect the retained files.
+    /// This is for large raw evidence streams, with the same byte cap and
+    /// overflow rejection as [`Self::log_output`].
+    #[must_use]
+    pub fn log_output_only(self, stdout: impl Into<PathBuf>, stderr: impl Into<PathBuf>) -> Self {
+        let mut tool = self.log_output(stdout, stderr);
+        tool.output_logs
+            .as_mut()
+            .expect("just configured logs")
+            .capture = false;
+        tool
     }
 
     /// Appends the bounded raw output streams to existing local log files.
@@ -352,6 +368,7 @@ impl Tool {
             stdout: stdout.into(),
             stderr: stderr.into(),
             append: true,
+            capture: true,
         });
         self
     }
@@ -432,14 +449,13 @@ impl Tool {
         // Drain captured pipes concurrently while polling. Waiting for the child
         // before draining can deadlock when a tool fills a pipe.
         let capture_limit = self.capture_limit;
-        let stdout_reader = child
-            .stdout
-            .take()
-            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit, stdout_log)));
-        let stderr_reader = child
-            .stderr
-            .take()
-            .map(|pipe| thread::spawn(move || read_bounded(pipe, capture_limit, stderr_log)));
+        let capture = self.output_logs.as_ref().is_none_or(|logs| logs.capture);
+        let stdout_reader = child.stdout.take().map(|pipe| {
+            thread::spawn(move || read_bounded(pipe, capture_limit, stdout_log, capture))
+        });
+        let stderr_reader = child.stderr.take().map(|pipe| {
+            thread::spawn(move || read_bounded(pipe, capture_limit, stderr_log, capture))
+        });
         Ok(RunningTool {
             tool: self.clone(),
             started,
@@ -522,6 +538,11 @@ impl Tool {
 }
 
 impl RunningTool {
+    /// PID of the owned invocation, before its terminal wait consumes the handle.
+    #[must_use]
+    pub fn pid(&self) -> Option<u32> {
+        self.child.as_ref().map(std::process::Child::id)
+    }
     /// Returns whether the child is still running.
     ///
     /// The exit status is retained for the later wait, so observing completion
@@ -669,19 +690,24 @@ fn read_bounded(
     mut pipe: impl Read,
     limit: usize,
     mut log: Option<fs::File>,
+    in_memory: bool,
 ) -> io::Result<CapturedOutput> {
     let mut capture = CapturedOutput {
-        bytes: Vec::with_capacity(limit.min(16 * 1024)),
+        bytes: Vec::with_capacity(if in_memory { limit.min(16 * 1024) } else { 0 }),
         exceeded_limit: false,
     };
     let mut chunk = [0_u8; 16 * 1024];
+    let mut retained_bytes = 0;
     loop {
         let count = pipe.read(&mut chunk)?;
         if count == 0 {
             return Ok(capture);
         }
-        let retained = count.min(limit.saturating_sub(capture.bytes.len()));
-        capture.bytes.extend_from_slice(&chunk[..retained]);
+        let retained = count.min(limit.saturating_sub(retained_bytes));
+        retained_bytes += retained;
+        if in_memory {
+            capture.bytes.extend_from_slice(&chunk[..retained]);
+        }
         if let Some(log) = &mut log {
             log.write_all(&chunk[..retained])?;
         }
@@ -828,6 +854,28 @@ mod tests {
     fn redaction_is_case_insensitive_on_the_flag() {
         let rendered = Tool::new("tool").arg("--PrivateKey").arg("abc").redacted();
         assert!(!rendered.contains("abc"), "{rendered}");
+    }
+
+    #[test]
+    fn file_only_output_keeps_the_byte_cap_without_an_in_memory_copy() {
+        let directory = scratch("rr-file-only-output");
+        let stdout = directory.join("stdout");
+        let stderr = directory.join("stderr");
+        let command = Tool::new("head")
+            .args(["-c", "4096", "/dev/zero"])
+            .timeout(Duration::from_secs(2))
+            .log_output_only(&stdout, &stderr);
+        let outcome = command.clone().capture_limit(8192).probe().unwrap();
+        assert!(outcome.success());
+        assert!(outcome.stdout.is_empty() && outcome.stderr.is_empty());
+        assert_eq!(fs::read(&stdout).unwrap(), vec![0; 4096]);
+        let error = command.capture_limit(1024).probe().unwrap_err();
+        assert!(matches!(
+            error,
+            ToolError::OutputTooLarge { limit: 1024, .. }
+        ));
+        assert_eq!(fs::metadata(&stdout).unwrap().len(), 1024);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

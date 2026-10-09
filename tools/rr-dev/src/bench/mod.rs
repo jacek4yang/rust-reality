@@ -68,6 +68,7 @@ pub mod schedstat;
 pub mod slot;
 pub mod soak;
 pub mod socks_server;
+pub mod stability;
 pub mod suites;
 pub mod sysctl;
 pub mod throughput;

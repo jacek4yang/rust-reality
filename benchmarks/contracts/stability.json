@@ -1,0 +1,156 @@
+{
+  "schema": "rr-stability-contract/v1",
+  "resource_sampling": "active-ceilings-recovery-ownership",
+  "cycles": 8,
+  "transfers_per_line": 100,
+  "concurrency": [
+    8,
+    32,
+    8,
+    32,
+    8,
+    32,
+    8,
+    32
+  ],
+  "checkpoint_offsets_ms": [
+    0,
+    1000,
+    5000,
+    10000,
+    30000,
+    60000,
+    120000,
+    180000
+  ],
+  "checkpoint_tolerance_ms": 2000,
+  "clock_max_offset_ms": 250,
+  "clock_max_roundtrip_ms": 500,
+  "clock_max_drift_ms": 50,
+  "cycle_interval_ms": 183000,
+  "load_start_ms": 3000,
+  "fault_interval_ms": 250000,
+  "fault_duration_ms": 10000,
+  "rtt_duration_ms": 60000,
+  "rtt_concurrency_per_line": 2,
+  "fault_concurrency_per_line": 4,
+  "integrity_duration_ms": 60000,
+  "integrity_recovery_ms": 180000,
+  "fault_checkpoint_offsets_ms": [15000, 60000, 120000, 200000, 240000],
+  "native_recovery_offsets_ms": [5000, 60000, 180000],
+  "native_recovered_rss_growth_kib": 32768,
+  "native_peak_hwm_growth_kib": 65536,
+  "native_thread_growth": 8,
+  "native_duration_ms": 1800000,
+  "native_minimum_rounds": 3,
+  "native_roles": ["standalone", "handoff-line", "handoff-landing", "nxr-line", "nxr-landing", "socks-line"],
+  "recovery_deadline_ms": 43000,
+  "transfer_deadline_ms": 43000,
+  "recovered_rss_growth_kib": 32768,
+  "peak_rss_growth_kib": 98304,
+  "recovered_thread_growth": 8,
+  "peak_thread_growth": 16,
+  "cells": [
+    "handoff/ordinary",
+    "nxr/ordinary",
+    "handoff/constrained",
+    "nxr/constrained"
+  ],
+  "roles": [
+    "line-a",
+    "line-b",
+    "landing"
+  ],
+  "faults": [
+    "reload",
+    "warm",
+    "stale",
+    "cold",
+    "landing-restart",
+    "line-a-partition",
+    "rtt-50",
+    "rtt-100",
+    "rtt-200",
+    "rtt-100-loss-1"
+  ],
+  "payload_bytes": [
+    1048576,
+    4194304
+  ],
+  "directions": [
+    "upload",
+    "download",
+    "bidirectional"
+  ],
+  "required_checks": [
+    "local-full-gate",
+    "exact-head-ci",
+    "exact-head-security",
+    "native-interop",
+    "native-mechanism",
+    "native-descriptor-pressure",
+    "native-resources",
+    "replay-expiry-reuse",
+    "pipe-pool-reuse",
+    "descriptor-permit-ownership",
+    "generation-retirement",
+    "cancellation",
+    "inactivity",
+    "write-stall",
+    "half-close",
+    "long-lived-connections",
+    "package-gnu",
+    "package-musl",
+    "package-v3",
+    "package-aarch64"
+  ],
+  "deterministic_tests": {
+    "replay-expiry-reuse": [
+      "protocol::reality::replay::tests::expired_entries_release_global_capacity",
+      "protocol::reality::replay::tests::saturated_replay_storage_reuses_allocation_after_expiry",
+      "protocol::handoff::tests::replay_capacity_recovers_expired_entries_from_other_shards",
+      "server::production::monitor::tests::idle_landing_replay_entries_are_reclaimed_without_another_admission"
+    ],
+    "pipe-pool-reuse": [
+      "transport::tcp_relay::tests::saturated_pipe_pool_reuses_bounded_storage_and_descriptor_permits",
+      "transport::tcp_relay::tests::a_dirty_pipe_is_discarded_never_recycled",
+      "transport::tcp_relay::tests::the_pool_shrinks_past_its_keep_count_and_releases_units"
+    ],
+    "descriptor-permit-ownership": [
+      "transport::tcp_relay::tests::a_splice_relay_reserves_four_descriptor_units_before_creating_pipes",
+      "transport::tcp_relay::tests::repeated_splice_relays_return_descriptor_units_to_baseline",
+      "transport::fd_budget::tests::a_multi_unit_permit_is_all_or_nothing",
+      "transport::fd_budget::tests::concurrent_acquisition_never_overshoots",
+      "server::connector::tests::failed_and_timed_out_dials_return_acquired_descriptor_permits"
+    ],
+    "generation-retirement": [
+      "server::production::store::tests::retired_connection_runtime_is_released_after_its_last_connection",
+      "server::production::store::tests::retiring_a_generation_deactivates_only_its_own_pre_auth_pool"
+    ],
+    "cancellation": [
+      "runtime::connection::tests::abort_releases_connection_captures_and_reaps_the_task",
+      "runtime::connection::tests::dropping_task_set_releases_an_unpolled_capture",
+      "transport::tcp_relay::tests::a_cancelled_splice_relay_releases_its_descriptor_units",
+      "server::connector::tests::cancelling_a_pending_dial_returns_its_descriptor_reservation"
+    ],
+    "inactivity": [
+      "io_activity::tests::only_whole_session_inactivity_expires",
+      "io_activity::tests::raw_transition_disarms_shared_inactivity_for_both_directions"
+    ],
+    "write-stall": [
+      "transport::tcp_relay::tests::a_stalled_directional_buffered_relay_times_out_and_returns_its_permit",
+      "transport::tcp_relay::tests::a_stalled_directional_splice_relay_times_out_and_returns_its_units"
+    ],
+    "half-close": [
+      "transport::tcp_relay::tests::bounded_buffered_relay_preserves_half_close",
+      "transport::tcp_relay::tests::nonblocking_splice_relay_preserves_half_close",
+      "transport::tcp_relay::tests::buffered_asymmetry_and_half_close_preserve_both_directions",
+      "transport::tcp_relay::tests::splice_asymmetry_and_half_close_preserve_both_directions"
+    ]
+  },
+  "long_lived_minimum_ms": 600000,
+  "long_lived_test": "server::vision::tests::authenticated_connections_survive_quiet_directions_for_600s",
+  "recovered_line_fds": 768,
+  "peak_line_fds": 2048,
+  "peak_landing_fds": 1024
+}

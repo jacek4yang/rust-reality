@@ -229,11 +229,11 @@ by deleting four panic sites and nothing after it added any machine code at all.
 
 Two limits of this evidence are stated rather than implied. These legs exercise
 REALITY setup, fallback, Vision framed, Vision Direct, and bidirectional
-transfer; they do **not** exercise Handoff or NXR, which are covered at release
-time by the dual-VPS active canary. And the earlier headline Xray-comparison
-tables were measured on the v1.7.0 and v1.6.1 binaries; they are carried forward
-because neutrality was formally established, not because they were re-measured
-here.
+transfer; they do **not** exercise Handoff or NXR, which require separate
+[multi-node release qualification](release-process.md#evidence-tiers-and-invalidation).
+The earlier headline Xray-comparison tables were measured on the v1.7.0 and
+v1.6.1 binaries; they are carried forward because neutrality was formally
+established, not because they were re-measured here.
 
 [docs/en/operations/memory-audit-v1.8.md](operations/memory-audit-v1.8.md) records the ownership map, copy ledger, allocation
 ledger, and async future sizes, including one measured duplication that remains
@@ -491,7 +491,9 @@ contains prefetched payload, instead of reserving a full record up front.
 Replay caches combine a hash table for exact duplicate detection with a
 deadline min-heap for expiry. REALITY purges the selected shard; NXR/Handoff
 also do so on the normal reserve path and scan all sixteen shards only after
-real global capacity pressure. With 4,096 live nonces, reserving a batch of 64
+real global capacity pressure. The off-path resource maintenance task also
+reclaims expired entries once per second while idle; it does not change the
+reserve-path algorithm or authentication deadlines. With 4,096 live nonces, reserving a batch of 64
 fell from 593.18 µs for the legacy full-retain path to 17.43 µs (**34.0×**);
 purging a no-expiry live set is cardinality-independent at about 282 ns rather
 than 10.54 µs. REALITY keys are already server-computed SHA-256 digests, so its
@@ -547,8 +549,9 @@ The parser property gate compares owned and borrowed VLESS decoding for every
 prefix of a 533-byte maximum header and for zero/one/255 replacements at every
 byte. Replay, admission, FD, and relay tests cover cancellation, poison
 recovery, capacity reclamation, and contention. Scheduled CI additionally runs
-the complete test suite under AddressSanitizer/LeakSanitizer and the concurrent
-REALITY replay race under ThreadSanitizer. Monotonic deadlines and counters
+the complete test suite under AddressSanitizer/LeakSanitizer. Concurrent
+REALITY replay tests remain in the ordinary suite; ThreadSanitizer was removed
+by ADR 0035 with its dynamic data-race coverage explicitly relinquished. Monotonic deadlines and counters
 use checked arithmetic; exhausted domains return an explicit unavailable error
 instead of saturating into an unsafe success state.
 

@@ -1,0 +1,239 @@
+{
+  "binaries": {
+    "openssl": {
+      "identity": "OpenSSL 3.5.6 7 Apr 2026 (Library: OpenSSL 3.5.6 7 Apr 2026)\nbuilt on: Tue Oct  6 16:13:29 2026 UTC\nplatform: linux-x86_64\noptions:  bn(64,64)\ncompiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG\nOPENSSLDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/ssl\"\nENGINESDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/lib64/engines-3\"\nMODULESDIR: \"/home/runner/work/_temp/rr-fixtures/openssl/lib64/ossl-modules\"\nSeeding source: os-specific\nCPUINFO: OPENSSL_ia32cap=0xfeda3203078bffff:0x00405fc6f1bf07a9:0x0000002000000010:0x0000000000000000:0x0000000000000000",
+      "path": "/home/runner/work/_temp/rr-fixtures/openssl/bin/openssl",
+      "sha256": "43109acfd57bd7a82986df321b631e1dd673079278806b4ad31d067a5526585c"
+    },
+    "rrDevHelpers": {
+      "path": "/home/runner/work/rust-reality/rust-reality/tools/target/debug/rr-dev",
+      "sha256": "1d1bcb4e1b0d9f25e11c3d07f55f007b93814162a785cb39f43272d4fd1ac908"
+    },
+    "rustReality": {
+      "identity": "{\"gitCommit\":\"ec0d0a3a99769c121930c0ab5c6a5db13d052cea\",\"version\":\"2.0.1\"}",
+      "path": "/home/runner/work/_temp/qualification/frozen/binary/rust-reality",
+      "sha256": "d7d32f53e73bc0dcc8565a287165e9ecf3188e2ee0ae19c1c7f6e3de30902e34"
+    },
+    "xray": {
+      "identity": "Xray 26.9.9 (Xray, Penetrates Everything.) 52a412d (go1.27.1 linux/amd64)",
+      "path": "/home/runner/work/_temp/rr-fixtures/xray/xray",
+      "sha256": "c4ae6798c38e0e5343b192406746333cd0ba7ff3eb984f8c4b9939dcb68c3f8a"
+    }
+  },
+  "completedAt": "2026-10-06T17:04:18Z",
+  "configSha256": {
+    "handoffLanding": "abef4c1d6111e7e04cf3b3e75e091bc459026d3049c990d87fd9a66f7cc28f9a",
+    "handoffLine": "890dcbd8a29aa5a7e2894adc4bf6c5c0a3ba6a44c33391107853b982e65202b8",
+    "nxrLanding": "b388af6dc845acbca34f1f917db43d1fa6e2e960aeb93ebbe91fdc6ce2fd0a0a",
+    "nxrLine": "dafa69d80ee91ff943177958a5cc1fd7bdb2eeb65b489f3f14a6bb4b067e9cbb",
+    "socksLine": "ee0daa553d75d9905292643067b4a3c0ac49efb01fb79feb24016a6f36a68f34",
+    "standalone": "601de9f98b8923d28dab8aef58533f4170978fcdd5983cde32c80a64d005d6b2"
+  },
+  "distributedGates": {
+    "attempts": 32,
+    "handoffSeq1": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": true,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    },
+    "intervalSeconds": 60,
+    "nxrByteIntegrity": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": null,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    },
+    "ok": true,
+    "payloadBytes": 1048576,
+    "payloadSha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+    "proxy": {
+      "appendedWireLength": 139,
+      "shaped": 32
+    },
+    "reload": {
+      "expectedGeneration": 1,
+      "triggerAttempts": 1
+    },
+    "requiredAttempts": 32,
+    "schemaVersion": 3,
+    "socks5ByteIntegrity": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": null,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    }
+  },
+  "durationSeconds": 1800.0,
+  "elapsedSeconds": 1878.449527431,
+  "harness": "soak",
+  "implementation": "rust-reality",
+  "longHorizonQualified": false,
+  "memorySlopeGateBasis": {
+    "aggregate": "pss",
+    "perProcess": "rss"
+  },
+  "memoryTailSlopeGateApplied": true,
+  "minimumRounds": 3,
+  "ok": true,
+  "payloadBytes": 4194304,
+  "payloadSha256": "2b07811057df887086f06a67edc6ebf911de8b6741156e7a2eb1416a4b8b1b2e",
+  "portBlock": [
+    33137,
+    34179,
+    34999,
+    42259,
+    46365,
+    43029,
+    39283,
+    44847,
+    38811,
+    32811,
+    46651,
+    46267,
+    38769,
+    42417,
+    41293
+  ],
+  "ports": {
+    "handoffCover": 43029,
+    "handoffCoverUpstream": 46365,
+    "handoffLanding": 44847,
+    "handoffLine": 39283,
+    "handoffSocks": 38811,
+    "httpOrigin": 42259,
+    "httpsOrigin": 34999,
+    "nxrLanding": 46651,
+    "nxrLine": 32811,
+    "nxrSocks": 46267,
+    "socksClient": 41293,
+    "socksLine": 38769,
+    "socksUpstream": 42417,
+    "standalone": 33137,
+    "standaloneSocks": 34179
+  },
+  "resourceAggregate": {
+    "fdGrowth": -6,
+    "fdPeakGrowth": 8,
+    "pssAvailable": true,
+    "pssGrowthMiB": 3.4658203125,
+    "pssSampledPeakGrowthMiB": 3.6357421875,
+    "pssTailSlopeMiBPerHour": 1.3897217392802665,
+    "rssGrowthMiB": 4.078125,
+    "rssPeakGrowthMiB": 4.515625,
+    "rssSampledPeakGrowthMiB": 4.2578125,
+    "rssTailSlopeMiBPerHour": 1.4081478602340585,
+    "threadGrowth": -1,
+    "threadPeakGrowth": 4
+  },
+  "resourceByProcess": {
+    "handoff-landing": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.9775390625,
+      "pssSampledPeakGrowthMiB": 0.9775390625,
+      "pssTailSlopeMiBPerHour": 0.5016437719183637,
+      "rssGrowthMiB": 1.05078125,
+      "rssPeakGrowthMiB": 1.05078125,
+      "rssSampledPeakGrowthMiB": 1.05078125,
+      "rssTailSlopeMiBPerHour": 0.509311435310032,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "handoff-line": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.2705078125,
+      "pssSampledPeakGrowthMiB": 0.2705078125,
+      "pssTailSlopeMiBPerHour": 0.3299755235244278,
+      "rssGrowthMiB": 0.3203125,
+      "rssPeakGrowthMiB": 0.3203125,
+      "rssSampledPeakGrowthMiB": 0.3203125,
+      "rssTailSlopeMiBPerHour": 0.33074822206704163,
+      "threadGrowth": -1,
+      "threadPeakGrowth": 0
+    },
+    "nxr-landing": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.2265625,
+      "pssSampledPeakGrowthMiB": 0.2265625,
+      "pssTailSlopeMiBPerHour": 0.13593115842918543,
+      "rssGrowthMiB": 0.27734375,
+      "rssPeakGrowthMiB": 0.27734375,
+      "rssSampledPeakGrowthMiB": 0.27734375,
+      "rssTailSlopeMiBPerHour": 0.143593702591066,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "nxr-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.5302734375,
+      "pssSampledPeakGrowthMiB": 0.6533203125,
+      "pssTailSlopeMiBPerHour": 0.19563497664139673,
+      "rssGrowthMiB": 0.5546875,
+      "rssPeakGrowthMiB": 0.7109375,
+      "rssSampledPeakGrowthMiB": 0.6796875,
+      "rssTailSlopeMiBPerHour": 0.19672084998488623,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "socks-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 0,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.41015625,
+      "pssSampledPeakGrowthMiB": 0.498046875,
+      "pssTailSlopeMiBPerHour": 0.1573224162634825,
+      "rssGrowthMiB": 0.4453125,
+      "rssPeakGrowthMiB": 0.53515625,
+      "rssSampledPeakGrowthMiB": 0.53515625,
+      "rssTailSlopeMiBPerHour": 0.15778194000522056,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "standalone": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 1.05078125,
+      "pssSampledPeakGrowthMiB": 1.1201171875,
+      "pssTailSlopeMiBPerHour": 0.06921389250341055,
+      "rssGrowthMiB": 1.4296875,
+      "rssPeakGrowthMiB": 1.62109375,
+      "rssSampledPeakGrowthMiB": 1.5,
+      "rssTailSlopeMiBPerHour": 0.06999171027581219,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 0
+    }
+  },
+  "resources": {
+    "fdGrowth": -6,
+    "fdPeakGrowth": 8,
+    "pssAvailable": true,
+    "pssGrowthMiB": 3.4658203125,
+    "pssSampledPeakGrowthMiB": 3.6357421875,
+    "pssTailSlopeMiBPerHour": 1.3897217392802665,
+    "rssGrowthMiB": 4.078125,
+    "rssPeakGrowthMiB": 4.515625,
+    "rssSampledPeakGrowthMiB": 4.2578125,
+    "rssTailSlopeMiBPerHour": 1.4081478602340585,
+    "threadGrowth": -1,
+    "threadPeakGrowth": 4
+  },
+  "rounds": 281,
+  "runId": "37492205352-soak",
+  "schemaVersion": 3,
+  "transferFailures": 0
+}

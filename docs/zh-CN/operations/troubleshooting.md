@@ -305,6 +305,11 @@ LANDING 内嵌的 egress 准入/描述符失败仍归类为 `resource_limit`，�
 归类为 `timeout`。配置的 egress 发生准入拒绝时，还会输出已有的
 `admission_limited` 事件。这些分类用于区分本地限额和网络拒绝，不改变准入策略。
 
+已建立的 Vision/NXR 会话发生套接字故障（例如 LANDING 退出后出现 broken pipe）时，
+归类为 `outbound`，并带有 `failure.stage: "session_relay"`；有类型信息的超时和
+资源故障仍保留各自分类。这些故障不属于 `protocol` 拒绝：该类别表示协议输入格式
+错误，而不是已建立的连接断开。
+
 把 `log.level` 设成 `debug` 可以看到每连接事件。它很吵，但那是能把一个连接的一生从头
 跟到尾的级别。
 

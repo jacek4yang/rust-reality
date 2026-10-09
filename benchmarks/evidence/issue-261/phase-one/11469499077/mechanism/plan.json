@@ -1,0 +1,43 @@
+{
+  "concurrencies": [
+    8,
+    32
+  ],
+  "connectionsPerSample": 96,
+  "evaluateNetemPerformance": true,
+  "formal": true,
+  "kind": "mechanism",
+  "longflowMiB": 512,
+  "perDirectionLossPercent": [
+    0.0
+  ],
+  "rttConcurrencies": [
+    1
+  ],
+  "rttConnectionsPerSample": 32,
+  "rttsMs": [
+    50,
+    100,
+    200
+  ],
+  "samples": 3,
+  "schemaVersion": 1,
+  "sections": [
+    "rtt"
+  ],
+  "throughputCells": [
+    {
+      "concurrency": 1,
+      "payloadMiB": 32
+    },
+    {
+      "concurrency": 32,
+      "payloadMiB": 32
+    },
+    {
+      "concurrency": 32,
+      "payloadMiB": 512
+    }
+  ],
+  "throughputSamples": 3
+}

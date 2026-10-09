@@ -67,6 +67,12 @@ pub(super) async fn run_listener(
     // that originates outside this process's accounting.
     let mut reserve = EmergencyDescriptor::open().ok();
     let mut last_pressure = fd_budget.pressure();
+    // Qualification diagnostics use the existing debug log vocabulary. The
+    // timer is disabled for ordinary info-level operation and reads the actual
+    // JoinSet rather than maintaining another per-connection counter.
+    let ownership_logging = runtime.load().logger.debug_enabled();
+    let mut ownership_tick = time::interval(Duration::from_secs(1));
+    ownership_tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
     loop {
         // At critical resource pressure, pause before touching the listener.
         // The wait uses `Notify`, never a poll loop. Completed tasks are
@@ -111,6 +117,14 @@ pub(super) async fn run_listener(
         }
 
         tokio::select! {
+            _ = ownership_tick.tick(), if ownership_logging => {
+                let snapshot = runtime.load();
+                emit_debug(&snapshot.logger, || LogEvent::ConnectionTaskOwnership {
+                    address,
+                    tracked_tasks: connections.len(),
+                });
+                drop(fd_permit);
+            }
             changed = shutdown.changed() => {
                 drop(fd_permit);
                 if changed.is_err() || *shutdown.borrow() {

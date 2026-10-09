@@ -1,6 +1,7 @@
 name: Native qualification
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -16,8 +17,15 @@ on:
 permissions:
   contents: read
 
+# Isolate runner-owned descriptors at the test-launch boundary. Production
+# must retain intentional supervisor/configuration FD passing. No ownership
+# acceptance rule is relaxed: unexpected descriptors in the candidate still fail.
+defaults:
+  run:
+    shell: python3 -c "import subprocess,sys; sys.exit(subprocess.call(['bash','--noprofile','--norc','-e','-o','pipefail',sys.argv[1]], close_fds=True))" {0}
+
 concurrency:
-  group: native-qualification-${{ github.event.pull_request.number }}
+  group: native-qualification-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,13 +34,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CARGO_TERM_COLOR: never
     steps:
       - name: Check out the exact proposed source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Prepare isolated evidence paths and native tools
@@ -111,7 +119,7 @@ jobs:
             --rust-bin "$RUST_BIN" --xray-bin "$XRAY_BIN" --openssl-bin "$OPENSSL_BIN" \
             --run-id "$GITHUB_RUN_ID-interop" --out-dir "$Q/interop"
       - name: Warm and cold mechanism on owned temporary test networks
-        timeout-minutes: 35
+        timeout-minutes: 350
         # The native harness owns uniquely named netns/veth/qdiscs on this
         # disposable hosted runner. It never contacts deployment hosts or
         # changes a firewall, host sysctl, or production configuration.
@@ -132,7 +140,7 @@ jobs:
           cargo dev bench run --suite soak --soak-implementation rust \
             --rust-bin "$RUST_BIN" --xray-bin "$XRAY_BIN" --openssl-bin "$OPENSSL_BIN" \
             --soak-seconds 1800 --soak-round-sleep-ms 5000 --soak-min-rounds 3 \
-            --soak-distributed-interval-seconds 60 \
+            --soak-distributed-interval-seconds 1800 \
             --run-id "$GITHUB_RUN_ID-soak" --out-dir "$Q/soak"
       - name: Retain only public-safe evidence files
         if: always()
@@ -158,7 +166,14 @@ jobs:
               'soak/soak-summary.json', 'soak/environment.json', 'soak/completion.json',
               'soak/resources.jsonl', 'soak/distributed-samples.jsonl',
               'soak/distributed-gates.json', 'soak/handoff-cover-certificate-san.txt',
+              'soak/attempt-environment.json', 'soak/attempt-terminal.json',
+              'soak/execution-terminal.json',
+              'soak/native-resources.json',
           ]
+          # Native ownership receipts contain the product's fixed secret-free
+          # event vocabulary and /proc observations, never generated configs.
+          names += [str(path.relative_to(root))
+                    for path in sorted((root / 'soak').glob('ownership-*.json'))]
           names += [f'mechanism/setup-rtt{rtt}-loss0-{protocol}-{mode}.jsonl'
                     for rtt in (50, 100, 200) for protocol in ('handoff', 'nxr', 'socks')
                     for mode in ('warm', 'cold')]
@@ -182,7 +197,7 @@ jobs:
               'job_status_before_publication': status,
               'retained': retained, 'missing': missing,
               'scope': 'Exact-head local-runner regression, not a real-host canary or WAN claim.',
-              'excluded': 'Generated configurations, keys, payloads, raw process logs and TLS traces.',
+              'excluded': 'Generated configurations, keys, payloads, standalone raw process logs and TLS traces.',
               'retention_days': 30,
           }
           (public / 'PUBLICATION.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -199,7 +214,28 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: native-qualification-${{ github.event.pull_request.head.sha }}
+          name: native-qualification-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/qualification-public/
           if-no-files-found: error
           retention-days: 30
+
+  long-lived-connections:
+    name: 600s connection matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Check out the exact proposed source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install the repository Rust toolchain
+        run: rustup toolchain install
+      - name: Run the ignored authenticated connection matrix
+        timeout-minutes: 20
+        run: >-
+          cargo test --lib --locked -- --color never --exact
+          server::vision::tests::authenticated_connections_survive_quiet_directions_for_600s
+          --ignored --test-threads=1

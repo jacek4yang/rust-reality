@@ -194,6 +194,33 @@ mod tests {
     }
 
     #[test]
+    fn every_bounded_peer_schedule_terminates_without_reopening() {
+        // Explore non-monotonic peer observations as well as delayed arrival.
+        // No executor, wall clock or sleeps are involved.
+        for schedule in 0_u16..256 {
+            let mut policy = PairRendezvous::new();
+            let mut committed = false;
+            let mut yields = 0;
+            for step in 0..8 {
+                let peer = schedule & (1 << step) != 0;
+                let decision = policy.step(peer);
+                if committed {
+                    assert_eq!(decision, RendezvousStep::Commit);
+                }
+                match decision {
+                    RendezvousStep::Yield => yields += 1,
+                    RendezvousStep::Commit => committed = true,
+                }
+                assert!(yields <= PairRendezvous::YIELD_BUDGET);
+                assert_eq!(policy.yields_spent(), yields);
+                if step >= usize::from(PairRendezvous::YIELD_BUDGET) {
+                    assert!(committed, "schedule {schedule} did not terminate");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn rendezvous_values_remain_compact() {
         assert_eq!(core::mem::size_of::<PairRendezvous>(), 2);
         assert_eq!(core::mem::size_of::<RendezvousStep>(), 1);

@@ -277,6 +277,47 @@ mod tests {
     }
 
     #[test]
+    fn every_short_write_failure_boundary_preserves_retry_ownership() {
+        // Inject a failure after every cumulative prefix for both attempt types.
+        // This checks the actual production decision types, not a parallel model.
+        for length in 1..=256 {
+            for written in 0..=length {
+                for transport in [AttemptTransport::Warm, AttemptTransport::Cold] {
+                    let progress = WriteProgress::from_written(written, length);
+                    let alternate =
+                        progress.permits_fresh_attempt() && transport.permits_alternate_attempt();
+                    assert_eq!(
+                        alternate,
+                        written < length && transport == AttemptTransport::Warm
+                    );
+                    match progress.split() {
+                        Ok(commit) => {
+                            assert_eq!(written, length);
+                            assert!(!alternate);
+                            commit.commit_transport_ownership();
+                        }
+                        Err(retry) => {
+                            assert!(written < length);
+                            assert_eq!(retry.bytes_discarded(), written);
+                            if alternate {
+                                let next = transport.alternate_attempt().unwrap();
+                                assert_eq!(next, AttemptTransport::Cold);
+                                assert!(!next.permits_alternate_attempt());
+                                // Fresh authentication restarts at zero, never
+                                // at the discarded prefix of the old transport.
+                                assert_eq!(
+                                    WriteProgress::from_written(0, length),
+                                    WriteProgress::NoBytesWritten
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn transfer_values_remain_compact() {
         assert_eq!(core::mem::size_of::<AttemptTransport>(), 1);
         assert_eq!(core::mem::size_of::<super::CommittedWrite>(), 0);

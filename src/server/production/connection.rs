@@ -273,6 +273,9 @@ fn vision_rejection_reason(error: &VisionSessionError) -> RejectionReason {
         {
             RejectionReason::Timeout
         }
+        VisionSessionError::Relay(error) | VisionSessionError::Io(error) => {
+            connect_io_rejection_reason(error)
+        }
         VisionSessionError::Route(_) | VisionSessionError::HandoffLine(_) => {
             RejectionReason::Outbound
         }
@@ -407,6 +410,26 @@ mod tests {
     }
 
     #[test]
+    fn established_socket_failures_are_not_malformed_protocol_input() {
+        use crate::{logging::RejectionReason, server::vision::VisionSessionError};
+
+        for error in [
+            VisionSessionError::Io(io::Error::from(io::ErrorKind::BrokenPipe)),
+            VisionSessionError::Relay(io::Error::from(io::ErrorKind::ConnectionAborted)),
+        ] {
+            assert_eq!(
+                ConnectionRunError::Vision(error).rejection_reason(),
+                RejectionReason::Outbound,
+            );
+        }
+        assert_eq!(
+            ConnectionRunError::Vision(VisionSessionError::DestinationTruncatedTlsRecord)
+                .rejection_reason(),
+            RejectionReason::Protocol,
+        );
+    }
+
+    #[test]
     fn zero_byte_warm_retirement_is_quiet_for_both_landing_protocols() {
         assert!(
             ConnectionRunError::Handoff(HandoffLandingError::PreAuthPeerClosed)
@@ -517,16 +540,6 @@ mod tests {
             error.rejection_reason(),
             RejectionReason::Timeout,
             "a liveness timeout that truncated a live transfer is still a timeout"
-        );
-
-        let error = ConnectionRunError::Vision(VisionSessionError::Relay(io::Error::new(
-            io::ErrorKind::ConnectionAborted,
-            "peer abort",
-        )));
-        assert_eq!(
-            error.rejection_reason(),
-            RejectionReason::Protocol,
-            "a plain relay abort without a timeout payload stays a protocol rejection"
         );
     }
 }

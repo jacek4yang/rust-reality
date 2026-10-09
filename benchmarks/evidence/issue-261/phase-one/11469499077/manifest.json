@@ -1,0 +1,269 @@
+{
+  "artifact": {
+    "id": 11469499077,
+    "node_id": "MDg6QXJ0aWZhY3QxMTQ2OTQ5OTA3Nw==",
+    "name": "native-qualification-583ffed78f3a943b8a2235d158060a537ec284b2",
+    "size_in_bytes": 3431047,
+    "url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11469499077",
+    "archive_download_url": "https://api.github.com/repos/jacek4yang/rust-reality/actions/artifacts/11469499077/zip",
+    "expired": false,
+    "digest": "sha256:0b8b475df7178c42ee8682840991f18bc0f57de2a09fc6dbd974d18dc82ecfd0",
+    "created_at": "2026-10-07T08:24:22Z",
+    "updated_at": "2026-10-07T08:24:22Z",
+    "expires_at": "2026-11-06T08:24:22Z",
+    "workflow_run": {
+      "id": 37586749806,
+      "repository_id": 1305592924,
+      "head_repository_id": 1305592924,
+      "head_branch": "phase/1-memory-closure",
+      "head_sha": "583ffed78f3a943b8a2235d158060a537ec284b2"
+    }
+  },
+  "retainedMembers": [
+    {
+      "path": "PUBLICATION.json",
+      "sha256": "7c20d891941ac385aeece5d32d4894209530ddc5b4a3fbaffa862eea1f25bda4",
+      "bytes": 2258
+    },
+    {
+      "path": "SHA256SUMS",
+      "sha256": "718b79d5a963f3de9edbd6d35d5bde83c38a8936864f8c36c6cd38e1287e2692",
+      "bytes": 4658
+    },
+    {
+      "path": "frozen/freeze.json",
+      "sha256": "ccf0673a0ca292a4eaa3855c3db5f5d02ebfae2f1f4b8a098d70b42c12d9b48d",
+      "bytes": 435
+    },
+    {
+      "path": "soak/resources.jsonl",
+      "sha256": "1892433ead239bb88c7f77af0ce5eb58fdec27d3d99669f06b5991f8abac81dd",
+      "bytes": 336269
+    },
+    {
+      "path": "soak/soak-summary.json",
+      "sha256": "be48581c621a5880e9e52984ce83e8846760f37edd5beb35577d5ebc42c91a2d",
+      "bytes": 7975
+    },
+    {
+      "path": "soak/distributed-gates.json",
+      "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760",
+      "bytes": 902
+    },
+    {
+      "path": "soak/distributed-samples.jsonl",
+      "sha256": "336c04c9322fb5aaf34d560008c024aeb70a84b085f972fdea17508f234af8b4",
+      "bytes": 38568
+    },
+    {
+      "path": "soak/completion.json",
+      "sha256": "74217d72c97a9d6579f68b056c236e2571fc8d7c16401050881634034bf00d78",
+      "bytes": 309
+    },
+    {
+      "path": "identities.txt",
+      "sha256": "0e45f524467f49dc9bb8993dbf37226d995a31a5b04266b228657ce11bfc5534",
+      "bytes": 1958
+    },
+    {
+      "path": "frozen/SHA256SUMS",
+      "sha256": "6deb7c2064539f22d94e0e688b635cdf042d5a2bd2cb7d75cbb435be03b70f6a",
+      "bytes": 86
+    },
+    {
+      "path": "interop/summary.json",
+      "sha256": "303af12ef19ab543a0ffb67c7ece921a8662069a60cb604749a90a84aaac4086",
+      "bytes": 2142
+    },
+    {
+      "path": "interop/environment.json",
+      "sha256": "303af12ef19ab543a0ffb67c7ece921a8662069a60cb604749a90a84aaac4086",
+      "bytes": 2142
+    },
+    {
+      "path": "interop/completion.json",
+      "sha256": "c157e27cd9bb9ea94a5bf69940dfcfe680926db46086dbfa2f4d63751028bd34",
+      "bytes": 326
+    },
+    {
+      "path": "interop/certificate-san.txt",
+      "sha256": "4ac154f1a5170b4e8994643855b0ed807756e8cbc1d7d0f48eb0fdfedf26500b",
+      "bytes": 73,
+      "container": "verbatim-text.tar.xz"
+    },
+    {
+      "path": "pressure/pressure-result.json",
+      "sha256": "27616b0f22b11764e9aabf6b8cfca66c79b340f345cff42212fc828ae6b7ed59",
+      "bytes": 557
+    },
+    {
+      "path": "pressure/gate-summary.json",
+      "sha256": "3766355d799df37c98688ec5468c3a3f0b7ea85681518e35302746cb5d3c1f85",
+      "bytes": 2973
+    },
+    {
+      "path": "pressure/environment.json",
+      "sha256": "3766355d799df37c98688ec5468c3a3f0b7ea85681518e35302746cb5d3c1f85",
+      "bytes": 2973
+    },
+    {
+      "path": "pressure/completion.json",
+      "sha256": "79d8c5bb485c1190acd69a8c460b06ac57dba48a84db4126555e3adc39af32c7",
+      "bytes": 329
+    },
+    {
+      "path": "mechanism/plan.json",
+      "sha256": "10cdaa2ea0f662ecb00f8150a98b20708b9d5304db3d656535653779b5055ce0",
+      "bytes": 633
+    },
+    {
+      "path": "mechanism/environment.json",
+      "sha256": "449fccb264e94ef3afe8af1163613d5f9ae1caa000483fcb1f692c24259c73a0",
+      "bytes": 687
+    },
+    {
+      "path": "mechanism/summary.json",
+      "sha256": "ca978f1555899b9fb8ec578f9e9402c2e3d2abacfae6cb9f75d20c97c93beeb1",
+      "bytes": 21781
+    },
+    {
+      "path": "mechanism/summary-netem.json",
+      "sha256": "1fe72e148c613d1648656114464cca162db696257d5889c5fd702b46a967d7ba",
+      "bytes": 19392
+    },
+    {
+      "path": "mechanism/run-contract.json",
+      "sha256": "ba97f925c7f3d2f0b313d8792918ddf3fbf3f9817fc3738b386d9cfcd22ad4fa",
+      "bytes": 1024
+    },
+    {
+      "path": "mechanism/run-completion.json",
+      "sha256": "87dd32a21a231ead09583e150888d3b70abf24dd7c83c31c4eb658898842cf1a",
+      "bytes": 324
+    },
+    {
+      "path": "mechanism/rtt/profiles.jsonl",
+      "sha256": "0742d710e3dd25cfb63ba9d19abd459de7e93a87061ada091fc989c183303f6a",
+      "bytes": 2154
+    },
+    {
+      "path": "mechanism/rtt/pool-summaries.json",
+      "sha256": "a947fe6b143c553b04ae3ede95cce2f3a5241f4a6b7e887379b70656ff86d978",
+      "bytes": 2094
+    },
+    {
+      "path": "mechanism/rtt/netstate.txt",
+      "sha256": "b6882cfc9de23d132965f0eef862cd2b7454b54ce808b70e228e6a6b12a5ff84",
+      "bytes": 3155,
+      "container": "verbatim-text.tar.xz"
+    },
+    {
+      "path": "soak/environment.json",
+      "sha256": "be48581c621a5880e9e52984ce83e8846760f37edd5beb35577d5ebc42c91a2d",
+      "bytes": 7975
+    },
+    {
+      "path": "soak/handoff-cover-certificate-san.txt",
+      "sha256": "4ac154f1a5170b4e8994643855b0ed807756e8cbc1d7d0f48eb0fdfedf26500b",
+      "bytes": 73,
+      "container": "verbatim-text.tar.xz"
+    },
+    {
+      "path": "mechanism/setup-rtt50-loss0-handoff-warm.jsonl",
+      "sha256": "72fe0d4963fdf2fca923e79deaf080be54ebb1e553d1f642ea3c702eabfe3637",
+      "bytes": 1719
+    },
+    {
+      "path": "mechanism/setup-rtt50-loss0-handoff-cold.jsonl",
+      "sha256": "5447d48bdeaf6acfd3f0c7933b0ebb6c49aa169699ebc45b91634a87948d77a5",
+      "bytes": 1714
+    },
+    {
+      "path": "mechanism/setup-rtt50-loss0-nxr-warm.jsonl",
+      "sha256": "c929abc47b8094f67d139e82b1db3c63282c19406616a4a1ebb487e9e732417c",
+      "bytes": 1703
+    },
+    {
+      "path": "mechanism/setup-rtt50-loss0-nxr-cold.jsonl",
+      "sha256": "88b134ec6b9fc83635be7b4d7b7de171d119f27fbfaf1af4982fae4fbb52f6c2",
+      "bytes": 1688
+    },
+    {
+      "path": "mechanism/setup-rtt50-loss0-socks-warm.jsonl",
+      "sha256": "d156cafeacf311c801bc3ddd7e86c504463728f922710654135ff5cd7f2c1b70",
+      "bytes": 1702
+    },
+    {
+      "path": "mechanism/setup-rtt50-loss0-socks-cold.jsonl",
+      "sha256": "00880b490d1385c9f6d2f1bf3d148509fe343e26fef8e4c2ba1c2e53b46cc109",
+      "bytes": 1690
+    },
+    {
+      "path": "mechanism/setup-rtt100-loss0-handoff-warm.jsonl",
+      "sha256": "3af516fa8fc8ffe3a76cbf10321d3be9c87fa727c5bbdaa457667041511a2e47",
+      "bytes": 1714
+    },
+    {
+      "path": "mechanism/setup-rtt100-loss0-handoff-cold.jsonl",
+      "sha256": "61987297e40fce710e48a5b2d7d12138ab515fbc764ca2dd3fdea0614e2af55f",
+      "bytes": 1710
+    },
+    {
+      "path": "mechanism/setup-rtt100-loss0-nxr-warm.jsonl",
+      "sha256": "90d139a067ed4a086abfa7f950dd21f988da056d6547599d66426f3e163d1484",
+      "bytes": 1685
+    },
+    {
+      "path": "mechanism/setup-rtt100-loss0-nxr-cold.jsonl",
+      "sha256": "ef105863bcaa32f4831b20e2489ce0e88d38e12f4aaad51ade36c4cc8a994249",
+      "bytes": 1697
+    },
+    {
+      "path": "mechanism/setup-rtt100-loss0-socks-warm.jsonl",
+      "sha256": "153d82198acc6bc9700e287f01a7cb418fb141503beef29851a89a623b07eeb3",
+      "bytes": 1706
+    },
+    {
+      "path": "mechanism/setup-rtt100-loss0-socks-cold.jsonl",
+      "sha256": "c5309d0228ae9d0960668f1fcc7a3d37ece93b5df896354f03c17672f081c6d8",
+      "bytes": 1712
+    },
+    {
+      "path": "mechanism/setup-rtt200-loss0-handoff-warm.jsonl",
+      "sha256": "1fadcee14d61e2b8c9047af049314fd9294b69d278e0a61516824c93d93d5e00",
+      "bytes": 1719
+    },
+    {
+      "path": "mechanism/setup-rtt200-loss0-handoff-cold.jsonl",
+      "sha256": "c969928d330f4492584206f78c43f61f190cb9a777cb5b0edf5e4771769b4742",
+      "bytes": 1721
+    },
+    {
+      "path": "mechanism/setup-rtt200-loss0-nxr-warm.jsonl",
+      "sha256": "358e08970a8254088a2c9db737319b5973a2efb9c91028554083e1d36a89dc6e",
+      "bytes": 1688
+    },
+    {
+      "path": "mechanism/setup-rtt200-loss0-nxr-cold.jsonl",
+      "sha256": "06cdec9354a4b86f3a91bffa581193cc66c8d38eb642137a41730d071adc5652",
+      "bytes": 1698
+    },
+    {
+      "path": "mechanism/setup-rtt200-loss0-socks-warm.jsonl",
+      "sha256": "6b6e2674ecd23e345a69a4afdc204c1443468b59cd5782ce9070cece187d9678",
+      "bytes": 1711
+    },
+    {
+      "path": "mechanism/setup-rtt200-loss0-socks-cold.jsonl",
+      "sha256": "39a20bd91a976adb74ad6414c47cce549c2091c657891ffb21b1b265462116de",
+      "bytes": 1708
+    }
+  ],
+  "containers": {
+    "verbatim-text.tar.xz": {
+      "sha256": "914c36a3bad981225d01859a8c1204dd1cebbe0307ee660eb6927382e2983681",
+      "members": 3,
+      "reason": "Preserve original trailing whitespace without changing evidence bytes or diff checks."
+    }
+  }
+}

@@ -132,13 +132,11 @@ where
             shutdown_receiver.clone(),
         ));
     }
-    let monitor_task = server.runtime.memory.clone().map(|watch| {
-        tokio::spawn(run_resource_monitor(
-            Arc::clone(&server.runtime),
-            watch,
-            shutdown_receiver.clone(),
-        ))
-    });
+    let monitor_task = tokio::spawn(run_resource_monitor(
+        Arc::clone(&server.runtime),
+        server.runtime.memory.clone(),
+        shutdown_receiver.clone(),
+    ));
     // The adaptive controller exists only under the `adaptive` tuning
     // mode; under `fixed` and `startup` nothing adjusts the ceilings and
     // behavior is byte-identical to v1.5.
@@ -218,9 +216,7 @@ where
 
     server.runtime.load().deactivate_warm_pools();
     update_tasks.abort_all();
-    if let Some(task) = monitor_task {
-        task.abort();
-    }
+    monitor_task.abort();
     if let Some(task) = adaptive_task {
         task.abort();
     }

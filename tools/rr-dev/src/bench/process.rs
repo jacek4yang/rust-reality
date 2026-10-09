@@ -308,6 +308,37 @@ impl Child {
         }
     }
 
+    /// Abruptly stops and reaps the exact owned child for a restart fault.
+    ///
+    /// # Errors
+    /// Rejects missing or changed process identities and failed kill/wait calls.
+    pub fn abort(&mut self) -> Result<(), String> {
+        if !self.is_alive()
+            || self.starttime.is_none()
+            || proc_starttime(self.pid) != self.starttime
+        {
+            return Err(format!(
+                "{} identity changed before restart fault",
+                self.label
+            ));
+        }
+        let handle = self.handle.as_mut().ok_or("missing owned child handle")?;
+        handle.kill().map_err(|error| error.to_string())?;
+        let status = handle.wait().map_err(|error| error.to_string())?;
+        self.handle.take();
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt as _;
+            if status.signal() != Some(9) {
+                return Err(format!(
+                    "{} exited independently of the restart fault: {status}",
+                    self.label
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Waits for the owned child and returns its numeric exit status.
     ///
     /// # Errors
@@ -403,6 +434,36 @@ mod tests {
             "the child must not survive the guard drop"
         );
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn abrupt_restart_requires_the_owned_identity_and_reaps_the_child() {
+        let Some(sleep) = tool("sleep") else {
+            return;
+        };
+        let workspace = crate::bench::workspace::Workspace::create("owned-abrupt-restart").unwrap();
+        let mut child = Child::spawn(
+            "restart",
+            &sleep,
+            &["30".to_owned()],
+            workspace.path(),
+            &[],
+            &workspace.join("child.log"),
+        )
+        .unwrap();
+        let pid = child.pid();
+        let expected = child.starttime.clone();
+        child.starttime = Some("substituted".to_owned());
+        assert!(child.abort().is_err());
+        assert_eq!(
+            proc_starttime(pid),
+            expected,
+            "an identity mismatch must not signal the process"
+        );
+        child.starttime = expected;
+        child.abort().unwrap();
+        assert!(proc_starttime(pid).is_none());
+        assert!(child.abort().is_err());
     }
 
     #[test]
