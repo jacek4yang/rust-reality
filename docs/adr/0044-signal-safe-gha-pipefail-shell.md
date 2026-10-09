@@ -58,3 +58,9 @@ Cancel/timeout logs stay short and diagnosable; product and Class B harness
 failures remain visible. This does not change bash `-e`/`pipefail` semantics or
 fail-closed qualification contracts. It does not claim hosted QEMU is green.
 Local proof: `cargo test --manifest-path tools/Cargo.toml -p rr-dev -- ci::`.
+
+Interrupt proofs in `ci::` (and matching `process::` ownership tests) use an
+**ACK-ready file handshake**: the child publishes readiness only after its INT
+trap is armed; the parent waits on that file with a bounded diagnosable deadline
+before signalling the process group. Fixed `sleep` before `kill` is forbidden —
+that race produced empty-stderr false passes on hosted Actions.
