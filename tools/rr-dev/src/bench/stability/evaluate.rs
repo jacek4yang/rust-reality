@@ -712,7 +712,7 @@ fn evaluate_fault_workload(
                 == contract.rtt_concurrency_per_line.checked_mul(2),
             Verdict::Invalid,
             &cell.name,
-            "RTT matrix did not exercise four concurrent transfers across both LINEs",
+            "RTT matrix did not exercise the contracted concurrent transfers across both LINEs",
         );
     }
 }

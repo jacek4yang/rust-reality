@@ -29,6 +29,7 @@ pub struct Contract {
     pub fault_duration_ms: u64,
     pub rtt_duration_ms: u64,
     pub rtt_concurrency_per_line: u64,
+    pub rtt_admission_drain_ms: u64,
     pub fault_concurrency_per_line: u64,
     pub integrity_duration_ms: u64,
     pub integrity_recovery_ms: u64,
@@ -78,6 +79,17 @@ impl Contract {
             self.rtt_duration_ms
         } else {
             self.fault_duration_ms
+        }
+    }
+
+    /// Absolute campaign-relative time after which no new fault transfer may be
+    /// admitted. RTT/loss cases reserve `rtt_admission_drain_ms` so in-flight
+    /// work can finish before the fixed restore boundary.
+    pub fn fault_admission_deadline_ms(&self, name: &str, restored_ms: u64) -> u64 {
+        if name.starts_with("rtt-") {
+            restored_ms.saturating_sub(self.rtt_admission_drain_ms)
+        } else {
+            restored_ms
         }
     }
 

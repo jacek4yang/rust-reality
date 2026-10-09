@@ -188,10 +188,11 @@ requires the owned process identity and confirms termination by SIGKILL. Startup
 and execution failures retain the primary error and attempted final observations.
 Private configuration remains under the owned fixture, outside the evidence bundle.
 
-RTT/loss windows last 60 seconds for the concurrency-4 matrix (two transfers
-per LINE); other faults and recovery use four per LINE. Each exercised LINE
-must complete at least 100 transfers. Other fault
-intervals last 10 seconds. The directional integrity window lasts 60 seconds,
+RTT/loss windows last 90 seconds for the concurrency-8 matrix (four transfers
+per LINE), with a fixed 12-second admission drain before restore so in-flight
+1 MiB transfers can finish inside the fault interval; other faults and recovery
+use four per LINE. Each exercised LINE must complete at least 100 transfers.
+Other fault intervals last 10 seconds. The directional integrity window lasts 60 seconds,
 followed by 180 seconds of recovery. These schedules are fixed in the executable
 contract before qualification, including on constrained LANDING guests.
 Offline evaluation requires every integrity checkpoint, including recovered owner,
@@ -322,7 +323,9 @@ stage, cause or errno, repeated errors, and errors outside that interval remain
 blocking. This adds observation to the test fixture, not a product-log filter
 or a production behavior change.
 
-Fault batches stop admitting requests at the fixed restore boundary. Submitted
-attempts and partial results remain retained; missing coverage or an in-flight
-transfer finishing outside the required interval still fails. Requests started
-after restoration are never silently labelled as fault-period work.
+Fault batches soft-stop admission at the contracted boundary (restore for
+ordinary faults; restore minus the RTT drain for RTT/loss). Reaching that
+boundary is scheduled termination, not a transfer failure. Submitted attempts
+and partial results remain retained; missing coverage or an in-flight transfer
+finishing outside the required interval still fails. Requests started after
+restoration are never silently labelled as fault-period work.

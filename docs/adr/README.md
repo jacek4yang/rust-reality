@@ -79,3 +79,4 @@ of the law is what it is.
 | [0037](0037-bound-descriptor-census-acquisition.md) | Bound descriptor census acquisition | Accepted |
 | [0038](0038-hosted-actions-are-primary-quality-gates.md) | Hosted Actions are the primary quality gates | Accepted |
 | [0039](0039-separate-active-census-from-recovery-ownership.md) | Separate active census from recovery ownership | Accepted |
+| [0040](0040-coherent-rtt-fault-workload.md) | Coherent RTT/loss fault workload | Accepted |

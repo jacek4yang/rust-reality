@@ -1894,3 +1894,46 @@ fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
         );
     }
 }
+
+#[test]
+fn rtt_contract_keeps_workload_timing_and_drain_coherent() {
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    assert_eq!(contract.rtt_concurrency_per_line, 4);
+    assert_eq!(contract.rtt_duration_ms, 90_000);
+    assert_eq!(contract.rtt_admission_drain_ms, 12_000);
+    assert!(contract.rtt_admission_drain_ms < contract.rtt_duration_ms);
+    assert!(contract.rtt_duration_ms + contract.recovery_deadline_ms < contract.fault_interval_ms);
+    let restored = 1_000_000 + contract.rtt_duration_ms;
+    assert_eq!(
+        contract.fault_admission_deadline_ms("rtt-200", restored),
+        restored - contract.rtt_admission_drain_ms
+    );
+    assert_eq!(
+        contract.fault_admission_deadline_ms("reload", restored),
+        restored
+    );
+    // Capacity check from measured 954 evidence under 1% loss (~3 completions
+    // /4s /LINE at concurrency 2). Scaled to concurrency 4 over the admit
+    // window, integer math keeps ≥100 completions with the drain reserved.
+    let admit_ms = contract.rtt_duration_ms - contract.rtt_admission_drain_ms;
+    let completions = admit_ms
+        .saturating_mul(contract.rtt_concurrency_per_line)
+        .saturating_mul(3)
+        / (4 * 2 * 1000);
+    assert!(
+        completions >= contract.transfers_per_line,
+        "RTT contract under-provisions loss coverage: expected {completions}"
+    );
+}
+
+#[test]
+fn rtt_during_transfer_past_restore_stays_invalid_after_coherent_schedule() {
+    let mut changed = fixture();
+    let fault = &mut changed["cells"][0]["faults"][8]; // rtt-200
+    let restored = fault["restored_ms"].as_u64().unwrap();
+    assert_eq!(restored - fault["started_ms"].as_u64().unwrap(), 90_000);
+    let transfer = &mut fault["during_transfers"].as_array_mut().unwrap()[0];
+    transfer["started_ms"] = json!(restored - 1);
+    transfer["completed_ms"] = json!(restored + 1);
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+}

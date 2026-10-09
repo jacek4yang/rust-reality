@@ -572,7 +572,9 @@ fn faults(
                             concurrency: usize::try_from(contract.fault_concurrency(name))
                                 .expect("bounded contract"),
                             paced_wave: false,
-                            admission_deadline_ms: Some(restored),
+                            admission_deadline_ms: Some(
+                                contract.fault_admission_deadline_ms(name, restored),
+                            ),
                         })
                         .collect();
                     during = driver.batch(machines, &batches)?;
@@ -926,7 +928,7 @@ fn freeze(
     fs::write(root.join("contract.json"), schema::CONTRACT).map_err(|error| error.to_string())?;
     save(
         &root.join("workload.json"),
-        &json!({"contract_sha256":hash::sha256_hex(schema::CONTRACT.as_bytes()),"cycle_first_wave":"4 MiB PUT at 256 KiB/s per transfer","cycle_remaining":"1 MiB GET","fault_count_per_line":100,"rtt_concurrency_per_line":2,"fault_concurrency_per_line":4,"prefix_target":"LANDING 127.0.0.1:8081 echo","integrity":"1/4 MiB upload/download/concurrent bidirectional"}),
+        &json!({"contract_sha256":hash::sha256_hex(schema::CONTRACT.as_bytes()),"cycle_first_wave":"4 MiB PUT at 256 KiB/s per transfer","cycle_remaining":"1 MiB GET","fault_count_per_line":100,"rtt_concurrency_per_line":4,"rtt_admission_drain_ms":12000,"rtt_duration_ms":90000,"fault_concurrency_per_line":4,"prefix_target":"LANDING 127.0.0.1:8081 echo","integrity":"1/4 MiB upload/download/concurrent bidirectional"}),
     )?;
     save(
         &root.join("environment.json"),
