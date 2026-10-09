@@ -319,6 +319,7 @@ jobs:
             --fixture "$RUNNER_TEMP/rr-cloud-fixture" \
             --output "$RUNNER_TEMP/rr-cloud-preflight" "${PREFLIGHT_ARGS[@]}"
           df -h "$RUNNER_TEMP"
+          set +e
           sudo env XDG_RUNTIME_DIR="$RUNNER_TEMP/rr-cloud-runtime" \
             GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE" \
             "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-run \
@@ -327,6 +328,10 @@ jobs:
             --xray "$RUNNER_TEMP/rr-qemu-prepare/tools/xray/xray" \
             --openssl "$RUNNER_TEMP/rr-qemu-prepare/tools/openssl/bin/openssl" \
             --cell "$MATRIX_CELL"
+          CELL_STATUS=$?
+          set -e
+          # Always stage partial cell evidence before exiting on fail-closed runs.
+          # Otherwise merge sees "missing cell artifacts" (Class B cascade).
           python3 - <<'PYMARK'
           import json, os, pathlib, shutil
           root = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-cloud-cell'
@@ -355,6 +360,7 @@ jobs:
                   if item.suffix == '.json' or item.name.endswith('-boot-id.txt'):
                       shutil.copy2(item, dest/item.name)
           PYMARK
+          exit "$CELL_STATUS"
       - name: Retain one-cell campaign evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

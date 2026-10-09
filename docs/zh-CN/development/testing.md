@@ -247,6 +247,10 @@ LANDING 仅在接受恰好一条匹配 ACK 之后才中止。正确性来自握�
 cargo dev bench stability-repro --fault landing-restart --output FRESH_DIRECTORY
 ```
 
+重启后的恢复准入会等到第一个故障检查点窗口关闭
+（[ADR 0043](../../adr/0043-landing-restart-baseline-before-recovery.md)），以便空闲的
+替换后 LANDING 在恢复冲击开始前给出稳定的描述符普查。
+
 该命令保留动作回执与 Class A/B/C 的 `diagnosis.json`。合法回执通过；历史空普查与
 ACK 早于普查的形状以 Class B 夹具缺陷 fail-closed。 同一套 Class 标签也会写入每单元 `cell-diagnosis.json`、`cells-summary.json` 与合并后的 `merge-diagnosis.json`，使 fail-closed 的 QEMU 运行能在数分钟内区分夹具、基础设施与产品缺陷，而不是变成数小时后的模糊 INVALID。托管资格将四个单元作为 Actions matrix 并行（每 runner 一个单元），再经 `cargo dev bench stability-merge-cells` 做身份绑定聚合（[ADR 0042](../../adr/0042-four-cell-qemu-matrix-parallelism.md)）；普通 runner 仍在 `HostLock` 与固定 fixture 端口下保留单个单元的 vCPU 亲和预算。`stability-run` 可用重复的 `--cell NAME` 只跑子集；子集跑完后必须先 merge 再做离线 Pass 裁决。
 

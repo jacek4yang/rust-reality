@@ -42,6 +42,7 @@ use evaluate::{Report, Verdict};
 use schema::{Artifact, Evidence};
 
 /// Reconstruct log accounting from verified, content-addressed fault evidence.
+#[allow(clippy::too_many_lines)]
 fn product_logs(
     root: &Path,
     cell: &schema::Cell,
@@ -101,14 +102,18 @@ fn product_logs(
                 }
             }
             let prefix = &fault.affected_prefix;
-            if fault.expected_failures.len() != 1
-                || prefix.line != role.name
+            if restart.is_some() {
+                return Err("repeated landing-restart disconnect attribution".to_owned());
+            }
+            if fault.expected_failures.len() != 1 {
+                return Err("restart disconnect was not observed on the intact prefix".to_owned());
+            }
+            if prefix.line != role.name
                 || prefix.started_ms >= fault.started_ms
                 || prefix.completed_ms != fault.expected_failures[0]
                 || prefix.completed_ms < fault.started_ms
                 || prefix.completed_ms > fault.restored_ms
                 || prefix.received_bytes == 0
-                || restart.is_some()
             {
                 return Err("restart disconnect lacks its bounded intact prefix".to_owned());
             }

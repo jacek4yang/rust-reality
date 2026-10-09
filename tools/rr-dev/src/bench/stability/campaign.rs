@@ -585,7 +585,12 @@ fn faults(
                         .collect();
                     during = driver.batch(machines, &batches)?;
                 }
-                wait_until(driver.epoch + restored + 1000, helpers)?;
+                // Do not overlap landing-restart recovery admissions with the
+                // first post-restart descriptor census (ADR 0043).
+                wait_until(
+                    driver.epoch + contract.recovery_ready_ms(name, start, restored),
+                    helpers,
+                )?;
                 let recovery_id = format!("{id}-recovery");
                 let batches: Vec<_> = ["line-a", "line-b"]
                     .into_iter()

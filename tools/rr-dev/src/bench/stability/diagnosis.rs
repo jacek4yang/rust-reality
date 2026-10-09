@@ -40,6 +40,9 @@ pub fn classify(message: &str) -> Class {
         || lower.contains("does not match the witnessed ingress")
         || lower.contains("ack-before-census")
         || lower.contains("empty census")
+        || lower.contains("descriptor census had no consecutive complete matching reads")
+        || lower.contains("restart disconnect lacks its bounded intact prefix")
+        || lower.contains("restart disconnect was not observed")
         || lower.contains("host-exclusive lock")
         || lower.contains("fixture port")
         || lower.contains("duplicated control port")
@@ -47,6 +50,7 @@ pub fn classify(message: &str) -> Class {
         || lower.contains("source_commit")
         || lower.contains("running harness contract differs")
         || lower.contains("clean checkout")
+        || lower.contains("missing cell artifacts")
     {
         Class::B
     } else if lower.contains("deadline")
@@ -76,6 +80,16 @@ mod tests {
         );
         assert_eq!(
             classify("restart census ACK missing inside checkpoint_tolerance_ms"),
+            Class::B
+        );
+        assert_eq!(
+            classify(
+                "fault-landing-restart-15000: incomplete raw observation (retained); read errors: [\"descriptor census had no consecutive complete matching reads within its fixed bound\"]"
+            ),
+            Class::B
+        );
+        assert_eq!(
+            classify("restart disconnect lacks its bounded intact prefix"),
             Class::B
         );
         assert_eq!(classify("fixture port 2201 occupied"), Class::B);

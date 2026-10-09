@@ -499,7 +499,13 @@ impl Driver<'_> {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let completed = self.elapsed()?;
+        // On an expected disconnect the failure instant IS the prefix completion.
+        // A second elapsed() call can differ by ≥1ms and then fail the handoff
+        // restart check (`completed_ms != expected_failures[0]`) as a false Class A.
+        let completed = match failure {
+            Some((time, _)) => time,
+            None => self.elapsed()?,
+        };
         let prefix = &expected[..received.len()];
         let source_path = self.output.join(format!("{id}-expected-prefix.bin"));
         let received_path = self.output.join(format!("{id}-received-prefix.bin"));

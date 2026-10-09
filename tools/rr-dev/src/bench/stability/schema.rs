@@ -93,6 +93,28 @@ impl Contract {
         }
     }
 
+    /// Campaign-relative time when post-fault recovery admissions may begin.
+    ///
+    /// Ordinary faults recover immediately after the restore boundary. For
+    /// `landing-restart`, the first fault checkpoint must observe the replaced
+    /// LANDING while it is still idle: six back-to-back descriptor sweeps cannot
+    /// manufacture a stable pair under the intentional recovery admission blast
+    /// (Frozen `nxr/ordinary` on `9b90036`, run 37940381711). Recovery therefore
+    /// waits until that first checkpoint window closes.
+    pub fn recovery_ready_ms(&self, name: &str, start_ms: u64, restored_ms: u64) -> u64 {
+        let immediate = restored_ms.saturating_add(1000);
+        if name != "landing-restart" {
+            return immediate;
+        }
+        let Some(first) = self.fault_checkpoint_offsets_ms.first() else {
+            return immediate;
+        };
+        start_ms
+            .saturating_add(*first)
+            .saturating_add(self.checkpoint_tolerance_ms)
+            .max(immediate)
+    }
+
     pub fn integrity_start(&self) -> u64 {
         (self.cycles as u64) * self.cycle_interval_ms
             + (self.faults.len() as u64) * self.fault_interval_ms

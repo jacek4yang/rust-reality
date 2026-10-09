@@ -2056,3 +2056,73 @@ fn rtt_during_transfer_past_restore_stays_invalid_after_coherent_schedule() {
     transfer["completed_ms"] = json!(restored + 1);
     assert_eq!(verdict(&changed), Verdict::Invalid);
 }
+
+#[test]
+fn landing_restart_recovery_waits_for_first_fault_checkpoint() {
+    // Frozen nxr/ordinary on 9b90036 (run 37940381711) fail-closed at
+    // fault-landing-restart-15000 with consecutive descriptor-census mismatch
+    // while recovery admissions were already blasting the cold LANDING. The
+    // first post-restart census must observe an idle replaced process; recovery
+    // admissions begin only after that checkpoint window closes.
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let start = 0_u64;
+    let restored = start + contract.fault_duration("landing-restart");
+    let first = *contract.fault_checkpoint_offsets_ms.first().unwrap();
+    let ready = contract.recovery_ready_ms("landing-restart", start, restored);
+    assert_eq!(
+        ready,
+        start + first + contract.checkpoint_tolerance_ms,
+        "landing-restart recovery must clear the first census window"
+    );
+    assert!(
+        ready > restored + 1000,
+        "landing-restart recovery is delayed past the ordinary restored+1s edge"
+    );
+    assert_eq!(
+        contract.recovery_ready_ms("reload", start, restored),
+        restored + 1000,
+        "non-restart faults keep immediate recovery"
+    );
+    assert_eq!(
+        contract.recovery_ready_ms("warm", start, restored),
+        restored + 1000
+    );
+    // Still inside the recovery deadline from restore.
+    assert!(
+        ready.saturating_sub(restored) <= contract.recovery_deadline_ms,
+        "delayed recovery must remain inside recovery_deadline_ms"
+    );
+}
+
+#[test]
+fn consecutive_matching_census_miss_is_class_b_harness() {
+    // Historical hosted shape from run 37940381711 — mislabeled A-product by
+    // the prior classifier. Acquisition under incoherent recovery overlap is
+    // harness schedule defect, not proof of a product leak.
+    assert_eq!(
+        super::diagnosis::classify(
+            "nxr/ordinary: landing: guest helper exited before workload completion; failed raw observation: [\"descriptor census had no consecutive complete matching reads within its fixed bound\"]"
+        ),
+        super::diagnosis::Class::B
+    );
+}
+
+#[test]
+fn prefix_disconnect_failure_timestamp_must_equal_completed_ms() {
+    // handoff/ordinary on 9b90036 failed finalization with
+    // "restart disconnect lacks its bounded intact prefix" because echo_prefix
+    // recorded failure via one elapsed() and completed_ms via another. The
+    // contract requires equality; the collector must use one instant.
+    let source =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bench/stability/workload.rs");
+    let text = std::fs::read_to_string(&source)
+        .unwrap_or_else(|error| panic!("read {}: {error}", source.display()));
+    assert!(
+        text.contains("Some((time, _)) => time"),
+        "disconnect completion must reuse the failure timestamp"
+    );
+    assert!(
+        text.contains("On an expected disconnect the failure instant IS the prefix completion"),
+        "retain the semantic comment binding completed_ms to the failure instant"
+    );
+}
