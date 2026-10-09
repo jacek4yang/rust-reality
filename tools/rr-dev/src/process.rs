@@ -950,9 +950,7 @@ mod tests {
         let running = Tool::new("sh")
             .args([
                 "-c",
-                &format!(
-                    "trap 'exit 0' INT; : >'{ready_path}'; while :; do sleep 1; done"
-                ),
+                &format!("trap 'exit 0' INT; : >'{ready_path}'; while :; do sleep 1; done"),
             ])
             .spawn()
             .expect("start interruptible tool");
@@ -977,9 +975,7 @@ mod tests {
         let running = Tool::new("sh")
             .args([
                 "-c",
-                &format!(
-                    "trap '' INT TERM; : >'{ready_path}'; while :; do sleep 1; done"
-                ),
+                &format!("trap '' INT TERM; : >'{ready_path}'; while :; do sleep 1; done"),
             ])
             .spawn()
             .expect("start uncooperative tool");
