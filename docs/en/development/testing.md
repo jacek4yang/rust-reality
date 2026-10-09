@@ -315,7 +315,8 @@ configuration rejections remain unexpected. Raw logs and historical verdicts are
 never rewritten by this classification.
 
 For deliberate LANDING restart, LINE-A also records the single established
-loopback ingress connection at the fault boundary. A Handoff relay EPIPE can be
+loopback ingress connection on its public listener (fixture port 9444) at the
+fault boundary. A Handoff relay EPIPE can be
 classified as injected only once, for that exact peer, after the verified kill
 and ingress census, and before the intact affected prefix's recorded failure
 plus the existing clock guard. Missing/ambiguous census, a different peer,

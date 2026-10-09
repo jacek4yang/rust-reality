@@ -1859,17 +1859,59 @@ fn duplicate_restart_failure_fields_are_invalid_not_expected() {
 }
 
 #[test]
+fn restart_ingress_censuses_line_a_listener_not_landing_port() {
+    // LINE-A listens on 9444; LANDING on 9443. Filtering sport=:9443 on LINE-A
+    // always yields an empty census and the Frozen QEMU INVALID:
+    // "restart requires exactly one witnessed prefix connection".
+    assert_eq!(
+        super::action::RESTART_INGRESS_COMMAND,
+        [
+            "ss",
+            "-Hnt",
+            "state",
+            "established",
+            "src",
+            "127.0.0.1",
+            "(",
+            "sport",
+            "=",
+            ":9444",
+            ")",
+        ]
+    );
+}
+
+#[test]
 fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
     let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":110,
         "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
         "termination_signal":null,"warm_tcp":true,"commands":[{
-        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9443",")"],
-        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"", "stdout":"0 0 127.0.0.1:9443 127.0.0.1:43028\n"}]});
+        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9444",")"],
+        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"", "stdout":"0 0 127.0.0.1:9444 127.0.0.1:43028\n"}]});
     let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
     assert_eq!(
         super::action::restart_ingress(&parse(&value)).unwrap(),
         "127.0.0.1:43028"
     );
+    let empty = super::action::restart_ingress(&parse(&{
+        let mut changed = value.clone();
+        changed["commands"][0]["stdout"] = json!("");
+        changed
+    }))
+    .unwrap_err();
+    assert_eq!(
+        empty,
+        "restart requires exactly one witnessed prefix connection"
+    );
+    // Exact hosted shape from run 37886641986: LINE-A guest filtered LANDING's
+    // port and recorded an empty census. After the port fix the argv itself is
+    // rejected; the empty-row error remains covered above.
+    let hosted = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":110,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":null,"warm_tcp":true,"commands":[{
+        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9443",")"],
+        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"", "stdout":""}]});
+    assert!(super::action::restart_ingress(&parse(&hosted)).is_err());
     for (pointer, new) in [
         ("/role", json!("line-b")),
         ("/begin", json!(false)),
@@ -1879,11 +1921,11 @@ fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
         ("/commands/0/stdout", json!("")),
         (
             "/commands/0/stdout",
-            json!("0 0 127.0.0.1:9443 192.0.2.5:43028\n"),
+            json!("0 0 127.0.0.1:9444 192.0.2.5:43028\n"),
         ),
         (
             "/commands/0/stdout",
-            json!("0 0 127.0.0.1:9443 127.0.0.1:43028\n0 0 127.0.0.1:9443 127.0.0.1:43029\n"),
+            json!("0 0 127.0.0.1:9444 127.0.0.1:43028\n0 0 127.0.0.1:9444 127.0.0.1:43029\n"),
         ),
     ] {
         let mut changed = value.clone();

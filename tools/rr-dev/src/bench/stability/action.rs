@@ -271,7 +271,8 @@ pub fn verify(
     Ok(())
 }
 
-/// Read-only census for the isolated fixture's active ingress prefix flow.
+/// Read-only census for LINE-A's active loopback ingress (fixture listen port 9444).
+/// LANDING listens on 9443; a 9443 filter on LINE-A can never witness the prefix flow.
 pub(super) const RESTART_INGRESS_COMMAND: [&str; 11] = [
     "ss",
     "-Hnt",
@@ -282,7 +283,7 @@ pub(super) const RESTART_INGRESS_COMMAND: [&str; 11] = [
     "(",
     "sport",
     "=",
-    ":9443",
+    ":9444",
     ")",
 ];
 
@@ -305,7 +306,7 @@ pub(super) fn restart_ingress(action: &Action) -> Result<String, String> {
     }
     let fields: Vec<_> = rows[0].split_whitespace().collect();
     if fields.len() != 4
-        || fields[2] != "127.0.0.1:9443"
+        || fields[2] != "127.0.0.1:9444"
         || fields[0].parse::<u64>().is_err()
         || fields[1].parse::<u64>().is_err()
     {
