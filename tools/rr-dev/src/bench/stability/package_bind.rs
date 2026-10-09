@@ -156,6 +156,33 @@ pub fn run(plan: &Plan) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn coordinated_workflow_uses_one_package_and_requires_frozen_acceptance() {
+        let coordinator = include_str!("../../../../../.github/workflows/frozen-qualification.yml");
+        let campaign = include_str!("../../../../../.github/workflows/qemu-specialist.yml");
+        let packages = include_str!("../../../../../.github/workflows/candidate-packages.yml");
+        assert!(coordinator.contains("needs: packages"));
+        assert!(coordinator.contains("package_artifact: package-receipt-"));
+        assert!(coordinator.contains("bench stability-bind-package"));
+        assert!(coordinator.contains("bench stability-evaluate"));
+        assert!(coordinator.contains("--case long-lived-connections"));
+        assert!(coordinator.contains("--case local-full-gate"));
+        assert!(coordinator.contains(
+            "native-interop native-mechanism native-descriptor-pressure native-resources"
+        ));
+        assert!(!coordinator.contains("continue-on-error"));
+        assert!(!coordinator.contains("contents: write"));
+        assert!(!coordinator.contains("cancel-in-progress: true"));
+        assert!(campaign.contains("--candidate \"$CANDIDATE_BIN\""));
+        assert!(packages.contains("--receipt-dir"));
+        assert!(coordinator.contains(
+            "source.name in ['evidence.json','evidence-before.json','evidence-after.json']"
+        ));
+        assert!(!coordinator.contains(
+            "references(json.loads(source.read_text()))\n              elif source.suffix"
+        ));
+    }
+
+    #[test]
     fn package_input_paths_cannot_escape_or_follow_symlinks() {
         let work = crate::bench::workspace::Workspace::create("package-import-paths").unwrap();
         for name in ["../outside", "/absolute", "a/b", ".", ""] {

@@ -116,6 +116,23 @@ cases; it does not replace these commands. The existing
 `cargo dev deploy canary` evaluator remains WAN-specific and must not be fed
 fabricated SSH/firewall assertions to make a local run look like a VPS run.
 
+The `Frozen candidate qualification` coordinator runs on an explicit review-ready
+transition or dispatch. It builds the native package matrix first, then passes the
+retained GNU package executable to the QEMU campaign. A dependent native acceptance
+job restores that campaign's exact evaluator and candidate, records the canonical
+full gate, lifecycle, interoperability, mechanism, pressure, resources and 600-second
+checks, binds all four native package receipts and exact-head CI/Security, and requires
+`stability-evaluate` to return PASS. Missing, skipped or unsuccessful component jobs
+cannot make this aggregate succeed. A second build is not substituted for the tested
+executable. Standalone Native/QEMU jobs remain diagnostic/regression entry points;
+by themselves they do not establish the coordinated release verdict.
+
+Aggregate publication stages referenced evidence and collector records, not arbitrary
+benchmark directories or generated private key files. Each attempt has its own artifact
+name. Exact-head source and candidate digests are checked before running restored tools.
+No tag, GitHub release, deployment or write-capable repository permission is part of
+qualification. A candidate version is still not a published version.
+
 After packaging each supported tier, run
 `cargo dev release smoke TAG TIER ASSETS --receipt-dir FRESH_DIRECTORY` to retain
 its package-bound execution proof. Keep this directory outside the assets being

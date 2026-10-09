@@ -1,6 +1,12 @@
 name: Candidate packages
 
 on:
+  workflow_call:
+    inputs:
+      candidate_sha:
+        description: Exact source commit selected by the qualification coordinator
+        required: true
+        type: string
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
@@ -19,12 +25,12 @@ permissions:
 
 # Qualification artifacts only: no tag, release or repository write permission.
 concurrency:
-  group: candidate-packages-${{ github.event.pull_request.number }}
+  group: candidate-packages-${{ inputs.candidate_sha || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+  CANDIDATE_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha }}
 
 jobs:
   prepare:
