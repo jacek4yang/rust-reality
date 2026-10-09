@@ -446,9 +446,7 @@ impl Session<'_> {
         if !begin {
             return self.start_server(true);
         }
-        std::thread::sleep(Duration::from_millis(
-            super::action::RESTART_CENSUS_HOLD_MS,
-        ));
+        std::thread::sleep(Duration::from_millis(super::action::RESTART_CENSUS_HOLD_MS));
         self.server
             .as_mut()
             .ok_or("missing restart server")?
@@ -509,9 +507,7 @@ impl Session<'_> {
                 &super::action::RESTART_INGRESS_COMMAND.map(str::to_owned),
                 &mut outcomes,
             ),
-            "landing-restart" if self.plan.role == Role::Landing => {
-                self.landing_restart(begin)
-            }
+            "landing-restart" if self.plan.role == Role::Landing => self.landing_restart(begin),
             "line-a-partition" | "rtt-50" | "rtt-100" | "rtt-200" | "rtt-100-loss-1" => {
                 self.netem(name, begin, &mut outcomes)
             }
