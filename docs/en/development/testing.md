@@ -142,6 +142,12 @@ post-fault checkpoints must recover ownership, including after process restart.
 Reused raw observations, excess unopened permits and memory high-water marks
 above the peak envelope fail verification.
 
+VM recovered and peak RSS growth budgets are the 1 GiB unit; ordinary LANDING
+(2 GiB / 2 vCPU) scales those KiB ceilings by role memory GiB so the intentional
+larger footprint is not fail-closed against the constrained calibration
+([ADR 0051](../../adr/0051-scale-vm-rss-envelope-by-role-gib.md)). Thread growth
+limits stay absolute.
+
 The required `native-resources` check references `native-resources.json` from
 the native soak. Offline verification reopens every bound raw observation and
 checks startup policy, all six process identities, round coverage, fixed recovery

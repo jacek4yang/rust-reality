@@ -2260,3 +2260,85 @@ fn prefix_disconnect_failure_timestamp_must_equal_completed_ms() {
         "retain the semantic comment binding completed_ms to the failure instant"
     );
 }
+
+#[test]
+fn role_rss_growth_scale_follows_gib_provisioning() {
+    assert_eq!(evaluate::role_rss_growth_scale(1_073_741_824), 1);
+    assert_eq!(evaluate::role_rss_growth_scale(2_147_483_648), 2);
+    assert_eq!(evaluate::role_rss_growth_scale(512 * 1024 * 1024), 1);
+}
+
+#[test]
+fn ordinary_landing_rss_envelope_scales_with_role_memory_limit() {
+    // Frozen 38057641054 handoff/ordinary: recovered RSS growth ~37–38 MiB over
+    // cold-start baseline exceeds the 32 MiB 1 GiB unit budget but stays under
+    // the 2× scaled ordinary LANDING budget (ADR 0051).
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let last_cycle = *contract.checkpoint_offsets_ms.last().unwrap();
+    let last_fault = *contract.fault_checkpoint_offsets_ms.last().unwrap();
+    let base = 6_796_u64;
+    let retained = base + 40_000; // >32768 unscaled, <65536 scaled
+
+    let bump_landing = |samples: &mut [Value], rss: u64| {
+        for sample in samples {
+            if sample["role"] == "landing" {
+                sample["rss_kib"] = json!(rss);
+                sample["hwm_kib"] = json!(rss);
+                sample["pss_kib"] = json!(rss.saturating_sub(1_000));
+                sample["anonymous_kib"] = json!(rss.saturating_sub(2_000));
+            }
+        }
+    };
+
+    let apply_recovered_growth = |cell: &mut Value| {
+        for cycle in cell["cycles"].as_array_mut().unwrap() {
+            let cycle_index = cycle["index"].as_u64().unwrap();
+            for checkpoint in cycle["checkpoints"].as_array_mut().unwrap() {
+                let offset = checkpoint["offset_ms"].as_u64().unwrap();
+                let samples = checkpoint["samples"].as_array_mut().unwrap();
+                if offset == 0 && cycle_index == 0 {
+                    bump_landing(samples, base);
+                } else if offset == last_cycle {
+                    bump_landing(samples, retained);
+                }
+            }
+        }
+        for fault in cell["faults"].as_array_mut().unwrap() {
+            for checkpoint in fault["checkpoints"].as_array_mut().unwrap() {
+                let offset = checkpoint["offset_ms"].as_u64().unwrap();
+                if offset == last_fault {
+                    bump_landing(checkpoint["samples"].as_array_mut().unwrap(), retained);
+                }
+            }
+        }
+    };
+
+    let mut ordinary = fixture();
+    let cell = ordinary["cells"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|cell| cell["name"] == "handoff/ordinary")
+        .expect("handoff/ordinary");
+    for role in cell["roles"].as_array_mut().unwrap() {
+        if role["name"] == "landing" {
+            role["vcpus"] = json!(2);
+            role["memory_limit_bytes"] = json!(2_147_483_648_u64);
+        } else {
+            role["vcpus"] = json!(1);
+            role["memory_limit_bytes"] = json!(1_073_741_824_u64);
+        }
+    }
+    apply_recovered_growth(cell);
+    assert_eq!(verdict(&ordinary), Verdict::Pass);
+
+    let mut constrained = fixture();
+    let cell = constrained["cells"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|cell| cell["name"] == "handoff/constrained")
+        .expect("handoff/constrained");
+    apply_recovered_growth(cell);
+    assert_eq!(verdict(&constrained), Verdict::Fail);
+}

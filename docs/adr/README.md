@@ -90,3 +90,4 @@ of the law is what it is.
 | [0048](0048-unix-socket-inode-census-ignores-unaddressable-rows.md) | Unix socket inode census ignores unaddressable rows | Accepted |
 | [0049](0049-guest-clock-end-offset-and-kvm-witness.md) | Guest clock end offset and kvm-clock witness | Accepted; `date --set` ban superseded by ADR 0050 |
 | [0050](0050-guest-clock-oneshot-realtime-bind.md) | One-shot guest REALTIME bind before kvm-clock witness | Accepted |
+| [0051](0051-scale-vm-rss-envelope-by-role-gib.md) | Scale VM RSS envelopes by role GiB | Accepted |

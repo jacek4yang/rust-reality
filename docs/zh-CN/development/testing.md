@@ -129,6 +129,9 @@ Linux 原始状态、比例内存、描述符目标、限制及完整调试日�
 不得超过启动清单。命名空间级 `/proc/<pid>/net/unix` 中 inode 为 `0` 的行以及
 内容完全相同的重复行在所有权过滤时忽略；同一 inode 出现冲突内容仍失败关闭
 （[ADR 0048](../../adr/0048-unix-socket-inode-census-ignores-unaddressable-rows.md)）。
+VM 恢复期与峰值 RSS 增长预算以 1 GiB 为单元；ordinary LANDING（2 GiB / 2 vCPU）
+按角色内存 GiB 缩放这些 KiB 上限，避免用 constrained 标定误杀有意更大的进程占用
+（[ADR 0051](../../adr/0051-scale-vm-rss-envelope-by-role-gib.md)）。线程增长上限保持绝对值。
 采集器不保留命名空间内无关套接字的路径。采集器自身仍打开的
 管道目标（fd > 2）会写入每次观察；与之匹配的子进程管道计入固定启动清单，而非
 产品许可（[ADR 0045](../../adr/0045-collector-inherited-pipes-are-fixed-inventory.md)）。
