@@ -482,6 +482,14 @@ pub struct Observation {
     pub closed_during_read: Vec<u32>,
     /// Full debug log at this checkpoint, not a retrospectively selected tail.
     pub ownership_log: Option<String>,
+    /// Pipe targets the collector process still holds (fd > 2) while observing.
+    ///
+    /// Hosted runners and long-lived controllers often keep non-CLOEXEC pipes
+    /// open. Isolated children inherit them. Those descriptors are harness
+    /// inventory, not product permits; matching targets become fixed startup
+    /// descriptors. Absent from historical receipts (defaults empty).
+    #[serde(default)]
+    pub collector_pipe_targets: Vec<String>,
     /// Failed observations. An empty vector does not itself establish PASS.
     pub errors: Vec<String>,
 }

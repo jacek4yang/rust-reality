@@ -172,9 +172,14 @@ not claim an allocator-byte census.
 
 Fixed runtime Unix sockets are distinguished from TCP using kernel inode rows
 for the selected process; their count cannot grow beyond startup. The collector
-retains no unrelated namespace socket paths. Executable hashing uses the same
-`sha256sum` primitive as release tooling so debug-build hashing does not consume
-the sampling window; missing or malformed hash receipts still fail closed.
+retains no unrelated namespace socket paths. Pipe targets still open in the
+collector (fd > 2) are recorded on each observation and matching child pipes
+become fixed startup inventory, not product permits
+([ADR 0045](../../adr/0045-collector-inherited-pipes-are-fixed-inventory.md)).
+Product pipes and unknown descriptors remain fail-closed. Executable hashing
+uses the same `sha256sum` primitive as release tooling so debug-build hashing
+does not consume the sampling window; missing or malformed hash receipts still
+fail closed.
 
 `cargo dev bench stability-fixture --fixture PATH --output FRESH_DIRECTORY`
 boots the preserved, owned three-guest KVM fixture, checks guest CPU/swap and

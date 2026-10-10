@@ -1730,6 +1730,73 @@ fn active_reload_can_precede_the_next_counter_without_hiding_recovery_retirement
 }
 
 #[test]
+fn collector_inherited_pipes_are_fixed_not_dynamic_permits() {
+    // Native soak c58eae50 / run 38012283433: quiet baseline failed because
+    // two collector-inherited pipes entered the dynamic census while product
+    // permits omitted them. Matching collector inventory must classify them as
+    // fixed; a product-only pipe of a new inode must still fail closed.
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let baseline = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut raw: schema::Observation =
+        serde_json::from_value(raw_observation(baseline, policy)).unwrap();
+    raw.collector_pipe_targets = vec!["pipe:[12740]".to_owned(), "pipe:[12741]".to_owned()];
+    raw.descriptors.insert(9000, "pipe:[12740]".to_owned());
+    raw.descriptors.insert(9001, "pipe:[12741]".to_owned());
+    for read in &mut raw.descriptor_reads {
+        read.descriptors.clone_from(&raw.descriptors);
+    }
+    let without =
+        super::observation::normalize(&raw, policy, "native", baseline.observation.clone());
+    assert!(
+        without
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.contains("census exceeds recorded permits")),
+        "{without:?}"
+    );
+    let startup = super::observation::startup_policy(&raw, 1).unwrap();
+    assert!(
+        startup
+            .fixed_descriptor_targets
+            .iter()
+            .filter(|target| target.as_str() == "pipe:[12740]" || target.as_str() == "pipe:[12741]")
+            .count()
+            == 2
+    );
+    let sample =
+        super::observation::normalize(&raw, &startup, "native", baseline.observation.clone())
+            .unwrap();
+    assert_eq!(
+        sample.descriptors.observed_pipe_fds,
+        baseline.descriptors.observed_pipe_fds
+    );
+    assert_eq!(
+        sample.descriptors.fixed, startup.fixed_fds,
+        "harness pipes must enlarge fixed inventory"
+    );
+    assert_eq!(
+        evaluate::evaluate_native_resources(&startup, &sample, &sample, true).verdict,
+        Verdict::Pass
+    );
+    // Two product-only pipes push dynamic census past held permits.
+    raw.descriptors.insert(9002, "pipe:[99998]".to_owned());
+    raw.descriptors.insert(9003, "pipe:[99999]".to_owned());
+    for read in &mut raw.descriptor_reads {
+        read.descriptors.clone_from(&raw.descriptors);
+    }
+    let leaked =
+        super::observation::normalize(&raw, &startup, "native", baseline.observation.clone());
+    assert!(
+        leaked
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.contains("census exceeds recorded permits")),
+        "{leaked:?}"
+    );
+}
+
+#[test]
 fn injected_evictions_require_exact_peer_reason_time_and_one_use() {
     use super::execution::product_log_with_faults;
     let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,

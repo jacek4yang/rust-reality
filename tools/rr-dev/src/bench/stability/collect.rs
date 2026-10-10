@@ -92,6 +92,39 @@ pub fn running_image_digest() -> Result<String, String> {
     file_digest(Path::new(&format!("/proc/{}/exe", std::process::id())))
 }
 
+/// Pipe targets currently open in this collector (fd > 2).
+///
+/// Children spawned without sealing inherit these. Ownership accounting treats
+/// matching child pipe targets as fixed harness inventory, not dynamic permits.
+fn collector_pipe_targets() -> Vec<String> {
+    let mut targets = Vec::new();
+    let Ok(entries) = fs::read_dir("/proc/self/fd") else {
+        return targets;
+    };
+    for entry in entries.flatten() {
+        let Some(fd) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if fd <= 2 {
+            continue;
+        }
+        let Ok(target) = fs::read_link(entry.path()) else {
+            continue;
+        };
+        let Ok(target) = target.into_os_string().into_string() else {
+            continue;
+        };
+        if target.starts_with("pipe:[") {
+            targets.push(target);
+        }
+    }
+    targets
+}
+
 /// Collect raw observations for one explicitly selected local process.
 ///
 /// # Errors
@@ -165,6 +198,7 @@ pub fn observe(pid: u32, log: &Path) -> Result<Observation, String> {
         unix_sockets,
         closed_during_read,
         ownership_log,
+        collector_pipe_targets: collector_pipe_targets(),
         errors,
     })
 }

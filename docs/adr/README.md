@@ -84,3 +84,4 @@ of the law is what it is.
 | [0042](0042-four-cell-qemu-matrix-parallelism.md) | Four-cell QEMU parallelism via Actions matrix | Accepted |
 | [0043](0043-landing-restart-baseline-before-recovery.md) | LANDING restart baseline census before recovery admissions | Accepted |
 | [0044](0044-signal-safe-gha-pipefail-shell.md) | Signal-safe GitHub Actions pipefail shell | Accepted |
+| [0045](0045-collector-inherited-pipes-are-fixed-inventory.md) | Collector-inherited pipes are fixed inventory | Accepted |
