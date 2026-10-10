@@ -1,6 +1,6 @@
 # ADR 0049: Guest clock end offset and kvm-clock witness
 
-Status: Accepted
+Status: Accepted; one-shot `date --set` ban superseded by ADR 0050
 
 ## Context
 

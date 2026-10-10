@@ -401,18 +401,17 @@ impl Machines {
         let mut commands = Vec::new();
         let mut errors = Vec::new();
         if before {
-            // Disable NTP and witness kvm-clock. Do not `date --set`: warping
-            // REALTIME is unnecessary when kvm-clock already tracks the host and
-            // has been observed to let ordinary landing accumulate hundreds of ms
-            // of skew under parallel hosted QEMU (ADR 0049).
-            for step in 0..2 {
+            // Disable NTP, one-shot REALTIME bind, then witness kvm-clock (ADR 0050).
+            // kvm-clock tracks after bind; it does not correct a wrong wall clock
+            // from the guest image (Frozen 38045882781 line-b start skew).
+            for step in 0..3 {
                 let started = collect::unix_ms()?;
-                let argv = if step == 0 {
-                    ["sudo", "-n", "timedatectl", "set-ntp", "false"]
+                let argv = match step {
+                    0 => ["sudo", "-n", "timedatectl", "set-ntp", "false"]
                         .map(str::to_owned)
-                        .to_vec()
-                } else {
-                    clock::clocksource_argv()
+                        .to_vec(),
+                    1 => clock::set_argv(started),
+                    _ => clock::clocksource_argv(),
                 };
                 let outcome = self
                     .ssh_channel(

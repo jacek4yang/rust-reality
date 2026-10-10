@@ -88,4 +88,5 @@ of the law is what it is.
 | [0046](0046-short-fault-baseline-before-recovery.md) | Short-fault baseline census before recovery admissions | Accepted |
 | [0047](0047-restart-ordering-uses-census-command-time.md) | Restart ordering uses census command time | Accepted |
 | [0048](0048-unix-socket-inode-census-ignores-unaddressable-rows.md) | Unix socket inode census ignores unaddressable rows | Accepted |
-| [0049](0049-guest-clock-end-offset-and-kvm-witness.md) | Guest clock end offset and kvm-clock witness | Accepted |
+| [0049](0049-guest-clock-end-offset-and-kvm-witness.md) | Guest clock end offset and kvm-clock witness | Accepted; `date --set` ban superseded by ADR 0050 |
+| [0050](0050-guest-clock-oneshot-realtime-bind.md) | One-shot guest REALTIME bind before kvm-clock witness | Accepted |
