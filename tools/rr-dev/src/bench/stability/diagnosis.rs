@@ -51,6 +51,9 @@ pub fn classify(message: &str) -> Class {
         || lower.contains("running harness contract differs")
         || lower.contains("clean checkout")
         || lower.contains("missing cell artifacts")
+        || lower.contains("duplicate or zero unix socket inode")
+        || lower.contains("conflicting unix socket inode")
+        || lower.contains("owned unix socket rows")
     {
         Class::B
     } else if lower.contains("deadline")
@@ -95,6 +98,16 @@ mod tests {
         assert_eq!(classify("fixture port 2201 occupied"), Class::B);
         assert_eq!(
             classify("merge identity mismatch on source_commit"),
+            Class::B
+        );
+        assert_eq!(
+            classify(
+                "failed raw observation: [\"owned Unix socket rows: duplicate or zero Unix socket inode\"]"
+            ),
+            Class::B
+        );
+        assert_eq!(
+            classify("owned Unix socket rows: conflicting Unix socket inode rows"),
             Class::B
         );
     }

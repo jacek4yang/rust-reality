@@ -70,9 +70,23 @@ fn unix_rows(table: &str) -> Result<BTreeMap<u64, &str>, String> {
         let inode = fields[6]
             .parse::<u64>()
             .map_err(|_| "invalid Unix socket inode")?;
-        if inode == 0 || rows.insert(inode, line).is_some() {
-            return Err("duplicate or zero Unix socket inode".to_owned());
+        // Inode 0 is not addressable via `socket:[N]` (N>0). Namespace-wide
+        // `/proc/<pid>/net/unix` commonly lists unbound or tearing-down sockets
+        // with inode 0; they cannot contribute ownership evidence and MUST NOT
+        // invalidate an otherwise coherent owned census (ADR 0048).
+        if inode == 0 {
+            continue;
         }
+        if let Some(existing) = rows.get(&inode) {
+            // Identical duplicate rows can appear under concurrent socket
+            // create/destroy while reading the seq_file. Conflicting content for
+            // one inode is ambiguous kernel evidence and stays fail-closed.
+            if *existing != line {
+                return Err("conflicting Unix socket inode rows".to_owned());
+            }
+            continue;
+        }
+        rows.insert(inode, line);
     }
     Ok(rows)
 }

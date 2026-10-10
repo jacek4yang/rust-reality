@@ -171,8 +171,11 @@ and deadlines must match the actual running authorities. These observations do
 not claim an allocator-byte census.
 
 Fixed runtime Unix sockets are distinguished from TCP using kernel inode rows
-for the selected process; their count cannot grow beyond startup. The collector
-retains no unrelated namespace socket paths. Pipe targets still open in the
+for the selected process; their count cannot grow beyond startup. Namespace-wide
+`/proc/<pid>/net/unix` rows with inode `0` and identical duplicate lines are
+ignored during ownership filtering; conflicting content for one inode stays
+fail-closed ([ADR 0048](../../adr/0048-unix-socket-inode-census-ignores-unaddressable-rows.md)).
+The collector retains no unrelated namespace socket paths. Pipe targets still open in the
 collector (fd > 2) are recorded on each observation and matching child pipes
 become fixed startup inventory, not product permits
 ([ADR 0045](../../adr/0045-collector-inherited-pipes-are-fixed-inventory.md)).

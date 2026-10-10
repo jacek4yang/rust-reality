@@ -1100,6 +1100,24 @@ fn collection_receipts_reject_substitution_and_exclude_unowned_socket_paths() {
     }
 }
 
+#[test]
+fn owned_unix_rows_skip_zero_inodes_and_identical_duplicates() {
+    // Frozen nxr/constrained integrity-10000 after rtt-100-loss-1 fail-closed on
+    // namespace-wide inode 0 / duplicate rows that cannot match socket:[N] (ADR 0048).
+    let table = "Num RefCount Protocol Flags Type St Inode Path\n0000000000000000: 00000003 00000000 00000000 0001 03 0\n0000000000000000: 00000002 00000000 00000000 0001 01 0 @abstract/teardown\n0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 101 /unrelated/private/path\n";
+    let owned = [(3, "socket:[100]".to_owned())].into_iter().collect();
+    let retained = super::observation::owned_unix_rows(table, &owned).unwrap();
+    assert!(retained.contains("03 100\n"), "{retained}");
+    assert!(!retained.contains(" 0\n") && !retained.contains(" 0 "), "{retained}");
+    assert!(!retained.contains("101"), "{retained}");
+    assert!(!retained.contains("private"), "{retained}");
+    let conflicting = table.replace(
+        "0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 100\n",
+        "0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 100 /other\n",
+    );
+    assert!(super::observation::owned_unix_rows(&conflicting, &owned).is_err());
+}
+
 fn native_fixture() -> Value {
     let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
     let base = fixture();

@@ -87,3 +87,4 @@ of the law is what it is.
 | [0045](0045-collector-inherited-pipes-are-fixed-inventory.md) | Collector-inherited pipes are fixed inventory | Accepted |
 | [0046](0046-short-fault-baseline-before-recovery.md) | Short-fault baseline census before recovery admissions | Accepted |
 | [0047](0047-restart-ordering-uses-census-command-time.md) | Restart ordering uses census command time | Accepted |
+| [0048](0048-unix-socket-inode-census-ignores-unaddressable-rows.md) | Unix socket inode census ignores unaddressable rows | Accepted |
