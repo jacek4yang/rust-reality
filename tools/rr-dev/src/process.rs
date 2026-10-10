@@ -927,12 +927,11 @@ mod tests {
             if path.is_file() {
                 return;
             }
-            if Instant::now() >= deadline {
-                panic!(
-                    "{context}: ready ACK missing before bound ({bound:?}): {}",
-                    path.display()
-                );
-            }
+            assert!(
+                Instant::now() < deadline,
+                "{context}: ready ACK missing before bound ({bound:?}): {}",
+                path.display()
+            );
             thread::sleep(POLL_INTERVAL);
         }
     }
