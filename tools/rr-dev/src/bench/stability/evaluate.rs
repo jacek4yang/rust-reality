@@ -786,7 +786,6 @@ fn peak_concurrency<'a>(transfers: impl Iterator<Item = &'a Transfer>) -> Option
     u64::try_from(peak).ok()
 }
 
-
 /// Scale VM RSS growth envelopes by role memory limit relative to 1 GiB.
 ///
 /// Ordinary LANDING is provisioned at 2 GiB / 2 vCPU; constrained LANDING and
