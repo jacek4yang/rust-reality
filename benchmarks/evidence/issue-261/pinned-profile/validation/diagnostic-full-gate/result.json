@@ -1,0 +1,23 @@
+{
+  "command": [
+    "env",
+    "CARGO_TARGET_DIR=/tmp/rr-261-investigation/unmodified-tools-target",
+    "XDG_RUNTIME_DIR=/home/jacek/.cache/rr-261-investigation/diagnostic-gate-runtime",
+    "XDG_CACHE_HOME=/home/jacek/.cache/rr-261-investigation/diagnostic-gate-cache",
+    "cargo",
+    "dev",
+    "check",
+    "--all",
+    "--output",
+    "agent"
+  ],
+  "cwd": "/tmp/rr-261-investigation/diagnostic-tool",
+  "started": "2026-10-06T08:51:29.170594+00:00",
+  "ended": "2026-10-06T09:04:05.531171+00:00",
+  "duration_seconds": 756.3603619699134,
+  "exit_code": 0,
+  "streams": {
+    "stdout": "d27b8cf8afe5e86ca812fda1159c4a5e4e8ada279ada8260db88d4027e499b60",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

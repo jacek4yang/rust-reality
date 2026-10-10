@@ -1,0 +1,52 @@
+[
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v3.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-landing.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-landing.processed"
+    ],
+    "exit_code": 0,
+    "stdout_sha256": "4dab873d4805669da797f321149e7b07239e8bc08a7f50955d0c1a1fc35caa09"
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v3.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-line.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-line.processed"
+    ],
+    "exit_code": 0,
+    "stdout_sha256": "925866947493c18aa5f927f60dced973530f7458d37828e22222155d9812a26d"
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v3.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-landing.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-landing.processed"
+    ],
+    "exit_code": 0,
+    "stdout_sha256": "98417d331f561ff6af1e1217c8b676227db41133e1a9b66ec148907cf3f8c6a6"
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v3.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-line.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-line.processed"
+    ],
+    "exit_code": 0,
+    "stdout_sha256": "edc1a7582beb14ced43408dcc4dee3c218c1fc3f96b8552daa9512ef68996154"
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v3.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-socks-line.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/socks-line.processed"
+    ],
+    "exit_code": 0,
+    "stdout_sha256": "7da42bc2ff40f0ad9e3115edb960a72ad051b0beacb94a7922b45696ab763bb7"
+  }
+]

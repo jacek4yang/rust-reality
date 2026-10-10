@@ -1,0 +1,10 @@
+{
+  "command": [
+    "objdump",
+    "--disassemble=realloc",
+    "--no-show-raw-insn",
+    "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T09:16:45.564619+00:00"
+}

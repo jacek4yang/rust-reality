@@ -1,0 +1,9 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import pathlib,json; p=pathlib.Path(\"/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-standalone.raw\"); lines=p.read_text().splitlines(); live={};\nfor i,line in enumerate(lines):\n f=line.split()\n if f and f[0]==\"+\":\n  pointer=f[3]\n  if pointer in live:\n   prior=live[pointer]; print(json.dumps({\"previous_allocation_line\":prior+1,\"new_allocation_line\":i+1,\"pointer\":pointer,\"previous_record\":lines[prior],\"new_record\":line,\"following_records\":[{\"line\":j+1,\"record\":lines[j]} for j in range(i,min(i+30,len(lines)))]},indent=2)); break\n  live[pointer]=i\n elif f and f[0]==\"-\": live.pop(f[1],None)"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T09:15:47.758487+00:00"
+}

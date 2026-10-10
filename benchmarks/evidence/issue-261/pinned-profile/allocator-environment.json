@@ -1,0 +1,62 @@
+{
+  "handoff-landing.log": {
+    "pid": 1658407,
+    "pid_starttime": "78380036",
+    "environment_sha256": "438b60d421c52338dd0dd3525a227e09ae993e41427da0dbb4ef07d91a91115d",
+    "allocator_environment": {
+      "DUMP_HEAPTRACK_OUTPUT": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-landing.raw",
+      "LD_PRELOAD": "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so:/tmp/rr-261-investigation/malloc_observer.so",
+      "RR_261_MALLOC_INFO": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-landing.malloc-info"
+    }
+  },
+  "handoff-line.log": {
+    "pid": 1658426,
+    "pid_starttime": "78380038",
+    "environment_sha256": "fba1ad3afd81290ce1212c12b73cccc33c2997f1fed0e0019ea97a9aaae080a3",
+    "allocator_environment": {
+      "DUMP_HEAPTRACK_OUTPUT": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-line.raw",
+      "LD_PRELOAD": "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so:/tmp/rr-261-investigation/malloc_observer.so",
+      "RR_261_MALLOC_INFO": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-line.malloc-info"
+    }
+  },
+  "nxr-landing.log": {
+    "pid": 1658459,
+    "pid_starttime": "78380044",
+    "environment_sha256": "d46a03b225e1e030d8798a8dcdb6ddebf8001df3091b81558fe65ed86bcf46f4",
+    "allocator_environment": {
+      "DUMP_HEAPTRACK_OUTPUT": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-landing.raw",
+      "LD_PRELOAD": "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so:/tmp/rr-261-investigation/malloc_observer.so",
+      "RR_261_MALLOC_INFO": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-landing.malloc-info"
+    }
+  },
+  "nxr-line.log": {
+    "pid": 1658478,
+    "pid_starttime": "78380046",
+    "environment_sha256": "66571f0a67c9a44d200be4bd0bcbc0e00047535bc133265889b2ccc0347b141e",
+    "allocator_environment": {
+      "DUMP_HEAPTRACK_OUTPUT": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-line.raw",
+      "LD_PRELOAD": "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so:/tmp/rr-261-investigation/malloc_observer.so",
+      "RR_261_MALLOC_INFO": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-line.malloc-info"
+    }
+  },
+  "socks-line.log": {
+    "pid": 1658518,
+    "pid_starttime": "78380055",
+    "environment_sha256": "fb2735bd14424908424a30e80fb4e33ba4a47e4d1c23ade2d68263224f06d905",
+    "allocator_environment": {
+      "DUMP_HEAPTRACK_OUTPUT": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-socks-line.raw",
+      "LD_PRELOAD": "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so:/tmp/rr-261-investigation/malloc_observer.so",
+      "RR_261_MALLOC_INFO": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-socks-line.malloc-info"
+    }
+  },
+  "standalone.log": {
+    "pid": 1658560,
+    "pid_starttime": "78380061",
+    "environment_sha256": "8fe7da9faa96148cb32fbd74b6fc403fe735fa05660cfa4e8a15929e352ff772",
+    "allocator_environment": {
+      "DUMP_HEAPTRACK_OUTPUT": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-standalone.raw",
+      "LD_PRELOAD": "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libheaptrack_preload.so:/tmp/rr-261-investigation/malloc_observer.so",
+      "RR_261_MALLOC_INFO": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-standalone.malloc-info"
+    }
+  }
+}

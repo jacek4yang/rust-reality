@@ -1,0 +1,459 @@
+{
+  "schema": "rr-issue261-validation/v1",
+  "failed_gate_classification": "B: local build-storage quota exhausted at stage 18; stages 1-17 passed, stage 19 not run",
+  "recovery": "Moved only generated build cache to a volume with capacity; same full gate then passed 19/19 without source or gate changes. Original logs retained.",
+  "comparison_sha256": "ecc2ab16e1f94e8c172743bd5c7551e19d60e39a4b937967c30a3ab563d0d031",
+  "archives": [
+    {
+      "path": "failed-full-gate.tar.xz",
+      "bytes": 61264,
+      "sha256": "15965829de82ea27eb1efd32cdcdd2f54a90163d8353a3111aa593dc68e354ca",
+      "members": [
+        {
+          "path": "receipt/execution.json",
+          "bytes": 693,
+          "sha256": "835893f95d298cff362070f3045d3f34d27fb8656ad59d368e2af85356780b50"
+        },
+        {
+          "path": "receipt/stderr",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "receipt/stdout",
+          "bytes": 8192,
+          "sha256": "9c876dc5e71ddac3752850eba9b75ba38d753902f083d61d8e6214c6a3a3a6d2"
+        },
+        {
+          "path": "stages/01-cargo-dev-repo-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/01-cargo-dev-repo-check.stdout.log",
+          "bytes": 57,
+          "sha256": "04c9dbd778abaae4c0cd0aa947614350952969e9cf216ae8fb12388949aebeaa"
+        },
+        {
+          "path": "stages/02-cargo-dev-docs-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/02-cargo-dev-docs-check.stdout.log",
+          "bytes": 138,
+          "sha256": "44a6fa393ac7888b2845b74f11dbcac26209792d50689140e7ea5abf1f5aa65e"
+        },
+        {
+          "path": "stages/03-fuzz-target-manifest.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/03-fuzz-target-manifest.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/04-active-probe-manifest.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/04-active-probe-manifest.stdout.log",
+          "bytes": 39,
+          "sha256": "9cb5085dd8593372e40014af9a775811c3a2b8c6dd177a73d4658e4bc38c4749"
+        },
+        {
+          "path": "stages/05-performance-cache-contract.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/05-performance-cache-contract.stdout.log",
+          "bytes": 33,
+          "sha256": "9baa0ad8bff46fdd4727a958b239f1a27d3a00fc3f23af889e9be8e6d5e23523"
+        },
+        {
+          "path": "stages/06-deployment-summary-contract.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/06-deployment-summary-contract.stdout.log",
+          "bytes": 52,
+          "sha256": "668c6f1381a3ec71d540fbfe1068b0ffb3a0eb05a2dff2f6306aca0a10ba77e6"
+        },
+        {
+          "path": "stages/07-cargo-fmt-all-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/07-cargo-fmt-all-check.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/08-cargo-fmt-manifest-path-tools-cargo-toml-all-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/08-cargo-fmt-manifest-path-tools-cargo-toml-all-check.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/09-cargo-clippy-workspace-all-targets-all-features-locked-d-warning.stderr.log",
+          "bytes": 5382,
+          "sha256": "fe8ed138e4e8d891e6c4c78ab53051e7c5a30310e50e7320425ee589e01656fe"
+        },
+        {
+          "path": "stages/09-cargo-clippy-workspace-all-targets-all-features-locked-d-warning.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/10-cargo-clippy-manifest-path-tools-cargo-toml-workspace-all-target.stderr.log",
+          "bytes": 2574,
+          "sha256": "750f2c0f45e8ef80265a7517bcbb9aa88693e42049eb1fc3f53310914bd2c03f"
+        },
+        {
+          "path": "stages/10-cargo-clippy-manifest-path-tools-cargo-toml-workspace-all-target.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/11-cargo-deny-all-features-check-bans-licenses-sources.stderr.log",
+          "bytes": 13593,
+          "sha256": "2a20c7368006a78a96789ac67a63a964f2af470236b335ff704f633bcfc3b79b"
+        },
+        {
+          "path": "stages/11-cargo-deny-all-features-check-bans-licenses-sources.stdout.log",
+          "bytes": 33,
+          "sha256": "ef8317b369b8527e06290941bfada84d1f8e45b2b8c311d5e1fec1558e00a7be"
+        },
+        {
+          "path": "stages/12-cargo-doc-workspace-all-features-locked-no-deps.stderr.log",
+          "bytes": 1164,
+          "sha256": "bbc1a3340a625524c1a2ee732d450183a7f1bbd692fbb3645832185061b09552"
+        },
+        {
+          "path": "stages/12-cargo-doc-workspace-all-features-locked-no-deps.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/13-cargo-nextest-run-workspace-all-features-locked.stderr.log",
+          "bytes": 126645,
+          "sha256": "9c7720c2b7ad835b93a9fd34be397df27e018a5669f18a7a580038242f27273e"
+        },
+        {
+          "path": "stages/13-cargo-nextest-run-workspace-all-features-locked.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/14-cargo-test-manifest-path-tools-cargo-toml-workspace-all-features.stderr.log",
+          "bytes": 459,
+          "sha256": "099e73da2c70694f47d51ed9b0f101b07e44721fb8c6a0c69e4c2b385f90be74"
+        },
+        {
+          "path": "stages/14-cargo-test-manifest-path-tools-cargo-toml-workspace-all-features.stdout.log",
+          "bytes": 56150,
+          "sha256": "7f9f0404a5e3fe82b8629caefc1c75efbc3b7e0f7909e20a3f70a9f158bedb4d"
+        },
+        {
+          "path": "stages/15-cargo-test-workspace-no-default-features-locked.stderr.log",
+          "bytes": 64371,
+          "sha256": "de15cc27c95499f5fe206ab6dfe0906eb0b9ebe5296644123732d6f376ea5670"
+        },
+        {
+          "path": "stages/15-cargo-test-workspace-no-default-features-locked.stdout.log",
+          "bytes": 90082,
+          "sha256": "c262d6ba327bc2507a54fcb6ffd039006c52aeb3133d9478532cbdb2706d71f1"
+        },
+        {
+          "path": "stages/16-cargo-test-workspace-doc-all-features-locked.stderr.log",
+          "bytes": 168,
+          "sha256": "0a17d08e476ec774f1b6226ed225430df0703683af85b4184154c42aac285208"
+        },
+        {
+          "path": "stages/16-cargo-test-workspace-doc-all-features-locked.stdout.log",
+          "bytes": 581,
+          "sha256": "05aa032ad3e3aa191c7f63e5ccbf382741ddaedd98f8d4756c110c6c99cbee16"
+        },
+        {
+          "path": "stages/17-cargo-test-workspace-release-all-features-locked.stderr.log",
+          "bytes": 70610,
+          "sha256": "c672c20048b382451eab5df788f7c01cd241a6c68a20c847dc4b960144f19cbc"
+        },
+        {
+          "path": "stages/17-cargo-test-workspace-release-all-features-locked.stdout.log",
+          "bytes": 90082,
+          "sha256": "6b90c9c7c816f83391dff3c08c95baeac49ce3a9511c54e3b4d377a691f7f53f"
+        },
+        {
+          "path": "stages/18-cargo-test-workspace-benches-all-features-locked-no-run.stderr.log",
+          "bytes": 122416,
+          "sha256": "bfed716dc1a1ac60e3894cf5c583d881f3b7c6754ab7a2fa1e30459f17370c87"
+        },
+        {
+          "path": "stages/18-cargo-test-workspace-benches-all-features-locked-no-run.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "path": "recovered-full-gate.tar.xz",
+      "bytes": 48284,
+      "sha256": "45315c256f3eaafb7b8fc87163d89047104eb105ef161ecdccf6f9ba0aee5c43",
+      "members": [
+        {
+          "path": "receipt/result.json",
+          "bytes": 720,
+          "sha256": "4259f24183258d995291d5eb47ec19308afe8b587a5e2095226fbdc961843050"
+        },
+        {
+          "path": "receipt/start.json",
+          "bytes": 430,
+          "sha256": "145ecee6f3eeb19b401132761d7b59c53583a90d204ffc48dcec45559968fb69"
+        },
+        {
+          "path": "receipt/stderr",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "receipt/stdout",
+          "bytes": 5120,
+          "sha256": "644dc802676e5dd19dc3a3f8d16c401f19a4c27a15fd07627b010a73a62daf79"
+        },
+        {
+          "path": "stages/01-cargo-dev-repo-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/01-cargo-dev-repo-check.stdout.log",
+          "bytes": 57,
+          "sha256": "04c9dbd778abaae4c0cd0aa947614350952969e9cf216ae8fb12388949aebeaa"
+        },
+        {
+          "path": "stages/02-cargo-dev-docs-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/02-cargo-dev-docs-check.stdout.log",
+          "bytes": 138,
+          "sha256": "44a6fa393ac7888b2845b74f11dbcac26209792d50689140e7ea5abf1f5aa65e"
+        },
+        {
+          "path": "stages/03-fuzz-target-manifest.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/03-fuzz-target-manifest.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/04-active-probe-manifest.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/04-active-probe-manifest.stdout.log",
+          "bytes": 39,
+          "sha256": "9cb5085dd8593372e40014af9a775811c3a2b8c6dd177a73d4658e4bc38c4749"
+        },
+        {
+          "path": "stages/05-performance-cache-contract.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/05-performance-cache-contract.stdout.log",
+          "bytes": 33,
+          "sha256": "9baa0ad8bff46fdd4727a958b239f1a27d3a00fc3f23af889e9be8e6d5e23523"
+        },
+        {
+          "path": "stages/06-deployment-summary-contract.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/06-deployment-summary-contract.stdout.log",
+          "bytes": 52,
+          "sha256": "668c6f1381a3ec71d540fbfe1068b0ffb3a0eb05a2dff2f6306aca0a10ba77e6"
+        },
+        {
+          "path": "stages/07-cargo-fmt-all-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/07-cargo-fmt-all-check.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/08-cargo-fmt-manifest-path-tools-cargo-toml-all-check.stderr.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/08-cargo-fmt-manifest-path-tools-cargo-toml-all-check.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/09-cargo-clippy-workspace-all-targets-all-features-locked-d-warning.stderr.log",
+          "bytes": 72,
+          "sha256": "0b53209db424367e80c52cd8cde8b75e37af110438a0efde777104a1463956de"
+        },
+        {
+          "path": "stages/09-cargo-clippy-workspace-all-targets-all-features-locked-d-warning.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/10-cargo-clippy-manifest-path-tools-cargo-toml-workspace-all-target.stderr.log",
+          "bytes": 336,
+          "sha256": "b1775748e328740a314518f1f4e2b277e3292e57ac183de3e298e07ac10b5e82"
+        },
+        {
+          "path": "stages/10-cargo-clippy-manifest-path-tools-cargo-toml-workspace-all-target.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/11-cargo-deny-all-features-check-bans-licenses-sources.stderr.log",
+          "bytes": 13593,
+          "sha256": "2a20c7368006a78a96789ac67a63a964f2af470236b335ff704f633bcfc3b79b"
+        },
+        {
+          "path": "stages/11-cargo-deny-all-features-check-bans-licenses-sources.stdout.log",
+          "bytes": 33,
+          "sha256": "ef8317b369b8527e06290941bfada84d1f8e45b2b8c311d5e1fec1558e00a7be"
+        },
+        {
+          "path": "stages/12-cargo-doc-workspace-all-features-locked-no-deps.stderr.log",
+          "bytes": 178,
+          "sha256": "4db3375d84eb16d2075f8b8e3bf57ed568eb645439d9ee714422f4eb7b95b03d"
+        },
+        {
+          "path": "stages/12-cargo-doc-workspace-all-features-locked-no-deps.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/13-cargo-nextest-run-workspace-all-features-locked.stderr.log",
+          "bytes": 126274,
+          "sha256": "e4d2bc6d418bc8cf0e0a3108e542d40bd4201f929207c94f8bf8cd9bee442dc2"
+        },
+        {
+          "path": "stages/13-cargo-nextest-run-workspace-all-features-locked.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/14-cargo-test-manifest-path-tools-cargo-toml-workspace-all-features.stderr.log",
+          "bytes": 459,
+          "sha256": "5e0daf319b46004c46270750fcfdf6ab05ed5cf4df98cd0d4be1a0fa5b0bdd36"
+        },
+        {
+          "path": "stages/14-cargo-test-manifest-path-tools-cargo-toml-workspace-all-features.stdout.log",
+          "bytes": 56032,
+          "sha256": "9db318eccd56e04f17048bd7360fab1fd628a1664374adfba1f8678499626d3e"
+        },
+        {
+          "path": "stages/15-cargo-test-workspace-no-default-features-locked.stderr.log",
+          "bytes": 64220,
+          "sha256": "6c9e73f3046611201378610a82a8fc855c4a07902eadf78627941ea20f5460dd"
+        },
+        {
+          "path": "stages/15-cargo-test-workspace-no-default-features-locked.stdout.log",
+          "bytes": 90082,
+          "sha256": "9b5759191e1c1d9f1377368ee2438e22223bf068df265015ab05286d162882f3"
+        },
+        {
+          "path": "stages/16-cargo-test-workspace-doc-all-features-locked.stderr.log",
+          "bytes": 168,
+          "sha256": "89fc7a74e26a285c1b35bba9174c0db12454e5d568e134b8f94dcec3d7df358d"
+        },
+        {
+          "path": "stages/16-cargo-test-workspace-doc-all-features-locked.stdout.log",
+          "bytes": 581,
+          "sha256": "587ab5c54915317a28a840055bcb6ee7dc7941dc907a04153399b710faba8d19"
+        },
+        {
+          "path": "stages/17-cargo-test-workspace-release-all-features-locked.stderr.log",
+          "bytes": 64253,
+          "sha256": "cf4084be9b47648bc594c77ad740fdaa68dec6252956f101b9251820cc54e17f"
+        },
+        {
+          "path": "stages/17-cargo-test-workspace-release-all-features-locked.stdout.log",
+          "bytes": 90082,
+          "sha256": "a135b07d7a120f3d6bedd1dca2f310fb9699048549caf4804907ab324c6aa8e3"
+        },
+        {
+          "path": "stages/18-cargo-test-workspace-benches-all-features-locked-no-run.stderr.log",
+          "bytes": 2317,
+          "sha256": "379643ef36c6a8c0d11cbe30dd87524df79c6c84ad5d641d5fc44e04462faf28"
+        },
+        {
+          "path": "stages/18-cargo-test-workspace-benches-all-features-locked-no-run.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "stages/19-cargo-audit-deny-warnings.stderr.log",
+          "bytes": 577,
+          "sha256": "8731589d4e157508bcd2f08c292ed0914395a23f13bfb98bbb3d84d17021c02b"
+        },
+        {
+          "path": "stages/19-cargo-audit-deny-warnings.stdout.log",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ]
+    },
+    {
+      "path": "comparison-inputs.tar.xz",
+      "bytes": 3632,
+      "sha256": "5aa857594aa36d9a3ae378c1bad709b9b8c007df070617109702c820d01fd455",
+      "members": [
+        {
+          "path": "compare.py",
+          "bytes": 4868,
+          "sha256": "90d6f2f7b0fe4c0e564d00e167b377ea2209b5d32961651a71bb5b966381ea85"
+        },
+        {
+          "path": "receipt/result.json",
+          "bytes": 480,
+          "sha256": "bfee556d2daee30c57ab8af08248ac827940cfc6631d20db05066295f589429b"
+        },
+        {
+          "path": "receipt/start.json",
+          "bytes": 190,
+          "sha256": "3fc802ef224a92774d5600c7643b70387363ba9b1722fc2db9d2d6680e15c05e"
+        },
+        {
+          "path": "receipt/stderr",
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "receipt/stdout",
+          "bytes": 12416,
+          "sha256": "ecc2ab16e1f94e8c172743bd5c7551e19d60e39a4b937967c30a3ab563d0d031"
+        }
+      ]
+    }
+  ]
+}

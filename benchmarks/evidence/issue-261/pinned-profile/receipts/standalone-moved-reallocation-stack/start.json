@@ -1,0 +1,9 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import sys,pathlib,json; sys.argv=[\"owners\",\"raw\",\"/home/jacek/.cache/rr-261-investigation/profile-analysis/standalone.processed\"]; exec(pathlib.Path(\"/tmp/rr-261-investigation/owners-v3.py\").read_text().split(\"live = {}\")[0]); trace=int(\"5fc\",16); owner,frames=trace_owners[trace]; print(json.dumps({\"trace\":trace,\"owner\":owner,\"frames\":frames}))"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T09:16:45.680949+00:00"
+}

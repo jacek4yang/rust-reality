@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/tmp/rr-261-investigation/raw_timeline.py", line 18, in <module>
+    raise ValueError('reused live pointer')
+ValueError: reused live pointer

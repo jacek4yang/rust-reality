@@ -1,0 +1,441 @@
+[
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libexec/heaptrack_interpret"
+    ],
+    "stdin": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-landing.raw",
+    "started": "2026-10-06T08:51:03.521045+00:00",
+    "ended": "2026-10-06T08:51:04.024123+00:00",
+    "duration_seconds": 0.5030713740270585,
+    "exit_code": 0,
+    "streams": {
+      "handoff-landing.processed": "36aad6576cd52a770505614fa157ce5ac851609c1a18472f310386b574d5773d",
+      "handoff-landing.processed.stderr": "b21a6ae4e97348f5943b53c1e3b8e6d8c8883de525ef6a9ce31b8d3ec21ea9fb"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/bin/heaptrack_print",
+      "--file",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-landing.processed",
+      "--print-leaks=1",
+      "--peak-limit",
+      "5",
+      "--sub-peak-limit",
+      "2",
+      "--print-allocators=0",
+      "--print-temporary=0",
+      "--disable-builtin-suppressions",
+      "--disable-embedded-suppressions",
+      "--print-massif",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-landing.massif",
+      "--massif-detailed-freq",
+      "1"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:51:04.029237+00:00",
+    "ended": "2026-10-06T08:51:36.684707+00:00",
+    "duration_seconds": 32.65547958598472,
+    "exit_code": 0,
+    "streams": {
+      "handoff-landing.heaptrack.txt": "487392ffb8fe6e5aaca7a7ce3f14da6c7c05564a9b4391741f2059e91229fb6c",
+      "handoff-landing.heaptrack.txt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/raw_timeline.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-landing.raw"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:51:36.685451+00:00",
+    "ended": "2026-10-06T08:51:36.983436+00:00",
+    "duration_seconds": 0.2980004349956289,
+    "exit_code": 0,
+    "streams": {
+      "handoff-landing.timeline.json": "1229f20a17a9391d0d78fac5f3ca6e531ea79a4b9068b621281a00bcc8b7554a",
+      "handoff-landing.timeline.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v2.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-landing.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-landing.processed"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:51:36.984390+00:00",
+    "ended": "2026-10-06T08:51:37.484335+00:00",
+    "duration_seconds": 0.49995330499950796,
+    "exit_code": 0,
+    "streams": {
+      "handoff-landing.owners.json": "a86882fc36768fdb0cab638ca6ea6a76c3cb5fc397610429ea4c5b506094501d",
+      "handoff-landing.owners.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libexec/heaptrack_interpret"
+    ],
+    "stdin": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-line.raw",
+    "started": "2026-10-06T08:51:37.493671+00:00",
+    "ended": "2026-10-06T08:51:38.058062+00:00",
+    "duration_seconds": 0.5644058069447055,
+    "exit_code": 0,
+    "streams": {
+      "handoff-line.processed": "2afb58139e62f72b95b7cb216bca29e2585a44d7950909195308b233caa594b3",
+      "handoff-line.processed.stderr": "48146e98d70b021ec4bd0dea4efd8075a088b2be3d8642bfea37fcacf134bf94"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/bin/heaptrack_print",
+      "--file",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-line.processed",
+      "--print-leaks=1",
+      "--peak-limit",
+      "5",
+      "--sub-peak-limit",
+      "2",
+      "--print-allocators=0",
+      "--print-temporary=0",
+      "--disable-builtin-suppressions",
+      "--disable-embedded-suppressions",
+      "--print-massif",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-line.massif",
+      "--massif-detailed-freq",
+      "1"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:51:38.063541+00:00",
+    "ended": "2026-10-06T08:52:26.195110+00:00",
+    "duration_seconds": 48.1315680189291,
+    "exit_code": 0,
+    "streams": {
+      "handoff-line.heaptrack.txt": "5e706704aad6ad3a534af2627be2cc4566775ed6aced9ad5d8f7f8abc5351243",
+      "handoff-line.heaptrack.txt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/raw_timeline.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-line.raw"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:52:26.195829+00:00",
+    "ended": "2026-10-06T08:52:26.523662+00:00",
+    "duration_seconds": 0.32784717495087534,
+    "exit_code": 0,
+    "streams": {
+      "handoff-line.timeline.json": "cf89e560f5220ed9c8cdad43405296db4e2f47fa57dbaec0bc1116eb31d4ba28",
+      "handoff-line.timeline.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v2.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-handoff-line.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/handoff-line.processed"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:52:26.524695+00:00",
+    "ended": "2026-10-06T08:52:27.060363+00:00",
+    "duration_seconds": 0.5357368090189993,
+    "exit_code": 0,
+    "streams": {
+      "handoff-line.owners.json": "44d8a8412c1cbf7b57155b3bb78afe6c70e4b773b8102438b3c9ba3cbc4a938f",
+      "handoff-line.owners.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libexec/heaptrack_interpret"
+    ],
+    "stdin": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-landing.raw",
+    "started": "2026-10-06T08:52:27.068690+00:00",
+    "ended": "2026-10-06T08:52:27.576238+00:00",
+    "duration_seconds": 0.5075603839941323,
+    "exit_code": 0,
+    "streams": {
+      "nxr-landing.processed": "444a4fef9aa7b5fca8c204a8c77a815f93ec925b2a22c2e8333c58eaa1a483e3",
+      "nxr-landing.processed.stderr": "519065d8f7b8e6bda5c5a68b3ecc5b3410a99d8d2540e28d619f37483982631b"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/bin/heaptrack_print",
+      "--file",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-landing.processed",
+      "--print-leaks=1",
+      "--peak-limit",
+      "5",
+      "--sub-peak-limit",
+      "2",
+      "--print-allocators=0",
+      "--print-temporary=0",
+      "--disable-builtin-suppressions",
+      "--disable-embedded-suppressions",
+      "--print-massif",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-landing.massif",
+      "--massif-detailed-freq",
+      "1"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:52:27.580987+00:00",
+    "ended": "2026-10-06T08:52:59.175968+00:00",
+    "duration_seconds": 31.594999875989743,
+    "exit_code": 0,
+    "streams": {
+      "nxr-landing.heaptrack.txt": "0bac34dfa9a6bfeffe3e0b16a118546c4f4071eacea23e15670578276b78ef7a",
+      "nxr-landing.heaptrack.txt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/raw_timeline.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-landing.raw"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:52:59.176934+00:00",
+    "ended": "2026-10-06T08:52:59.739356+00:00",
+    "duration_seconds": 0.5624561969889328,
+    "exit_code": 0,
+    "streams": {
+      "nxr-landing.timeline.json": "e01205ce1a91e06b5b3c7d7004559207b8cdbd3342b4f1a9f15322ab606853e4",
+      "nxr-landing.timeline.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v2.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-landing.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-landing.processed"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:52:59.740870+00:00",
+    "ended": "2026-10-06T08:53:00.244036+00:00",
+    "duration_seconds": 0.5031749290646985,
+    "exit_code": 0,
+    "streams": {
+      "nxr-landing.owners.json": "de9cc8eafe4c160009a04a125f8926e2bf2199ae0f364c166b2360717c34d79d",
+      "nxr-landing.owners.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libexec/heaptrack_interpret"
+    ],
+    "stdin": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-line.raw",
+    "started": "2026-10-06T08:53:00.259161+00:00",
+    "ended": "2026-10-06T08:53:00.875311+00:00",
+    "duration_seconds": 0.6161539329914376,
+    "exit_code": 0,
+    "streams": {
+      "nxr-line.processed": "0f3ea7586a66e74bdc683636963079527292b0a63158410916b8ed1b81892d8d",
+      "nxr-line.processed.stderr": "3c7258177dd0e409d97c1563dc40f4c9c6fb8079c9008b73d81f2a8251d9ff99"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/bin/heaptrack_print",
+      "--file",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-line.processed",
+      "--print-leaks=1",
+      "--peak-limit",
+      "5",
+      "--sub-peak-limit",
+      "2",
+      "--print-allocators=0",
+      "--print-temporary=0",
+      "--disable-builtin-suppressions",
+      "--disable-embedded-suppressions",
+      "--print-massif",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-line.massif",
+      "--massif-detailed-freq",
+      "1"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:53:00.881511+00:00",
+    "ended": "2026-10-06T08:53:55.099624+00:00",
+    "duration_seconds": 54.21811874303967,
+    "exit_code": 0,
+    "streams": {
+      "nxr-line.heaptrack.txt": "d4aac6bdf2c54518bd3feeb7eecd70d17bd29019c929f0a4d867d8c266aa2990",
+      "nxr-line.heaptrack.txt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/raw_timeline.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-line.raw"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:53:55.100758+00:00",
+    "ended": "2026-10-06T08:53:55.438078+00:00",
+    "duration_seconds": 0.33733212598599494,
+    "exit_code": 0,
+    "streams": {
+      "nxr-line.timeline.json": "ca806e7b88fa2a5ae7a1190d6b5fe38db23de5c3bf5a75e9b2cf36b9936432f3",
+      "nxr-line.timeline.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v2.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-nxr-line.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/nxr-line.processed"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:53:55.439615+00:00",
+    "ended": "2026-10-06T08:53:56.007896+00:00",
+    "duration_seconds": 0.568295659031719,
+    "exit_code": 0,
+    "streams": {
+      "nxr-line.owners.json": "dd560e255edd4461db4e5974cbe844bff4d7d607eff64952005b08278bd28999",
+      "nxr-line.owners.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libexec/heaptrack_interpret"
+    ],
+    "stdin": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-socks-line.raw",
+    "started": "2026-10-06T08:53:56.014673+00:00",
+    "ended": "2026-10-06T08:53:56.573064+00:00",
+    "duration_seconds": 0.5583927989937365,
+    "exit_code": 0,
+    "streams": {
+      "socks-line.processed": "e5c0b551177d5adcef6eead13d2226de9da6c9d0850f07914784f73003c8dd5f",
+      "socks-line.processed.stderr": "62d3865ce9714e7a6284b29a9e06bb0150c72d728444147edec12c0c78dece95"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/bin/heaptrack_print",
+      "--file",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/socks-line.processed",
+      "--print-leaks=1",
+      "--peak-limit",
+      "5",
+      "--sub-peak-limit",
+      "2",
+      "--print-allocators=0",
+      "--print-temporary=0",
+      "--disable-builtin-suppressions",
+      "--disable-embedded-suppressions",
+      "--print-massif",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/socks-line.massif",
+      "--massif-detailed-freq",
+      "1"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:53:56.578053+00:00",
+    "ended": "2026-10-06T08:54:51.511823+00:00",
+    "duration_seconds": 54.933794626034796,
+    "exit_code": 0,
+    "streams": {
+      "socks-line.heaptrack.txt": "b28f0f2ddfeb89d2166526044d7b25b983e78f919be70cbda9a4ae0aee0f1939",
+      "socks-line.heaptrack.txt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/raw_timeline.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-socks-line.raw"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:54:51.513303+00:00",
+    "ended": "2026-10-06T08:54:51.848012+00:00",
+    "duration_seconds": 0.33471789595205337,
+    "exit_code": 0,
+    "streams": {
+      "socks-line.timeline.json": "5672b6a9905508e5f3d3dcb5206ae4d6d06b4b94a750553d6df51df36794cd71",
+      "socks-line.timeline.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/owners-v2.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-socks-line.raw",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/socks-line.processed"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:54:51.849771+00:00",
+    "ended": "2026-10-06T08:54:52.425839+00:00",
+    "duration_seconds": 0.576076953089796,
+    "exit_code": 0,
+    "streams": {
+      "socks-line.owners.json": "4fa2d4c5ae64926587a58463af995ef3af5612c673bb893e462bcc0a589f7d64",
+      "socks-line.owners.json.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/lib/heaptrack/libexec/heaptrack_interpret"
+    ],
+    "stdin": "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-standalone.raw",
+    "started": "2026-10-06T08:54:52.441491+00:00",
+    "ended": "2026-10-06T08:54:53.081510+00:00",
+    "duration_seconds": 0.6400252419989556,
+    "exit_code": 0,
+    "streams": {
+      "standalone.processed": "bbee73a9fa2e57e4fe8f68c84b2f9cf46e0c691c2666818e9ec5bb16023344c0",
+      "standalone.processed.stderr": "7faa5622b07f4876cd2a53a295287bfa092bced324547e49e90a6a649a605c8b"
+    }
+  },
+  {
+    "command": [
+      "/tmp/rr-261-investigation/heaptrack/usr/bin/heaptrack_print",
+      "--file",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/standalone.processed",
+      "--print-leaks=1",
+      "--peak-limit",
+      "5",
+      "--sub-peak-limit",
+      "2",
+      "--print-allocators=0",
+      "--print-temporary=0",
+      "--disable-builtin-suppressions",
+      "--disable-embedded-suppressions",
+      "--print-massif",
+      "/home/jacek/.cache/rr-261-investigation/profile-analysis/standalone.massif",
+      "--massif-detailed-freq",
+      "1"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:54:53.090202+00:00",
+    "ended": "2026-10-06T08:55:43.017936+00:00",
+    "duration_seconds": 49.927737039048225,
+    "exit_code": 0,
+    "streams": {
+      "standalone.heaptrack.txt": "e495ca72de47266e75f4f3ba807472509c079e07f2f3a6c99e5e1af60e6f6302",
+      "standalone.heaptrack.txt.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "command": [
+      "python3",
+      "/tmp/rr-261-investigation/raw_timeline.py",
+      "/home/jacek/.cache/rr-261-investigation/profile-1800-traces/soak-standalone.raw"
+    ],
+    "stdin": null,
+    "started": "2026-10-06T08:55:43.019159+00:00",
+    "ended": "2026-10-06T08:55:43.158481+00:00",
+    "duration_seconds": 0.13933198002632707,
+    "exit_code": 1,
+    "streams": {
+      "standalone.timeline.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "standalone.timeline.json.stderr": "a1124372a39ea05e0b317225ebafe88323994fc9c6879d5f4deb5aa96a77cfb9"
+    }
+  }
+]

@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/jacek/.cache/rr-261-investigation/analyze_profile.py", line 41, in <module>
+    run(role + '.timeline.json', ['python3', '/tmp/rr-261-investigation/raw_timeline.py', str(raw)])
+    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jacek/.cache/rr-261-investigation/analyze_profile.py", line 31, in run
+    raise RuntimeError(f'{name}: exit {result.returncode}')
+RuntimeError: standalone.timeline.json: exit 1

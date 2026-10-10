@@ -1,0 +1,239 @@
+{
+  "binaries": {
+    "openssl": {
+      "identity": "OpenSSL 3.5.6 7 Apr 2026 (Library: OpenSSL 3.5.6 7 Apr 2026)\nbuilt on: Tue Oct  6 07:48:33 2026 UTC\nplatform: linux-x86_64\noptions:  bn(64,64)\ncompiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG\nOPENSSLDIR: \"/tmp/rr-261-investigation/openssl/ssl\"\nENGINESDIR: \"/tmp/rr-261-investigation/openssl/lib64/engines-3\"\nMODULESDIR: \"/tmp/rr-261-investigation/openssl/lib64/ossl-modules\"\nSeeding source: os-specific\nCPUINFO: OPENSSL_ia32cap=0x7ffaf3ffffebffff:0x984007bc239c27eb:0x00400810fc18c410:0x0000000000040000:0x0000000000000000",
+      "path": "/tmp/rr-261-investigation/openssl/bin/openssl",
+      "sha256": "df2276b9115e640209991ee2aa9cf897d674042299c014553037832f1beb2226"
+    },
+    "rrDevHelpers": {
+      "path": "/tmp/rr-261-investigation/bin/rr-dev-diagnostic-v2",
+      "sha256": "b9f7731d49e450cdbaccd8171a8051574c9e5195a15d013d22d8ebd3b7a20cc0"
+    },
+    "rustReality": {
+      "identity": "{\"gitCommit\":\"dbf4773475e7d30a6753f8b90a7db3850cf7f135\",\"version\":\"2.0.1\"}",
+      "path": "/tmp/rr-261-investigation/product-target/release/rust-reality",
+      "sha256": "b8ab364ca79c9debe18b2f96eed02dc9b7d80847e71475e08991f3aa63c99ace"
+    },
+    "xray": {
+      "identity": "Xray 26.9.9 (Xray, Penetrates Everything.) 52a412d (go1.27.1 linux/amd64)",
+      "path": "/tmp/rr-261-investigation/xray/xray",
+      "sha256": "c4ae6798c38e0e5343b192406746333cd0ba7ff3eb984f8c4b9939dcb68c3f8a"
+    }
+  },
+  "completedAt": "2026-10-06T09:39:38Z",
+  "configSha256": {
+    "handoffLanding": "323c7b53714c2c56a87b4bd6e3751fd31ab641071147ce8006ba0a8de4e71edb",
+    "handoffLine": "7a85aee8101744e47feae429551076f85b20071f1d54cde69b4c4e23e2bf3f88",
+    "nxrLanding": "df56daf658d4e3a8dae6363371bbea4b06ce90554a9d08be35f569704f7a0c1f",
+    "nxrLine": "15471f3e307f2cc4f65fdcf20ea663bbf1481535c8ff2707b9b28901a0e0f24e",
+    "socksLine": "b1ca79bde351a7411ec3cffd98822d6d5d977ba856bb64a6989b96a435f962f5",
+    "standalone": "7da517d24fdd27cf1a8a0284a151787cfb571e51d56c0565ff1b3a67c82dd4d1"
+  },
+  "distributedGates": {
+    "attempts": 32,
+    "handoffSeq1": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": true,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    },
+    "intervalSeconds": 60,
+    "nxrByteIntegrity": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": null,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    },
+    "ok": true,
+    "payloadBytes": 1048576,
+    "payloadSha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+    "proxy": {
+      "appendedWireLength": 139,
+      "shaped": 32
+    },
+    "reload": {
+      "expectedGeneration": 1,
+      "triggerAttempts": 1
+    },
+    "requiredAttempts": 32,
+    "schemaVersion": 3,
+    "socks5ByteIntegrity": {
+      "allPayloadBytes": true,
+      "allPayloadSha256": true,
+      "allServerSequenceOne": null,
+      "attempts": 32,
+      "failures": 0,
+      "successes": 32
+    }
+  },
+  "durationSeconds": 1800.0,
+  "elapsedSeconds": 1953.730436118,
+  "harness": "soak",
+  "implementation": "rust-reality",
+  "longHorizonQualified": false,
+  "memorySlopeGateBasis": {
+    "aggregate": "pss",
+    "perProcess": "rss"
+  },
+  "memoryTailSlopeGateApplied": true,
+  "minimumRounds": 3,
+  "ok": true,
+  "payloadBytes": 4194304,
+  "payloadSha256": "2b07811057df887086f06a67edc6ebf911de8b6741156e7a2eb1416a4b8b1b2e",
+  "portBlock": [
+    44417,
+    46283,
+    46313,
+    34283,
+    41979,
+    40537,
+    38057,
+    37465,
+    41601,
+    42655,
+    37751,
+    44159,
+    33557,
+    34743,
+    36675
+  ],
+  "ports": {
+    "handoffCover": 40537,
+    "handoffCoverUpstream": 41979,
+    "handoffLanding": 37465,
+    "handoffLine": 38057,
+    "handoffSocks": 41601,
+    "httpOrigin": 34283,
+    "httpsOrigin": 46313,
+    "nxrLanding": 37751,
+    "nxrLine": 42655,
+    "nxrSocks": 44159,
+    "socksClient": 36675,
+    "socksLine": 33557,
+    "socksUpstream": 34743,
+    "standalone": 44417,
+    "standaloneSocks": 46283
+  },
+  "resourceAggregate": {
+    "fdGrowth": -6,
+    "fdPeakGrowth": 8,
+    "pssAvailable": true,
+    "pssGrowthMiB": 4.2421875,
+    "pssSampledPeakGrowthMiB": 4.6171875,
+    "pssTailSlopeMiBPerHour": 1.9199330424137997,
+    "rssGrowthMiB": 4.90234375,
+    "rssPeakGrowthMiB": 5.3046875,
+    "rssSampledPeakGrowthMiB": 5.3046875,
+    "rssTailSlopeMiBPerHour": 1.9093629388039575,
+    "threadGrowth": -1,
+    "threadPeakGrowth": 4
+  },
+  "resourceByProcess": {
+    "handoff-landing": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 1.015625,
+      "pssSampledPeakGrowthMiB": 1.2607421875,
+      "pssTailSlopeMiBPerHour": 0.030448036733212197,
+      "rssGrowthMiB": 1.0703125,
+      "rssPeakGrowthMiB": 1.3203125,
+      "rssSampledPeakGrowthMiB": 1.3203125,
+      "rssTailSlopeMiBPerHour": 0.028655312319748844,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "handoff-line": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.3154296875,
+      "pssSampledPeakGrowthMiB": 0.3154296875,
+      "pssTailSlopeMiBPerHour": 0.30940727129668855,
+      "rssGrowthMiB": 0.34765625,
+      "rssPeakGrowthMiB": 0.34765625,
+      "rssSampledPeakGrowthMiB": 0.34765625,
+      "rssTailSlopeMiBPerHour": 0.30761454688322515,
+      "threadGrowth": -1,
+      "threadPeakGrowth": 0
+    },
+    "nxr-landing": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.896484375,
+      "pssSampledPeakGrowthMiB": 0.896484375,
+      "pssTailSlopeMiBPerHour": 0.7385683526002327,
+      "rssGrowthMiB": 0.94140625,
+      "rssPeakGrowthMiB": 0.94140625,
+      "rssSampledPeakGrowthMiB": 0.94140625,
+      "rssTailSlopeMiBPerHour": 0.7369572241046464,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "nxr-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 2,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.22265625,
+      "pssSampledPeakGrowthMiB": 0.3349609375,
+      "pssTailSlopeMiBPerHour": 0.12100330513587106,
+      "rssGrowthMiB": 0.30078125,
+      "rssPeakGrowthMiB": 0.41796875,
+      "rssSampledPeakGrowthMiB": 0.41796875,
+      "rssTailSlopeMiBPerHour": 0.119033631757592,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "socks-line": {
+      "fdGrowth": -2,
+      "fdPeakGrowth": 0,
+      "pssAvailable": true,
+      "pssGrowthMiB": 0.6826171875,
+      "pssSampledPeakGrowthMiB": 0.791015625,
+      "pssTailSlopeMiBPerHour": 0.3486577641958388,
+      "rssGrowthMiB": 0.71875,
+      "rssPeakGrowthMiB": 0.83203125,
+      "rssSampledPeakGrowthMiB": 0.83203125,
+      "rssTailSlopeMiBPerHour": 0.346865039782375,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 1
+    },
+    "standalone": {
+      "fdGrowth": 0,
+      "fdPeakGrowth": 0,
+      "pssAvailable": true,
+      "pssGrowthMiB": 1.109375,
+      "pssSampledPeakGrowthMiB": 1.2109375,
+      "pssTailSlopeMiBPerHour": 0.3718483124519563,
+      "rssGrowthMiB": 1.5234375,
+      "rssPeakGrowthMiB": 1.62890625,
+      "rssSampledPeakGrowthMiB": 1.62890625,
+      "rssTailSlopeMiBPerHour": 0.37023718395636995,
+      "threadGrowth": 0,
+      "threadPeakGrowth": 0
+    }
+  },
+  "resources": {
+    "fdGrowth": -6,
+    "fdPeakGrowth": 8,
+    "pssAvailable": true,
+    "pssGrowthMiB": 4.2421875,
+    "pssSampledPeakGrowthMiB": 4.6171875,
+    "pssTailSlopeMiBPerHour": 1.9199330424137997,
+    "rssGrowthMiB": 4.90234375,
+    "rssPeakGrowthMiB": 5.3046875,
+    "rssSampledPeakGrowthMiB": 5.3046875,
+    "rssTailSlopeMiBPerHour": 1.9093629388039575,
+    "threadGrowth": -1,
+    "threadPeakGrowth": 4
+  },
+  "rounds": 250,
+  "runId": "issue261-control-1800",
+  "schemaVersion": 3,
+  "transferFailures": 0
+}

@@ -1,0 +1,9 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import pathlib,json; root=pathlib.Path(\"/home/jacek/.cache/rr-261-investigation/control-1800\"); lineage=json.loads((root/\"process-lineage.json\").read_text()); result={};\nfor role,identity in lineage.items():\n maps=(pathlib.Path(\"/proc\")/str(identity[\"pid\"])/\"maps\").read_text(); markers=[line for line in maps.splitlines() if \"libheaptrack\" in line or \"malloc_observer\" in line]; assert not markers,(role,markers); result[role]={\"pid\":identity[\"pid\"],\"pid_starttime\":identity[\"pid_starttime\"],\"instrumentation_libraries_mapped\":False}\n(root/\"instrumentation-mapping-check.json\").write_text(json.dumps(result,indent=2)+\"\\n\"); print(json.dumps(result))"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T09:17:43.690498+00:00"
+}

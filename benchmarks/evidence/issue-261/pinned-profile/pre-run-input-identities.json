@@ -1,0 +1,62 @@
+{
+  "diagnostic-v2.patch": {
+    "sha256": "bcd240904499b6f4c4a287ca087e01788731578fd316697302ce1cf40efc018b",
+    "bytes": 1883
+  },
+  "sample.py": {
+    "sha256": "4fac6f8b8358432d856b345d4a06e1511072c6233f4a48af2d7b6f2697d0cab4",
+    "bytes": 3977
+  },
+  "raw_timeline.py": {
+    "sha256": "fdf9a8198d6a86dc6d1449f69d3345d9c493e47b309ee19df5c78fb56db055ca",
+    "bytes": 1512
+  },
+  "malloc_observer.c": {
+    "sha256": "bac4384c71aa04fba92e5c06aba923afa3236e8d91b415b5bc33df9ec68a00bd",
+    "bytes": 1357
+  },
+  "malloc_observer.so": {
+    "sha256": "f968d6c6bd4d7f4e6f0542b457181e66256aaf52f918377096d876bfd96800f8",
+    "bytes": 22240
+  },
+  "bin/rr-dev-diagnostic-v2": {
+    "sha256": "b9f7731d49e450cdbaccd8171a8051574c9e5195a15d013d22d8ebd3b7a20cc0",
+    "bytes": 194769536
+  },
+  "product-target/release/rust-reality": {
+    "sha256": "b8ab364ca79c9debe18b2f96eed02dc9b7d80847e71475e08991f3aa63c99ace",
+    "bytes": 44366824
+  },
+  "heaptrack/usr/lib/heaptrack/libheaptrack_preload.so": {
+    "sha256": "e7304fb4e62b8cb99228f7d86a4a1b1adb9de61770712ad3b0c2a211f436fb0f",
+    "bytes": 47432
+  },
+  "heaptrack/usr/lib/heaptrack/libexec/heaptrack_interpret": {
+    "sha256": "2a9cee138a829fe7d72b8452ed0ca1d4a7273825789a962eae996b87e40ebc49",
+    "bytes": 113136
+  },
+  "heaptrack/usr/bin/heaptrack_print": {
+    "sha256": "99022bd2333c4d503c7b11db69a4d8f2801d900caf3ef957a0030b2c334ec118",
+    "bytes": 346488
+  },
+  "openssl/bin/openssl": {
+    "sha256": "df2276b9115e640209991ee2aa9cf897d674042299c014553037832f1beb2226",
+    "bytes": 8967000
+  },
+  "xray/xray": {
+    "sha256": "c4ae6798c38e0e5343b192406746333cd0ba7ff3eb984f8c4b9939dcb68c3f8a",
+    "bytes": 37544060
+  },
+  "openssl.tar.gz": {
+    "sha256": "deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736",
+    "bytes": 53121812
+  },
+  "xray.zip": {
+    "sha256": "1eb9175d0f0a8f8149c9230a7fc5ae66ce332ed20a53155ce61fe62e3f58b7df",
+    "bytes": 21356337
+  },
+  "owners.py": {
+    "sha256": "1b06af4eb17a2b69b2553cafb18822aa700fc27e1823f78f7e38b870c48aae59",
+    "bytes": 3105
+  }
+}

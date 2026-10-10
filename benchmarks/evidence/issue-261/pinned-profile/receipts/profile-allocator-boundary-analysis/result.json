@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import pathlib,re,json,xml.etree.ElementTree as E; root=pathlib.Path(\"/home/jacek/.cache/rr-261-investigation\"); result={};\nfor p in sorted((root/\"profile-1800-traces\").glob(\"*.malloc-info\")):\n pairs=re.findall(r\"<!-- pid=(\\d+) monotonic_seconds=([\\d.]+) -->\\n(<malloc.*?</malloc>)\",p.read_text(),re.S); origin=float(pairs[0][1]); records=[]\n for pid,stamp,xml in pairs:\n  e=E.fromstring(xml); records.append({\"pid\":int(pid),\"relative_seconds\":float(stamp)-origin,\"arenas\":len(e.findall(\"heap\")),\"system_current_bytes\":int(e.find(\"system[@type=\\u0027current\\u0027]\").attrib[\"size\"]),\"totals_bytes\":{x.attrib[\"type\"]:int(x.attrib[\"size\"]) for x in e.findall(\"total\")}})\n result[p.name]={\"origin_monotonic_seconds\":origin,\"snapshots\":len(records),\"nearest_observations\":[min(records,key=lambda r:abs(r[\"relative_seconds\"]-t)) for t in (880,960,1800)],\"note\":\"Relative to first allocator snapshot; not the native workload clock. Reported free space includes profiler/observer effects and is not a product-live-byte estimate.\"}\nprint(json.dumps(result,indent=2))"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T09:03:42.333212+00:00",
+  "ended": "2026-10-06T09:03:42.785215+00:00",
+  "duration_seconds": 0.451753924950026,
+  "exit_code": 0,
+  "streams": {
+    "stdout": "a8a65089f5e79d9ebaa8a998e6f23677796e83b5e16962b11276f109392129e7",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

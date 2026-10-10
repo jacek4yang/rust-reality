@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import json,pathlib; rows=[json.loads(s) for s in pathlib.Path(\"/home/jacek/.cache/rr-261-investigation/profile-1800/smaps.jsonl\").read_text().splitlines()];\nfor label in sorted({r[\"label\"] for r in rows}):\n x=[r for r in rows if r[\"label\"]==label]; first,last=x[0],x[-1]; deltas=[]\n for key in set(first[\"mappings_kib\"])|set(last[\"mappings_kib\"]):\n  a=first[\"mappings_kib\"].get(key,{}); b=last[\"mappings_kib\"].get(key,{}); delta=b.get(\"Anonymous\",0)-a.get(\"Anonymous\",0); deltas.append({\"bucket\":key,\"first_anonymous_kib\":a.get(\"Anonymous\",0),\"last_anonymous_kib\":b.get(\"Anonymous\",0),\"delta_anonymous_kib\":delta})\n print(json.dumps({\"role\":label,\"pss_delta_kib\":last[\"smaps_kib\"][\"Pss\"]-first[\"smaps_kib\"][\"Pss\"],\"anonymous_delta_kib\":last[\"smaps_kib\"][\"Anonymous\"]-first[\"smaps_kib\"][\"Anonymous\"],\"mapping_deltas\":sorted(deltas,key=lambda d:abs(d[\"delta_anonymous_kib\"]),reverse=True),\"note\":\"Unnamed-map extent grouping does not prove allocator or stack ownership; resized mappings move between buckets.\"}))"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T09:23:46.201179+00:00",
+  "ended": "2026-10-06T09:23:46.627652+00:00",
+  "duration_seconds": 0.4262629470322281,
+  "exit_code": 0,
+  "streams": {
+    "stdout": "7f3e3266769832312e820d73ac4edfff5bdfdb69911b8308e876e5a704d7d0a8",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

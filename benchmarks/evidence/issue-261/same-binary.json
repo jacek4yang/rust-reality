@@ -1,0 +1,62 @@
+{
+  "schema": "rr-issue261-evidence/v1",
+  "source_commit": "3b581bdc9d4fbd55fc9e6b02caab67e0d6860949",
+  "records": [
+    {
+      "outcome": "failed",
+      "run_url": "https://github.com/jacek4yang/rust-reality/actions/runs/37351315930",
+      "artifact_id": 11365897422,
+      "archive_sha256": "6107760dec5c3b79f96c1420d9475a9056b158915ca5e3a74ac66e3fdbe80cc9",
+      "verified_retained_checksums": 45,
+      "frozen_binary_sha256": "1c77e38ed55fe8189d6fa0c0b2d655f1de609e1f2d8747e97bfcebaf0b38fcd3",
+      "soak_environment_present": false,
+      "soak_completion_present": false,
+      "retained_files": [
+        {
+          "path": "failed/resources.jsonl",
+          "sha256": "d142a3fcd47e2a95353fd8e6ea8e3c62772e77a6f31ba10e2db444fb3476d937"
+        },
+        {
+          "path": "failed/soak-summary.json",
+          "sha256": "0f3e1200107f8637da66fdd11bd5505d8800a9c1af8c9338766d27fc2e367f57"
+        },
+        {
+          "path": "failed/distributed-samples.jsonl",
+          "sha256": "39a0fac035382c03eb059052ba05226f403665113415591e7343ce4e1ae8378b"
+        },
+        {
+          "path": "failed/distributed-gates.json",
+          "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760"
+        }
+      ]
+    },
+    {
+      "outcome": "passed",
+      "run_url": "https://github.com/jacek4yang/rust-reality/actions/runs/37358417218",
+      "artifact_id": 11368625773,
+      "archive_sha256": "f548022d7df08eb5ad05513504f27eac1a987ecf98e19591b0bb2213ba491af7",
+      "verified_retained_checksums": 47,
+      "frozen_binary_sha256": "1c77e38ed55fe8189d6fa0c0b2d655f1de609e1f2d8747e97bfcebaf0b38fcd3",
+      "soak_environment_present": true,
+      "soak_completion_present": true,
+      "retained_files": [
+        {
+          "path": "passed/resources.jsonl",
+          "sha256": "9db0e5e8f550efc139e32a1a42983402162058b6b4f25a1e13be8ae37ba52318"
+        },
+        {
+          "path": "passed/soak-summary.json",
+          "sha256": "468d2a66905d4498415848c4731323b6e1db365cd4aed3d22b1919cc27480e00"
+        },
+        {
+          "path": "passed/distributed-samples.jsonl",
+          "sha256": "a92f85fe9b80a68f6eaa8a9fa67c02046ca3c7fa0335d3fca6fa5624e38324a5"
+        },
+        {
+          "path": "passed/distributed-gates.json",
+          "sha256": "03d3dcfdba753c01e493bca3ae5a031cd44a5cb1ba8063c2e9b1ee2ad590e760"
+        }
+      ]
+    }
+  ]
+}

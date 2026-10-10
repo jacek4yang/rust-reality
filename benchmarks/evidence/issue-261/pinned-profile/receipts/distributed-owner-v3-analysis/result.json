@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python3",
+    "-c",
+    "import pathlib,subprocess,json,hashlib; root=pathlib.Path(\"/home/jacek/.cache/rr-261-investigation\"); output=root/\"profile-analysis-v3\"; output.mkdir(); receipts=[];\nfor raw in sorted((root/\"profile-1800-traces\").glob(\"*.raw\")):\n if raw.stem==\"soak-standalone\": continue\n role=raw.stem.removeprefix(\"soak-\"); command=[\"python3\",\"/tmp/rr-261-investigation/owners-v3.py\",str(raw),str(root/\"profile-analysis\"/(role+\".processed\"))]; p=subprocess.run(command,capture_output=True); (output/(role+\".owners.json\")).write_bytes(p.stdout); (output/(role+\".stderr\")).write_bytes(p.stderr); receipts.append({\"command\":command,\"exit_code\":p.returncode,\"stdout_sha256\":hashlib.sha256(p.stdout).hexdigest()}); (output/\"commands.json\").write_text(json.dumps(receipts,indent=2)+\"\\n\"); assert p.returncode==0,p.stderr; d=json.loads(p.stdout); print(role,d[\"remaining_bytes\"])"
+  ],
+  "cwd": "/home/jacek/Projects/rust-reality",
+  "started": "2026-10-06T08:59:33.854545+00:00",
+  "ended": "2026-10-06T08:59:36.713177+00:00",
+  "duration_seconds": 2.858424485079013,
+  "exit_code": 0,
+  "streams": {
+    "stdout": "e5e7b9841019502f14f1b950d6dc865c147261ff7f9fd1d0259cb6b519484a6d",
+    "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
