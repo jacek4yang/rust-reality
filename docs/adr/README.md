@@ -85,3 +85,4 @@ of the law is what it is.
 | [0043](0043-landing-restart-baseline-before-recovery.md) | LANDING restart baseline census before recovery admissions | Accepted |
 | [0044](0044-signal-safe-gha-pipefail-shell.md) | Signal-safe GitHub Actions pipefail shell | Accepted |
 | [0045](0045-collector-inherited-pipes-are-fixed-inventory.md) | Collector-inherited pipes are fixed inventory | Accepted |
+| [0046](0046-short-fault-baseline-before-recovery.md) | Short-fault baseline census before recovery admissions | Accepted |

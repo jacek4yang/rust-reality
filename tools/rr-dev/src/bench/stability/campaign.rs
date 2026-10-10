@@ -585,8 +585,8 @@ fn faults(
                         .collect();
                     during = driver.batch(machines, &batches)?;
                 }
-                // Do not overlap landing-restart recovery admissions with the
-                // first post-restart descriptor census (ADR 0043).
+                // Do not overlap short-fault recovery admissions with the first
+                // post-restore descriptor census (ADR 0043 / ADR 0046).
                 wait_until(
                     driver.epoch + contract.recovery_ready_ms(name, start, restored),
                     helpers,
@@ -985,6 +985,7 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
     save(&root.join("evidence.json"), &evidence)?;
     let selected = selected_cells(plan, &contract)?;
     let partial = selected.len() != contract.cells.len();
+    write_cell_matrix_marker(root, &selected, partial, &evidence.identity.source_commit)?;
     let mut summary = Vec::new();
     let mut cell_errors = Vec::new();
     // Same-host cells stay sequential: ordinary hosted runners have one cell's
@@ -1068,6 +1069,35 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
         "VM campaign execution completed; aggregate qualification verdict {:?} (required check receipts must also be bound).",
         report.verdict
     );
+    Ok(())
+}
+
+
+fn write_cell_matrix_marker(
+    root: &Path,
+    selected: &[String],
+    partial: bool,
+    source_commit: &str,
+) -> Result<(), String> {
+    // Marker for Actions matrix staging/merge (ADR 0042 / ADR 0046). Written by
+    // the Rust campaign under the same privileges as the rest of the cell
+    // output so a follow-up unprivileged step cannot PermissionError on
+    // root-owned trees (Frozen 38016570647 secondary Class B).
+    if !partial {
+        return Ok(());
+    }
+    for name in selected {
+        let slug = name.replace('/', "-");
+        save(
+            &root.join("cell-matrix.json"),
+            &json!({
+                "cell": name,
+                "slug": slug,
+                "source_commit": source_commit,
+                "parallelism": "actions-matrix",
+            }),
+        )?;
+    }
     Ok(())
 }
 

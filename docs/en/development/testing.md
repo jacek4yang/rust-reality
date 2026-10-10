@@ -351,9 +351,11 @@ QEMU:
 cargo dev bench stability-repro --fault landing-restart --output FRESH_DIRECTORY
 ```
 
-Post-restart recovery admissions wait for the first fault checkpoint window
-([ADR 0043](../../adr/0043-landing-restart-baseline-before-recovery.md)) so the idle
-replaced LANDING can yield a stable descriptor census before the recovery blast.
+Post-restore recovery admissions for every non-RTT fault wait for the first
+fault checkpoint window
+([ADR 0043](../../adr/0043-landing-restart-baseline-before-recovery.md),
+[ADR 0046](../../adr/0046-short-fault-baseline-before-recovery.md)) so the idle
+process can yield a stable descriptor census before the recovery blast.
 
 The command retains action receipts and a Class A/B/C `diagnosis.json`. Valid
 receipts pass; historical empty-census and ACK-before-census shapes fail closed

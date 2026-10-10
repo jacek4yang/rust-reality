@@ -187,6 +187,15 @@ mod tests {
         if campaign.contains("stability-merge-cells") {
             assert!(campaign.contains("--cell \"$MATRIX_CELL\""));
             assert!(campaign.contains("fail-fast: false"));
+            assert!(campaign.contains("--cells-root"));
+            assert!(
+                !campaign.contains("PYMARK"),
+                "cell staging must not use a Python helper"
+            );
+            assert!(
+                !campaign.contains("rglob('evidence.json')"),
+                "merge discovery must not use inline Python"
+            );
         }
         assert!(packages.contains("--receipt-dir"));
         assert!(coordinator.contains(

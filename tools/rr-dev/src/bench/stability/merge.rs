@@ -23,8 +23,12 @@ pub struct Plan {
     #[arg(long)]
     pub output: PathBuf,
     /// One or more `stability-run --cell` output directories (repeatable).
-    #[arg(long = "cell-dir", required = true)]
+    #[arg(long = "cell-dir")]
     pub cell_dirs: Vec<PathBuf>,
+    /// Parent directory whose descendants contain `cell-matrix.json` markers.
+    /// Discovers cell campaign roots without a Python helper (ADR 0046).
+    #[arg(long = "cells-root")]
+    pub cells_root: Option<PathBuf>,
 }
 
 fn save(path: &Path, value: &impl serde::Serialize) -> Result<(), String> {
@@ -274,14 +278,78 @@ fn finalize(out: &Path, cell_errors: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Walk `root` for `cell-matrix.json` markers written by `stability-run --cell`.
+fn discover_cell_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut found: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|error| format!("read cells-root {}: {error}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|error| error.to_string())?;
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !file_type.is_file() || entry.file_name() != "cell-matrix.json" {
+                continue;
+            }
+            let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+            let meta: Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
+            let cell = meta
+                .get("cell")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{}: missing cell", path.display()))?;
+            let slug = meta
+                .get("slug")
+                .and_then(Value::as_str)
+                .map_or_else(|| cell.replace('/', "-"), str::to_owned);
+            let cell_dir = path
+                .parent()
+                .ok_or_else(|| format!("{}: missing parent", path.display()))?
+                .to_path_buf();
+            if let Some(prior) = found.insert(slug.clone(), cell_dir.clone()) {
+                return Err(format!(
+                    "duplicate cell slug {slug}: {} and {}",
+                    prior.display(),
+                    cell_dir.display()
+                ));
+            }
+        }
+    }
+    if found.is_empty() {
+        return Err(format!(
+            "cells-root {} contains no cell-matrix.json markers",
+            root.display()
+        ));
+    }
+    Ok(found.into_values().collect())
+}
+
 /// Merge cell campaign directories into one offline-evaluable bundle.
 ///
 /// # Errors
 /// Fails closed on identity mismatch, duplicate/missing cells, or I/O errors.
 pub fn run(plan: &Plan) -> Result<(), String> {
-    if plan.cell_dirs.is_empty() {
-        return Err("stability-merge-cells requires at least one --cell-dir".to_owned());
-    }
+    let cell_dirs = match (&plan.cells_root, plan.cell_dirs.is_empty()) {
+        (Some(root), true) => discover_cell_dirs(root)?,
+        (Some(_), false) => {
+            return Err(
+                "stability-merge-cells: pass either --cells-root or --cell-dir, not both"
+                    .to_owned(),
+            );
+        }
+        (None, true) => {
+            return Err(
+                "stability-merge-cells requires --cells-root or at least one --cell-dir"
+                    .to_owned(),
+            );
+        }
+        (None, false) => plan.cell_dirs.clone(),
+    };
     fs::create_dir(&plan.output).map_err(|error| format!("fresh merge directory: {error}"))?;
     let out = plan
         .output
@@ -291,7 +359,7 @@ pub fn run(plan: &Plan) -> Result<(), String> {
         serde_json::from_str(schema::CONTRACT).expect("compiled contract");
     let expected: BTreeSet<String> = contract.cells.iter().cloned().collect();
     let mut seen = BTreeSet::new();
-    let first = load_evidence(&plan.cell_dirs[0])?;
+    let first = load_evidence(&cell_dirs[0])?;
     let fingerprint = identity_fingerprint(&first.identity)?;
     let mut merged = Evidence {
         schema: "rr-stability-evidence/v1".to_owned(),
@@ -302,7 +370,7 @@ pub fn run(plan: &Plan) -> Result<(), String> {
     let mut summary = Vec::new();
     let mut cell_errors = Vec::new();
 
-    for dir in &plan.cell_dirs {
+    for dir in &cell_dirs {
         let root = dir
             .canonicalize()
             .map_err(|error| format!("cell-dir {}: {error}", dir.display()))?;
@@ -412,6 +480,7 @@ mod tests {
         let err = run(&Plan {
             output: work.join("out"),
             cell_dirs: vec![left, right],
+            cells_root: None,
         })
         .unwrap_err();
         assert!(err.contains("identity mismatch"), "{err}");
@@ -437,6 +506,45 @@ mod tests {
         let err = run(&Plan {
             output: work.join("out"),
             cell_dirs: vec![only],
+            cells_root: None,
+        })
+        .unwrap_err();
+        assert!(err.contains("missing cells"), "{err}");
+    }
+
+    #[test]
+    fn merge_discovers_cells_root_markers() {
+        let work = Workspace::create("stability-merge-cells-root").unwrap();
+        let root = work.join("downloaded");
+        let cell = root.join("hosted-qemu-cell-sha-nxr-ordinary").join("cell");
+        fs::create_dir_all(&cell).unwrap();
+        write_identity_files(&cell);
+        save(
+            &cell.join("cell-matrix.json"),
+            &json!({
+                "cell": "nxr/ordinary",
+                "slug": "nxr-ordinary",
+                "source_commit": "abc",
+                "parallelism": "actions-matrix",
+            }),
+        )
+        .unwrap();
+        save(
+            &cell.join("evidence.json"),
+            &Evidence {
+                schema: "rr-stability-evidence/v1".into(),
+                identity: minimal_identity(),
+                checks: vec![],
+                cells: vec![],
+            },
+        )
+        .unwrap();
+        let dirs = super::discover_cell_dirs(&root).unwrap();
+        assert_eq!(dirs, vec![cell]);
+        let err = run(&Plan {
+            output: work.join("out"),
+            cell_dirs: vec![],
+            cells_root: Some(root),
         })
         .unwrap_err();
         assert!(err.contains("missing cells"), "{err}");

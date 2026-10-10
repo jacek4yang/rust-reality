@@ -334,34 +334,24 @@ jobs:
           set -e
           # Always stage partial cell evidence before exiting on fail-closed runs.
           # Otherwise merge sees "missing cell artifacts" (Class B cascade).
-          python3 - <<'PYMARK'
-          import json, os, pathlib, shutil
-          root = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-cloud-cell'
-          (root/'cell-matrix.json').write_text(json.dumps({
-              'cell': os.environ['MATRIX_CELL'],
-              'slug': os.environ['CELL_SLUG'],
-              'source_commit': os.environ['HEAD_SHA'],
-              'parallelism': 'actions-matrix',
-          }, indent=2) + '\n')
-          staged = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-cell-upload'
-          cell = staged/'cell'
-          if staged.exists():
-              shutil.rmtree(staged)
-          cell.mkdir(parents=True)
-          for item in root.iterdir():
-              target = cell/item.name
-              if item.is_dir():
-                  shutil.copytree(item, target)
-              else:
-                  shutil.copy2(item, target)
-          preflight = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-cloud-preflight'
-          if preflight.is_dir():
-              dest = staged/'preflight'
-              dest.mkdir()
-              for item in preflight.iterdir():
-                  if item.suffix == '.json' or item.name.endswith('-boot-id.txt'):
-                      shutil.copy2(item, dest/item.name)
-          PYMARK
+          # stability-run runs under sudo, so stage with sudo and drop ownership
+          # for upload-artifact. cell-matrix.json is written by Rust (ADR 0046);
+          # fall back only if the campaign exited before freeze completed.
+          CELL_OUT="$RUNNER_TEMP/rr-cloud-cell"
+          sudo mkdir -p "$CELL_OUT"
+          if ! sudo test -f "$CELL_OUT/cell-matrix.json"; then
+            printf '%s\n' "{\"cell\":\"$MATRIX_CELL\",\"slug\":\"$CELL_SLUG\",\"source_commit\":\"$HEAD_SHA\",\"parallelism\":\"actions-matrix\"}" \
+              | sudo tee "$CELL_OUT/cell-matrix.json" >/dev/null
+          fi
+          sudo rm -rf "$RUNNER_TEMP/rr-cell-upload"
+          sudo mkdir -p "$RUNNER_TEMP/rr-cell-upload/cell"
+          sudo cp -a "$CELL_OUT"/. "$RUNNER_TEMP/rr-cell-upload/cell/"
+          if sudo test -d "$RUNNER_TEMP/rr-cloud-preflight"; then
+            sudo mkdir -p "$RUNNER_TEMP/rr-cell-upload/preflight"
+            sudo find "$RUNNER_TEMP/rr-cloud-preflight" -maxdepth 1 \( -name '*.json' -o -name '*-boot-id.txt' \) \
+              -exec cp -a {} "$RUNNER_TEMP/rr-cell-upload/preflight/" \;
+          fi
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/rr-cell-upload"
           exit "$CELL_STATUS"
       - name: Retain one-cell campaign evidence
         if: always()
@@ -416,43 +406,10 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           chmod 0755 "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev"
-          python3 - <<'PY'
-          import os, pathlib, json
-          root = pathlib.Path(os.environ['RUNNER_TEMP'])/'rr-qemu-cells'
-          expected = {
-              'handoff-ordinary',
-              'nxr-ordinary',
-              'handoff-constrained',
-              'nxr-constrained',
-          }
-          found = {}
-          for evidence in root.rglob('evidence.json'):
-              cell_dir = evidence.parent
-              marker = cell_dir/'cell-matrix.json'
-              if not marker.is_file():
-                  continue
-              meta = json.loads(marker.read_text())
-              slug = meta.get('slug') or meta['cell'].replace('/','-')
-              if slug in found:
-                  raise SystemExit('duplicate cell slug '+slug)
-              found[slug] = cell_dir
-          missing = expected - set(found)
-          if missing:
-              raise SystemExit('missing cell artifacts: '+', '.join(sorted(missing)))
-          args = [str(found[slug]) for slug in sorted(found)]
-          pathlib.Path(os.environ['RUNNER_TEMP'],'merge-args.txt').write_text('\n'.join(args)+'\n')
-          print('merging', len(args), 'cell directories')
-          for arg in args:
-              print(' -', arg)
-          PY
-          mapfile -t CELL_DIRS < "$RUNNER_TEMP/merge-args.txt"
-          MERGE_ARGS=()
-          for dir in "${CELL_DIRS[@]}"; do
-            MERGE_ARGS+=(--cell-dir "$dir")
-          done
+          # Discover cell-matrix.json markers in Rust (ADR 0046); no Python.
           "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-merge-cells \
             --output "$RUNNER_TEMP/rr-cloud-campaign" \
-            "${MERGE_ARGS[@]}"
+            --cells-root "$RUNNER_TEMP/rr-qemu-cells"
           # Keep the historical campaign artifact contract for frozen acceptance.
           cp "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" "$RUNNER_TEMP/rr-cloud-campaign/rr-dev"
           cp "$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality" "$RUNNER_TEMP/rr-cloud-campaign/rust-reality"

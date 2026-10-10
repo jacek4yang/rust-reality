@@ -2125,39 +2125,46 @@ fn rtt_during_transfer_past_restore_stays_invalid_after_coherent_schedule() {
 }
 
 #[test]
-fn landing_restart_recovery_waits_for_first_fault_checkpoint() {
+fn short_fault_recovery_waits_for_first_fault_checkpoint() {
     // Frozen nxr/ordinary on 9b90036 (run 37940381711) fail-closed at
-    // fault-landing-restart-15000 with consecutive descriptor-census mismatch
-    // while recovery admissions were already blasting the cold LANDING. The
-    // first post-restart census must observe an idle replaced process; recovery
-    // admissions begin only after that checkpoint window closes.
+    // fault-landing-restart-15000, and Exact-head 26c6e1c (run 38016570647)
+    // fail-closed at fault-warm-15000, both with consecutive descriptor-census
+    // mismatch while recovery admissions were already blasting LANDING. The
+    // first post-restore census must observe an idle process; recovery
+    // admissions begin only after that checkpoint window closes for every
+    // non-RTT fault (ADR 0043 / ADR 0046).
     let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
     let start = 0_u64;
-    let restored = start + contract.fault_duration("landing-restart");
     let first = *contract.fault_checkpoint_offsets_ms.first().unwrap();
-    let ready = contract.recovery_ready_ms("landing-restart", start, restored);
+    let expected = start + first + contract.checkpoint_tolerance_ms;
+    for name in [
+        "reload",
+        "warm",
+        "stale",
+        "cold",
+        "landing-restart",
+        "line-a-partition",
+    ] {
+        let restored = start + contract.fault_duration(name);
+        let ready = contract.recovery_ready_ms(name, start, restored);
+        assert_eq!(
+            ready, expected,
+            "{name}: recovery must clear the first census window"
+        );
+        assert!(
+            ready > restored + 1000,
+            "{name}: recovery is delayed past the ordinary restored+1s edge"
+        );
+        assert!(
+            ready.saturating_sub(restored) <= contract.recovery_deadline_ms,
+            "{name}: delayed recovery must remain inside recovery_deadline_ms"
+        );
+    }
+    let rtt_restored = start + contract.fault_duration("rtt-100");
     assert_eq!(
-        ready,
-        start + first + contract.checkpoint_tolerance_ms,
-        "landing-restart recovery must clear the first census window"
-    );
-    assert!(
-        ready > restored + 1000,
-        "landing-restart recovery is delayed past the ordinary restored+1s edge"
-    );
-    assert_eq!(
-        contract.recovery_ready_ms("reload", start, restored),
-        restored + 1000,
-        "non-restart faults keep immediate recovery"
-    );
-    assert_eq!(
-        contract.recovery_ready_ms("warm", start, restored),
-        restored + 1000
-    );
-    // Still inside the recovery deadline from restore.
-    assert!(
-        ready.saturating_sub(restored) <= contract.recovery_deadline_ms,
-        "delayed recovery must remain inside recovery_deadline_ms"
+        contract.recovery_ready_ms("rtt-100", start, rtt_restored),
+        rtt_restored + 1000,
+        "RTT faults keep immediate post-restore recovery"
     );
 }
 

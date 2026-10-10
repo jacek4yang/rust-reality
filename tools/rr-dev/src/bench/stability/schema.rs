@@ -95,15 +95,18 @@ impl Contract {
 
     /// Campaign-relative time when post-fault recovery admissions may begin.
     ///
-    /// Ordinary faults recover immediately after the restore boundary. For
-    /// `landing-restart`, the first fault checkpoint must observe the replaced
-    /// LANDING while it is still idle: six back-to-back descriptor sweeps cannot
-    /// manufacture a stable pair under the intentional recovery admission blast
-    /// (Frozen `nxr/ordinary` on `9b90036`, run 37940381711). Recovery therefore
-    /// waits until that first checkpoint window closes.
+    /// Short (non-RTT) faults share a first census at
+    /// `fault_checkpoint_offsets_ms[0]` that would otherwise fall a few seconds
+    /// into the recovery admission blast. Six back-to-back `/proc` sweeps cannot
+    /// manufacture a stable pair under that intentional churn (Frozen
+    /// `nxr/ordinary` `landing-restart` on `9b90036` / 37940381711; same Class B
+    /// on `warm` for Exact-head `26c6e1c` / 38016570647). Recovery therefore
+    /// waits until that first checkpoint window closes for every non-RTT fault.
+    /// RTT/loss faults keep immediate post-restore recovery: their first
+    /// checkpoint is still inside the long fault window, before restore.
     pub fn recovery_ready_ms(&self, name: &str, start_ms: u64, restored_ms: u64) -> u64 {
         let immediate = restored_ms.saturating_add(1000);
-        if name != "landing-restart" {
+        if name.starts_with("rtt-") {
             return immediate;
         }
         let Some(first) = self.fault_checkpoint_offsets_ms.first() else {
