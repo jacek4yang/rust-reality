@@ -712,7 +712,7 @@ fn evaluate_fault_workload(
                 == contract.rtt_concurrency_per_line.checked_mul(2),
             Verdict::Invalid,
             &cell.name,
-            "RTT matrix did not exercise four concurrent transfers across both LINEs",
+            "RTT matrix did not exercise the contracted concurrent transfers across both LINEs",
         );
     }
 }
@@ -786,6 +786,16 @@ fn peak_concurrency<'a>(transfers: impl Iterator<Item = &'a Transfer>) -> Option
     u64::try_from(peak).ok()
 }
 
+/// Scale VM RSS growth envelopes by role memory limit relative to 1 GiB.
+///
+/// Ordinary LANDING is provisioned at 2 GiB / 2 vCPU; constrained LANDING and
+/// every LINE stay at 1 GiB. The contract's recovered/peak KiB budgets are the
+/// 1 GiB unit; larger roles receive a proportional budget (ADR 0051).
+pub(super) fn role_rss_growth_scale(memory_limit_bytes: u64) -> u64 {
+    const GIB: u64 = 1_073_741_824;
+    memory_limit_bytes.max(GIB) / GIB
+}
+
 fn evaluate_sample(
     report: &mut Report,
     contract: &Contract,
@@ -821,11 +831,17 @@ fn evaluate_sample(
                 .find(|baseline| baseline.role == sample.role)
         });
     if let Some(baseline) = baseline {
+        // Ordinary LANDING is intentionally 2 GiB / 2 vCPU; constrained is 1 GiB.
+        // A single KiB recovered/peak growth budget calibrated on 1 GiB falsely
+        // fails the larger ordinary footprint (ADR 0051). Scale by role GiB.
+        let scale = role_rss_growth_scale(role.memory_limit_bytes);
         let rss_limit = if recovered {
             contract.recovered_rss_growth_kib
         } else {
             contract.peak_rss_growth_kib
-        };
+        }
+        .saturating_mul(scale);
+        let peak_hwm_limit = contract.peak_rss_growth_kib.saturating_mul(scale);
         let thread_limit = if recovered {
             contract.recovered_thread_growth
         } else {
@@ -833,7 +849,7 @@ fn evaluate_sample(
         };
         report.require(
             sample.rss_kib.saturating_sub(baseline.rss_kib) <= rss_limit
-                && sample.hwm_kib.saturating_sub(baseline.hwm_kib) <= contract.peak_rss_growth_kib
+                && sample.hwm_kib.saturating_sub(baseline.hwm_kib) <= peak_hwm_limit
                 && sample.threads.saturating_sub(baseline.threads) <= thread_limit,
             Verdict::Fail,
             scope,

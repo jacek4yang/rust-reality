@@ -79,6 +79,12 @@ cargo test   --manifest-path tools/Cargo.toml --workspace --locked
 cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
+Qualification `run:` steps use a bash-native Actions shell (ADR 0044):
+`bash --noprofile --norc -e -o pipefail {0}` so cancel/timeout cannot drown
+failures in Python `KeyboardInterrupt` tracebacks. The typed twin is
+`cargo-dev ci gha-shell`; prove locally with
+`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- ci::`.
+
 This coverage is load-bearing rather than tidy. `cargo dev` is the repository's
 benchmark, profiling and interoperability authority, so a measurement the gate
 cannot vouch for is not evidence. While the tooling workspace sat outside the
@@ -113,7 +119,10 @@ stage's stdout/stderr objects; its stage list must match the frozen harness.
 Lifecycle checks bind the complete stdout from
 `cargo test --lib --locked -- --color never`. The contract names each required
 test; ignored, missing, duplicated or filtered cases cannot satisfy it, and the
-terminal totals must reproduce the observed case results.
+terminal totals must reproduce the observed case results. That stdout is a pure
+libtest receipt: unit tests MUST NOT emit JSON or other non-libtest records to
+the process stdout
+([ADR 0052](../../adr/0052-libtest-lifecycle-stdout-is-pure-receipt.md)).
 
 The schema and pure evaluator are fuzzed together. Adversarial tests cover
 leaked sockets, dirty/excessive pipes, missing permits, transient retention,
@@ -135,6 +144,12 @@ Partition progress and RTT/loss coverage require transfers during the fault;
 post-fault checkpoints must recover ownership, including after process restart.
 Reused raw observations, excess unopened permits and memory high-water marks
 above the peak envelope fail verification.
+
+VM recovered and peak RSS growth budgets are the 1 GiB unit; ordinary LANDING
+(2 GiB / 2 vCPU) scales those KiB ceilings by role memory GiB so the intentional
+larger footprint is not fail-closed against the constrained calibration
+([ADR 0051](../../adr/0051-scale-vm-rss-envelope-by-role-gib.md)). Thread growth
+limits stay absolute.
 
 The required `native-resources` check references `native-resources.json` from
 the native soak. Offline verification reopens every bound raw observation and
@@ -165,10 +180,18 @@ and deadlines must match the actual running authorities. These observations do
 not claim an allocator-byte census.
 
 Fixed runtime Unix sockets are distinguished from TCP using kernel inode rows
-for the selected process; their count cannot grow beyond startup. The collector
-retains no unrelated namespace socket paths. Executable hashing uses the same
-`sha256sum` primitive as release tooling so debug-build hashing does not consume
-the sampling window; missing or malformed hash receipts still fail closed.
+for the selected process; their count cannot grow beyond startup. Namespace-wide
+`/proc/<pid>/net/unix` rows with inode `0` and identical duplicate lines are
+ignored during ownership filtering; conflicting content for one inode stays
+fail-closed ([ADR 0048](../../adr/0048-unix-socket-inode-census-ignores-unaddressable-rows.md)).
+The collector retains no unrelated namespace socket paths. Pipe targets still open in the
+collector (fd > 2) are recorded on each observation and matching child pipes
+become fixed startup inventory, not product permits
+([ADR 0045](../../adr/0045-collector-inherited-pipes-are-fixed-inventory.md)).
+Product pipes and unknown descriptors remain fail-closed. Executable hashing
+uses the same `sha256sum` primitive as release tooling so debug-build hashing
+does not consume the sampling window; missing or malformed hash receipts still
+fail closed.
 
 `cargo dev bench stability-fixture --fixture PATH --output FRESH_DIRECTORY`
 boots the preserved, owned three-guest KVM fixture, checks guest CPU/swap and
@@ -188,10 +211,11 @@ requires the owned process identity and confirms termination by SIGKILL. Startup
 and execution failures retain the primary error and attempted final observations.
 Private configuration remains under the owned fixture, outside the evidence bundle.
 
-RTT/loss windows last 60 seconds for the concurrency-4 matrix (two transfers
-per LINE); other faults and recovery use four per LINE. Each exercised LINE
-must complete at least 100 transfers. Other fault
-intervals last 10 seconds. The directional integrity window lasts 60 seconds,
+RTT/loss windows last 90 seconds for the concurrency-8 matrix (four transfers
+per LINE), with a fixed 12-second admission drain before restore so in-flight
+1 MiB transfers can finish inside the fault interval; other faults and recovery
+use four per LINE. Each exercised LINE must complete at least 100 transfers.
+Other fault intervals last 10 seconds. The directional integrity window lasts 60 seconds,
 followed by 180 seconds of recovery. These schedules are fixed in the executable
 contract before qualification, including on constrained LANDING guests.
 Offline evaluation requires every integrity checkpoint, including recovered owner,
@@ -216,8 +240,15 @@ delay/loss and restoration, an actual stale-socket eviction, the owned SIGKILL
 receipt, stable warm/cold configuration hashes and timely reload publications.
 
 `cargo dev bench stability-run --fixture PATH --output FRESH_DIRECTORY
---candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY` drives
-the four local VM cells. It requires a clean checkout at the candidate's embedded
+--candidate FROZEN_BINARY --xray XRAY_BINARY --openssl OPENSSL_BINARY`
+drives the four local VM cells (or a subset with repeatable `--cell NAME`).
+Partial `--cell` runs freeze identity and retain diagnosis but require
+`cargo dev bench stability-merge-cells --output MERGED --cell-dir DIR...`
+before offline Pass evaluation. Hosted qualification runs the four cells as an
+Actions matrix (one cell per runner) and merges with identity binding
+([ADR 0042](../../adr/0042-four-cell-qemu-matrix-parallelism.md); identity `environment.json` binds tool digests only, with per-runner `controller-host.json` beside it); ordinary
+runners keep one cell's vCPU affinity budget under `HostLock` and fixed fixture
+ports. It requires a clean checkout at the candidate's embedded
 commit and preserves source, contract, harness and executable copies. Each stress
 campaign should use the frozen release-built harness:
 `RUST_REALITY_GIT_COMMIT=$(git rev-parse HEAD) cargo build --release --manifest-path tools/Cargo.toml -p rr-dev`,
@@ -313,16 +344,41 @@ logs. Other peers, reasons, timestamps, duplicate events, admission limits and
 configuration rejections remain unexpected. Raw logs and historical verdicts are
 never rewritten by this classification.
 
-For deliberate LANDING restart, LINE-A also records the single established
-loopback ingress connection at the fault boundary. A Handoff relay EPIPE can be
-classified as injected only once, for that exact peer, after the verified kill
-and ingress census, and before the intact affected prefix's recorded failure
-plus the existing clock guard. Missing/ambiguous census, a different peer,
-stage, cause or errno, repeated errors, and errors outside that interval remain
-blocking. This adds observation to the test fixture, not a product-log filter
-or a production behavior change.
+For deliberate LANDING restart, LINE-A records the single established loopback
+ingress on its public listener (fixture port 9444) and publishes that peer to
+LANDING over the owned data-plane ACK (`rr-restart-census-ack/v1` on
+`192.0.2.2:19501`). LANDING aborts only after accepting exactly one matching ACK.
+Correctness is the handshake, not a wall-clock hold. A Handoff relay EPIPE can be
+classified as injected only once, for that exact peer, after the verified ACK and
+census, and before the intact affected prefix's recorded failure plus the existing
+clock guard. Missing/ambiguous census, a missing/duplicate/wrong ACK, a different
+peer, stage, cause or errno, repeated errors, and errors outside that interval
+remain blocking. This adds observation to the test fixture, not a product-log
+filter or a production behavior change.
 
-Fault batches stop admitting requests at the fixed restore boundary. Submitted
-attempts and partial results remain retained; missing coverage or an in-flight
-transfer finishing outside the required interval still fails. Requests started
-after restoration are never silently labelled as fault-period work.
+Reproduce the landing-restart census/ACK contract in minutes without four-cell
+QEMU:
+
+```shell
+cargo dev bench stability-repro --fault landing-restart --output FRESH_DIRECTORY
+```
+
+Post-restore recovery admissions for every non-RTT fault wait for the first
+fault checkpoint window
+([ADR 0043](../../adr/0043-landing-restart-baseline-before-recovery.md),
+[ADR 0046](../../adr/0046-short-fault-baseline-before-recovery.md)) so the idle
+process can yield a stable descriptor census before the recovery blast.
+
+The command retains action receipts and a Class A/B/C `diagnosis.json`. Valid
+receipts pass; historical empty-census and ACK-before-census shapes fail closed
+as Class B harness defects. The same Class labels appear on per-cell
+`cell-diagnosis.json`, `cells-summary.json`, and merge `merge-diagnosis.json`
+so a fail-closed QEMU run names harness vs infrastructure vs product issues in
+minutes rather than as a vague multi-hour INVALID.
+
+Fault batches soft-stop admission at the contracted boundary (restore for
+ordinary faults; restore minus the RTT drain for RTT/loss). Reaching that
+boundary is scheduled termination, not a transfer failure. Submitted attempts
+and partial results remain retained; missing coverage or an in-flight transfer
+finishing outside the required interval still fails. Requests started after
+restoration are never silently labelled as fault-period work.

@@ -227,13 +227,16 @@ impl Driver<'_> {
                                             break;
                                         }
                                         if let Some(deadline) = batch.admission_deadline_ms {
-                                            let admitted = self
+                                            // Soft stop: reaching the admission boundary is
+                                            // scheduled termination, not a transfer failure.
+                                            // In-flight fetches still complete; coverage is
+                                            // enforced offline against the fixed restore time.
+                                            match self
                                                 .elapsed()
-                                                .and_then(|now| admission_before(now, deadline));
-                                            if let Err(error) = admitted {
-                                                failed.store(true, Ordering::Relaxed);
-                                                results.push(Err(error));
-                                                break;
+                                                .and_then(|now| admission_before(now, deadline))
+                                            {
+                                                Ok(()) => {}
+                                                Err(_) => break,
                                             }
                                         }
                                         let paced = batch.paced_wave && index < batch.concurrency;
@@ -496,7 +499,13 @@ impl Driver<'_> {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let completed = self.elapsed()?;
+        // On an expected disconnect the failure instant IS the prefix completion.
+        // A second elapsed() call can differ by ≥1ms and then fail the handoff
+        // restart check (`completed_ms != expected_failures[0]`) as a false Class A.
+        let completed = match failure {
+            Some((time, _)) => time,
+            None => self.elapsed()?,
+        };
         let prefix = &expected[..received.len()];
         let source_path = self.output.join(format!("{id}-expected-prefix.bin"));
         let received_path = self.output.join(format!("{id}-received-prefix.bin"));
@@ -628,12 +637,9 @@ mod tests {
             paced_wave: false,
             admission_deadline_ms: Some(0),
         }]);
-        assert!(!results.is_empty());
-        assert!(
-            results
-                .iter()
-                .all(|result| result.as_ref().unwrap_err().contains("restore boundary"))
-        );
+        // Soft stop yields no forged transfers and no hard error tokens; the
+        // offline evaluator still rejects missing coverage or late completions.
+        assert!(results.is_empty());
         assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 0);
     }
 

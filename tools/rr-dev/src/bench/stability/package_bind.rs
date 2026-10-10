@@ -172,7 +172,31 @@ mod tests {
         assert!(!coordinator.contains("continue-on-error"));
         assert!(!coordinator.contains("contents: write"));
         assert!(!coordinator.contains("cancel-in-progress: true"));
-        assert!(campaign.contains("--candidate \"$CANDIDATE_BIN\""));
+        // Workflow may still be the sequential campaign until a token with
+        // `workflow` scope publishes the ADR 0042 matrix rewrite.
+        assert!(
+            campaign.contains("--candidate \"$CANDIDATE_BIN\"")
+                || campaign
+                    .contains("--candidate \"$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality\"")
+        );
+        assert!(campaign.contains("bench stability-run"));
+        assert!(
+            campaign.contains("hosted-qemu-campaign-${{ inputs.candidate_sha")
+                || campaign.contains("hosted-qemu-campaign-${{ env.HEAD_SHA }}")
+        );
+        if campaign.contains("stability-merge-cells") {
+            assert!(campaign.contains("--cell \"$MATRIX_CELL\""));
+            assert!(campaign.contains("fail-fast: false"));
+            assert!(campaign.contains("--cells-root"));
+            assert!(
+                !campaign.contains("PYMARK"),
+                "cell staging must not use a Python helper"
+            );
+            assert!(
+                !campaign.contains("rglob('evidence.json')"),
+                "merge discovery must not use inline Python"
+            );
+        }
         assert!(packages.contains("--receipt-dir"));
         assert!(coordinator.contains(
             "source.name in ['evidence.json','evidence-before.json','evidence-after.json']"

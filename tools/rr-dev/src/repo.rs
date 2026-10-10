@@ -73,6 +73,7 @@ pub fn check(repo: &Path) -> Report {
     failures.extend(index_failures(&entries));
     failures.extend(content::failures(repo, &entries));
     failures.extend(adr::failures(repo, &entries));
+    failures.extend(crate::ci::workflow_shell_failures(repo));
     failures.sort();
     failures.dedup();
     Report {

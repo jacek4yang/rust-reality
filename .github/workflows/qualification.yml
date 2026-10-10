@@ -17,12 +17,14 @@ on:
 permissions:
   contents: read
 
-# Isolate runner-owned descriptors at the test-launch boundary. Production
-# must retain intentional supervisor/configuration FD passing. No ownership
-# acceptance rule is relaxed: unexpected descriptors in the candidate still fail.
+# Unexpected descriptors in the candidate still fail closed. Production retains
+# intentional supervisor/configuration FD passing. Actions shell is bash-native
+# (ADR 0044); product FD ownership is asserted by qualification, not Python close_fds.
 defaults:
   run:
-    shell: python3 -c "import subprocess,sys; sys.exit(subprocess.call(['bash','--noprofile','--norc','-e','-o','pipefail',sys.argv[1]], close_fds=True))" {0}
+    # Bash-native Actions shell (ADR 0044): no Python, no KeyboardInterrupt stacks.
+    # Typed local twin: `cargo-dev ci gha-shell`. No github.* context in this field.
+    shell: bash --noprofile --norc -e -o pipefail {0}
 
 concurrency:
   group: native-qualification-${{ github.event.pull_request.number || github.ref }}

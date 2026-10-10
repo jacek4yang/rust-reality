@@ -50,6 +50,17 @@ pub fn date_millis(text: &str) -> Result<u64, String> {
     Ok(value)
 }
 
+/// Guest clocksource witness. kvm-clock tracks the host after REALTIME is bound.
+pub fn clocksource_argv() -> Vec<String> {
+    vec![
+        "cat".to_owned(),
+        "/sys/devices/system/clocksource/clocksource0/current_clocksource".to_owned(),
+    ]
+}
+
+/// One-shot REALTIME bind. kvm-clock alone does not correct a wrong wall clock
+/// inherited from the guest image; without this, start-phase skew can exceed
+/// `clock_max_offset_ms` (Frozen 38045882781 line-b ~460–950ms behind host).
 pub fn set_argv(time: u64) -> Vec<String> {
     vec![
         "sudo".to_owned(),
@@ -61,8 +72,23 @@ pub fn set_argv(time: u64) -> Vec<String> {
     ]
 }
 
+fn skew_offset_ms(probe: &Probe, contract: &Contract) -> u64 {
+    match probe.phase.as_str() {
+        "after" => contract.clock_max_end_offset_ms,
+        _ => contract.clock_max_offset_ms,
+    }
+}
+
+fn bound_error(probe: &Probe) -> String {
+    format!(
+        "{}: guest clock is not bounded to the host workload schedule",
+        probe.role
+    )
+}
+
 pub fn verify(probe: &Probe, contract: &Contract) -> Result<(), String> {
     let guest = date_millis(&probe.date_stdout)?;
+    let offset = skew_offset_ms(probe, contract);
     // Every possible observation instant in the SSH interval must satisfy the
     // skew bound. An overlap with the interval alone would understate uncertainty.
     if !probe.errors.is_empty()
@@ -73,27 +99,36 @@ pub fn verify(probe: &Probe, contract: &Contract) -> Result<(), String> {
         || probe.host_after_unix_ms < probe.host_before_unix_ms
         || probe.host_after_unix_ms - probe.host_before_unix_ms > contract.clock_max_roundtrip_ms
         || guest
-            .checked_add(contract.clock_max_offset_ms)
+            .checked_add(offset)
             .is_none_or(|end| end < probe.host_after_unix_ms)
         || probe
             .host_before_unix_ms
-            .checked_add(contract.clock_max_offset_ms)
+            .checked_add(offset)
             .is_none_or(|end| end < guest)
     {
-        return Err("guest clock is not bounded to the host workload schedule".to_owned());
+        return Err(bound_error(probe));
     }
     match probe.phase.as_str() {
         "before" => {
-            let [ntp, set] = probe.commands.as_slice() else {
-                return Err("missing guest clock setup observations".to_owned());
+            let [ntp, set, source] = probe.commands.as_slice() else {
+                return Err(format!(
+                    "{}: missing guest clock setup observations",
+                    probe.role
+                ));
             };
             if ntp.argv != ["sudo", "-n", "timedatectl", "set-ntp", "false"]
                 || set.argv != set_argv(set.started_unix_ms)
-                || ntp.completed_unix_ms > set.started_unix_ms
-                || set.completed_unix_ms > probe.host_before_unix_ms
                 || date_millis(&set.stdout)? != set.started_unix_ms
+                || source.argv != clocksource_argv()
+                || source.stdout != "kvm-clock\n"
+                || ntp.completed_unix_ms > set.started_unix_ms
+                || set.completed_unix_ms > source.started_unix_ms
+                || source.completed_unix_ms > probe.host_before_unix_ms
             {
-                return Err("clock setup or ordering was substituted".to_owned());
+                return Err(format!(
+                    "{}: clock setup or ordering was substituted",
+                    probe.role
+                ));
             }
             for command in &probe.commands {
                 if command.exit_code != Some(0)
@@ -101,12 +136,20 @@ pub fn verify(probe: &Probe, contract: &Contract) -> Result<(), String> {
                     || !command.stderr.is_empty()
                     || command.completed_unix_ms < command.started_unix_ms
                 {
-                    return Err("guest clock setup did not complete successfully".to_owned());
+                    return Err(format!(
+                        "{}: guest clock setup did not complete successfully",
+                        probe.role
+                    ));
                 }
             }
         }
         "after" if probe.commands.is_empty() => {}
-        _ => return Err("unexpected clock phase or clock mutation after startup".to_owned()),
+        _ => {
+            return Err(format!(
+                "{}: unexpected clock phase or clock mutation after startup",
+                probe.role
+            ));
+        }
     }
     Ok(())
 }
@@ -194,7 +237,31 @@ mod tests {
                     stderr: String::new(),
                     errors: Vec::new(),
                 },
+                Command {
+                    argv: clocksource_argv(),
+                    started_unix_ms: 1020,
+                    completed_unix_ms: 1025,
+                    exit_code: Some(0),
+                    stdout: "kvm-clock\n".to_owned(),
+                    stderr: String::new(),
+                    errors: Vec::new(),
+                },
             ],
+        }
+    }
+
+    fn after_probe(guest: u64, host_before: u64, host_after: u64) -> Probe {
+        Probe {
+            role: "landing".to_owned(),
+            phase: "after".to_owned(),
+            boot_id: "boot".to_owned(),
+            host_before_unix_ms: host_before,
+            host_after_unix_ms: host_after,
+            date_exit_code: Some(0),
+            date_stdout: format!("{guest}\n"),
+            date_stderr: String::new(),
+            errors: Vec::new(),
+            commands: Vec::new(),
         }
     }
 
@@ -224,8 +291,27 @@ mod tests {
         changed.commands[0].exit_code = Some(1);
         assert!(verify(&changed, &contract).is_err());
         let mut changed = probe();
-        changed.commands[1].argv = set_argv(999);
+        changed.commands[2].stdout = "tsc\n".to_owned();
         assert!(verify(&changed, &contract).is_err());
+    }
+
+    #[test]
+    fn after_phase_allows_end_offset_not_start_offset() {
+        let contract: Contract = serde_json::from_str(super::super::schema::CONTRACT).unwrap();
+        // Mirrors Frozen 38037827211 landing after: ~421ms ahead of host_after.
+        let observed = after_probe(1_791_626_306_275, 1_791_626_305_773, 1_791_626_305_854);
+        assert!(
+            observed.date_stdout.trim().parse::<u64>().unwrap()
+                > observed.host_before_unix_ms + contract.clock_max_offset_ms
+        );
+        verify(&observed, &contract).unwrap();
+        let mut too_far = observed;
+        too_far.date_stdout = format!(
+            "{}\n",
+            too_far.host_before_unix_ms + contract.clock_max_end_offset_ms + 1
+        );
+        let err = verify(&too_far, &contract).unwrap_err();
+        assert!(err.contains("landing: guest clock is not bounded"));
     }
 
     #[test]
@@ -244,6 +330,97 @@ mod tests {
         raw.completed_unix_ms = 12_000 - contract.clock_guard_ms() + 1;
         assert!(checkpoint(&raw, 10_000, 0, &contract).is_err());
         assert!(checkpoint(&raw, u64::MAX, 1, &contract).is_err());
+    }
+
+    #[test]
+    fn frozen_38045882781_line_b_before_without_set_fails_start_offset() {
+        let contract: Contract = serde_json::from_str(super::super::schema::CONTRACT).unwrap();
+        // handoff/constrained line-b before: guest ~952ms behind host_after.
+        let mut probe = Probe {
+            role: "line-b".to_owned(),
+            phase: "before".to_owned(),
+            boot_id: "dd2b042b-9394-4beb-96f1-3e22b85bcd32".to_owned(),
+            host_before_unix_ms: 1_791_630_343_814,
+            host_after_unix_ms: 1_791_630_343_824,
+            date_exit_code: Some(0),
+            date_stdout: "1791630342872\n".to_owned(),
+            date_stderr: String::new(),
+            errors: Vec::new(),
+            commands: vec![
+                Command {
+                    argv: ["sudo", "-n", "timedatectl", "set-ntp", "false"]
+                        .map(str::to_owned)
+                        .to_vec(),
+                    started_unix_ms: 1_791_630_343_530,
+                    completed_unix_ms: 1_791_630_343_803,
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    errors: Vec::new(),
+                },
+                Command {
+                    argv: clocksource_argv(),
+                    started_unix_ms: 1_791_630_343_803,
+                    completed_unix_ms: 1_791_630_343_814,
+                    exit_code: Some(0),
+                    stdout: "kvm-clock\n".to_owned(),
+                    stderr: String::new(),
+                    errors: Vec::new(),
+                },
+            ],
+        };
+        let err = verify(&probe, &contract).unwrap_err();
+        assert!(err.contains("line-b: guest clock is not bounded"), "{err}");
+        // nxr/ordinary line-b before: guest ~471ms behind — also fails start offset.
+        probe.host_before_unix_ms = 1_791_630_369_026;
+        probe.host_after_unix_ms = 1_791_630_369_036;
+        probe.date_stdout = "1791630368565\n".to_owned();
+        probe.boot_id = "6ea165c3-6495-44a6-8e25-092b941e8436".to_owned();
+        let err = verify(&probe, &contract).unwrap_err();
+        assert!(err.contains("line-b: guest clock is not bounded"), "{err}");
+    }
+
+    #[test]
+    fn before_phase_requires_set_then_kvm_clock_witness() {
+        let contract: Contract = serde_json::from_str(super::super::schema::CONTRACT).unwrap();
+        verify(&probe(), &contract).unwrap();
+        let mut missing_set = probe();
+        missing_set.commands.remove(1);
+        assert!(
+            verify(&missing_set, &contract)
+                .unwrap_err()
+                .contains("missing guest clock setup")
+        );
+        let mut bad_set_echo = probe();
+        bad_set_echo.commands[1].stdout = "999\n".to_owned();
+        assert!(
+            verify(&bad_set_echo, &contract)
+                .unwrap_err()
+                .contains("clock setup or ordering was substituted")
+        );
+    }
+
+    #[test]
+    fn after_phase_line_b_behind_under_end_offset_from_frozen() {
+        let contract: Contract = serde_json::from_str(super::super::schema::CONTRACT).unwrap();
+        // handoff/constrained line-b after: ~951ms behind host_after; passes end offset.
+        let observed = Probe {
+            role: "line-b".to_owned(),
+            phase: "after".to_owned(),
+            boot_id: "dd2b042b-9394-4beb-96f1-3e22b85bcd32".to_owned(),
+            host_before_unix_ms: 1_791_630_344_918,
+            host_after_unix_ms: 1_791_630_344_948,
+            date_exit_code: Some(0),
+            date_stdout: "1791630343997\n".to_owned(),
+            date_stderr: String::new(),
+            errors: Vec::new(),
+            commands: Vec::new(),
+        };
+        verify(&observed, &contract).unwrap();
+        assert!(
+            observed.host_after_unix_ms
+                > date_millis(&observed.date_stdout).unwrap() + contract.clock_max_offset_ms
+        );
     }
 
     #[test]

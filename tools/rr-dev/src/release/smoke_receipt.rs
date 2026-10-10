@@ -41,7 +41,19 @@ impl Collector {
         runner: Vec<String>,
         assets: &Path,
         directory: Option<&Path>,
+        source_commit: &str,
     ) -> Result<Self, String> {
+        // The receipt identifies the candidate source, never the harness image.
+        // rr-dev's own BUILD_COMMIT may be "unknown" when cargo-run without
+        // RUST_REALITY_GIT_COMMIT; that must not poison package evidence.
+        if source_commit.len() != 40
+            || !source_commit.chars().all(|c| c.is_ascii_hexdigit())
+            || source_commit == "unknown"
+        {
+            return Err(format!(
+                "package receipt requires the exact 40-hex candidate source commit, got {source_commit:?}"
+            ));
+        }
         if let Some(directory) = directory {
             if let Some(parent) = directory.parent() {
                 fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -52,7 +64,7 @@ impl Collector {
         let mut collector = Self {
             receipt: Receipt {
                 schema: "rr-package-execution/v1".to_owned(),
-                source_commit: rust_reality::BUILD_COMMIT.to_owned(),
+                source_commit: source_commit.to_owned(),
                 tag: tag.to_owned(),
                 tier: tier.to_owned(),
                 assets_directory: assets
@@ -264,6 +276,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn package_receipt_rejects_harness_unknown_as_candidate_source() {
+        let work = super::super::package::tempdir("package-unknown-commit").unwrap();
+        let directory = work.path().join("receipt");
+        let Err(error) = Collector::new(
+            "v2.0.1",
+            "linux-x86_64-generic",
+            "archive.tar.gz",
+            Vec::new(),
+            work.path(),
+            Some(&directory),
+            "unknown",
+        ) else {
+            panic!("unknown source commit must be rejected")
+        };
+        assert!(
+            error.contains("exact 40-hex candidate source commit"),
+            "{error}"
+        );
+        assert!(!directory.exists());
+    }
+
+    #[test]
     fn generated_output_is_redacted_and_finalization_preserves_the_primary_failure() {
         let work = super::super::package::tempdir("package-secret-receipt").unwrap();
         let directory = work.path().join("receipt");
@@ -276,6 +310,7 @@ mod tests {
             Vec::new(),
             work.path(),
             Some(&directory),
+            &"a".repeat(40),
         )
         .unwrap();
         collector.bind_archive(&archive).unwrap();
@@ -309,6 +344,7 @@ mod tests {
         );
         assert!(receipt.commands[0].pid.is_some());
         assert!(receipt.commands[0].start_ticks.is_some());
+        assert_eq!(receipt.source_commit, "a".repeat(40));
         assert!(
             Collector::new(
                 "v2.0.1",
@@ -316,7 +352,8 @@ mod tests {
                 "archive.tar.gz",
                 Vec::new(),
                 work.path(),
-                Some(&directory)
+                Some(&directory),
+                &"a".repeat(40)
             )
             .is_err()
         );

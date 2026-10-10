@@ -70,9 +70,23 @@ fn unix_rows(table: &str) -> Result<BTreeMap<u64, &str>, String> {
         let inode = fields[6]
             .parse::<u64>()
             .map_err(|_| "invalid Unix socket inode")?;
-        if inode == 0 || rows.insert(inode, line).is_some() {
-            return Err("duplicate or zero Unix socket inode".to_owned());
+        // Inode 0 is not addressable via `socket:[N]` (N>0). Namespace-wide
+        // `/proc/<pid>/net/unix` commonly lists unbound or tearing-down sockets
+        // with inode 0; they cannot contribute ownership evidence and MUST NOT
+        // invalidate an otherwise coherent owned census (ADR 0048).
+        if inode == 0 {
+            continue;
         }
+        if let Some(existing) = rows.get(&inode) {
+            // Identical duplicate rows can appear under concurrent socket
+            // create/destroy while reading the seq_file. Conflicting content for
+            // one inode is ambiguous kernel evidence and stays fail-closed.
+            if *existing != line {
+                return Err("conflicting Unix socket inode rows".to_owned());
+            }
+            continue;
+        }
+        rows.insert(inode, line);
     }
     Ok(rows)
 }
@@ -534,12 +548,24 @@ pub fn verify_checkpoint_time(
 /// Missing startup authorities or limits cannot establish a baseline.
 pub fn startup_policy(raw: &Observation, listeners: u64) -> Result<Policy, String> {
     let ownership = read_ownership(raw, listeners)?;
-    let fixed_descriptor_targets: Vec<_> = raw
+    let mut fixed_descriptor_targets: Vec<_> = raw
         .descriptors
         .values()
         .filter(|target| !target.starts_with("socket:[") && !target.starts_with("pipe:["))
         .cloned()
         .collect();
+    // Harness pipes inherited from the collector are startup inventory, not
+    // product permits. Match multiset-style so duplicate inodes stay paired.
+    let mut inherited = raw.collector_pipe_targets.clone();
+    for target in raw.descriptors.values() {
+        if !target.starts_with("pipe:[") {
+            continue;
+        }
+        if let Some(index) = inherited.iter().position(|candidate| candidate == target) {
+            inherited.swap_remove(index);
+            fixed_descriptor_targets.push(target.clone());
+        }
+    }
     Ok(Policy {
         runtime_unix_sockets: runtime_unix_count(raw)?,
         fixed_fds: u64::try_from(fixed_descriptor_targets.len())
@@ -561,6 +587,31 @@ pub fn startup_policy(raw: &Observation, listeners: u64) -> Result<Policy, Strin
         replay_expiry_ms: ownership.replay_expiry_ms,
         retirement_deadline_ms: ownership.retirement_deadline_ms,
     })
+}
+
+/// Count pipe FDs that are not part of the fixed startup inventory.
+fn dynamic_pipe_fds(raw: &Observation, policy: &Policy) -> Result<u64, String> {
+    let mut fixed_pipes: Vec<_> = policy
+        .fixed_descriptor_targets
+        .iter()
+        .filter(|target| target.starts_with("pipe:["))
+        .cloned()
+        .collect();
+    let mut pipes = 0_u64;
+    for target in raw.descriptors.values() {
+        if !(target.starts_with("pipe:[") && target.ends_with(']')) {
+            continue;
+        }
+        if let Some(index) = fixed_pipes.iter().position(|fixed| fixed == target) {
+            fixed_pipes.swap_remove(index);
+            continue;
+        }
+        pipes = pipes.checked_add(1).ok_or("pipe count overflow")?;
+    }
+    if !fixed_pipes.is_empty() {
+        return Err("fixed pipe inventory is missing from the descriptor census".to_owned());
+    }
+    Ok(pipes)
 }
 
 fn reconcile(
@@ -644,13 +695,7 @@ fn normalize_with_ownership(
     .map_err(|_| "socket count overflow")?
     .checked_sub(unix_count)
     .ok_or("Unix socket count overflow")?;
-    let pipes = u64::try_from(
-        raw.descriptors
-            .values()
-            .filter(|target| target.starts_with("pipe:["))
-            .count(),
-    )
-    .map_err(|_| "pipe count overflow")?;
+    let pipes = dynamic_pipe_fds(raw, policy)?;
     let reconciliation = if reconcile_ownership {
         Some(reconcile(
             &ownership,

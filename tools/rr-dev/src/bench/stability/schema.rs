@@ -21,6 +21,7 @@ pub struct Contract {
     pub checkpoint_offsets_ms: Vec<u64>,
     pub checkpoint_tolerance_ms: u64,
     pub clock_max_offset_ms: u64,
+    pub clock_max_end_offset_ms: u64,
     pub clock_max_roundtrip_ms: u64,
     pub clock_max_drift_ms: u64,
     pub cycle_interval_ms: u64,
@@ -29,6 +30,7 @@ pub struct Contract {
     pub fault_duration_ms: u64,
     pub rtt_duration_ms: u64,
     pub rtt_concurrency_per_line: u64,
+    pub rtt_admission_drain_ms: u64,
     pub fault_concurrency_per_line: u64,
     pub integrity_duration_ms: u64,
     pub integrity_recovery_ms: u64,
@@ -79,6 +81,42 @@ impl Contract {
         } else {
             self.fault_duration_ms
         }
+    }
+
+    /// Absolute campaign-relative time after which no new fault transfer may be
+    /// admitted. RTT/loss cases reserve `rtt_admission_drain_ms` so in-flight
+    /// work can finish before the fixed restore boundary.
+    pub fn fault_admission_deadline_ms(&self, name: &str, restored_ms: u64) -> u64 {
+        if name.starts_with("rtt-") {
+            restored_ms.saturating_sub(self.rtt_admission_drain_ms)
+        } else {
+            restored_ms
+        }
+    }
+
+    /// Campaign-relative time when post-fault recovery admissions may begin.
+    ///
+    /// Short (non-RTT) faults share a first census at
+    /// `fault_checkpoint_offsets_ms[0]` that would otherwise fall a few seconds
+    /// into the recovery admission blast. Six back-to-back `/proc` sweeps cannot
+    /// manufacture a stable pair under that intentional churn (Frozen
+    /// `nxr/ordinary` `landing-restart` on `9b90036` / 37940381711; same Class B
+    /// on `warm` for Exact-head `26c6e1c` / 38016570647). Recovery therefore
+    /// waits until that first checkpoint window closes for every non-RTT fault.
+    /// RTT/loss faults keep immediate post-restore recovery: their first
+    /// checkpoint is still inside the long fault window, before restore.
+    pub fn recovery_ready_ms(&self, name: &str, start_ms: u64, restored_ms: u64) -> u64 {
+        let immediate = restored_ms.saturating_add(1000);
+        if name.starts_with("rtt-") {
+            return immediate;
+        }
+        let Some(first) = self.fault_checkpoint_offsets_ms.first() else {
+            return immediate;
+        };
+        start_ms
+            .saturating_add(*first)
+            .saturating_add(self.checkpoint_tolerance_ms)
+            .max(immediate)
     }
 
     pub fn integrity_start(&self) -> u64 {
@@ -448,6 +486,14 @@ pub struct Observation {
     pub closed_during_read: Vec<u32>,
     /// Full debug log at this checkpoint, not a retrospectively selected tail.
     pub ownership_log: Option<String>,
+    /// Pipe targets the collector process still holds (fd > 2) while observing.
+    ///
+    /// Hosted runners and long-lived controllers often keep non-CLOEXEC pipes
+    /// open. Isolated children inherit them. Those descriptors are harness
+    /// inventory, not product permits; matching targets become fixed startup
+    /// descriptors. Absent from historical receipts (defaults empty).
+    #[serde(default)]
+    pub collector_pipe_targets: Vec<String>,
     /// Failed observations. An empty vector does not itself establish PASS.
     pub errors: Vec<String>,
 }

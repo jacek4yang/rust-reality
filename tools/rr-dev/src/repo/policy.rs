@@ -290,7 +290,10 @@ pub(super) fn failures(paths: &[&str]) -> Vec<String> {
             ));
         }
 
-        if is_script_path(path) && !is_archived_script_evidence(path) {
+        if is_script_path(path)
+            && !is_archived_script_evidence(path)
+            && !ALLOWED_SCRIPT_PATHS.contains(path)
+        {
             failures.push(format!("active repository-owned shell/Python file: {path}"));
         }
     }
@@ -397,6 +400,10 @@ pub(super) fn valid_adr_filename(name: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
+
+/// Host programs that Actions must invoke before `cargo`/`rr-dev` exist on the
+/// runner. Keep this list minimal; prefer `cargo dev` for ordinary tooling.
+const ALLOWED_SCRIPT_PATHS: &[&str] = &[];
 
 pub(super) fn is_script_path(path: &str) -> bool {
     Path::new(path)
@@ -520,5 +527,18 @@ mod tests {
                 "{invalid} did not produce {expected:?}: {violations:?}"
             );
         }
+    }
+
+    #[test]
+    fn python_gha_shell_is_an_active_script_violation() {
+        let mut paths = canonical_paths();
+        paths.push("tools/ci/gha_pipefail_shell.py");
+        let violations = failures(&paths);
+        assert!(
+            violations
+                .iter()
+                .any(|failure| failure.contains("tools/ci/gha_pipefail_shell.py")),
+            "Python Actions shell must stay forbidden: {violations:?}"
+        );
     }
 }

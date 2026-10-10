@@ -919,22 +919,46 @@ mod tests {
         assert!(matches!(error, ToolError::Timeout { .. }), "{error:?}");
     }
 
+    /// Bounded wait for a child-published ready ACK (semantic, not a timing guess).
+    #[cfg(unix)]
+    fn wait_for_ready_ack(path: &Path, bound: Duration, context: &str) {
+        let deadline = Instant::now() + bound;
+        loop {
+            if path.is_file() {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{context}: ready ACK missing before bound ({bound:?}): {}",
+                path.display()
+            );
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn an_owned_running_tool_can_be_interrupted_and_reaped() {
         if !Tool::exists("sh") || !Tool::exists("sleep") {
             return;
         }
+        let directory = scratch("rr-interrupt-ready");
+        let ready = directory.join("ready.ack");
+        let ready_path = ready.display().to_string();
         let started = Instant::now();
         let running = Tool::new("sh")
-            .args(["-c", "trap 'exit 0' INT; while :; do sleep 1; done"])
+            .args([
+                "-c",
+                &format!("trap 'exit 0' INT; : >'{ready_path}'; while :; do sleep 1; done"),
+            ])
             .spawn()
             .expect("start interruptible tool");
-        thread::sleep(Duration::from_millis(30));
+        wait_for_ready_ack(&ready, Duration::from_secs(5), "interruptible tool");
         let _ = running
             .interrupt_and_wait(Duration::from_secs(2))
             .expect("SIGINT must finish and reap the owned group");
         assert!(started.elapsed() < Duration::from_secs(2));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(unix)]
@@ -943,12 +967,18 @@ mod tests {
         if !Tool::exists("sh") || !Tool::exists("sleep") {
             return;
         }
+        let directory = scratch("rr-interrupt-uncoop");
+        let ready = directory.join("ready.ack");
+        let ready_path = ready.display().to_string();
         let started = Instant::now();
         let running = Tool::new("sh")
-            .args(["-c", "trap '' INT TERM; while :; do sleep 1; done"])
+            .args([
+                "-c",
+                &format!("trap '' INT TERM; : >'{ready_path}'; while :; do sleep 1; done"),
+            ])
             .spawn()
             .expect("start uncooperative tool");
-        thread::sleep(Duration::from_millis(30));
+        wait_for_ready_ack(&ready, Duration::from_secs(5), "uncooperative tool");
         let error = running
             .interrupt_and_wait(Duration::from_millis(40))
             .expect_err("cleanup past its bound must fail closed");
@@ -957,6 +987,7 @@ mod tests {
             started.elapsed() < Duration::from_secs(2),
             "cleanup must kill and reap the process group promptly"
         );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(unix)]

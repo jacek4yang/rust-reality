@@ -5,10 +5,12 @@ pub mod campaign;
 pub mod checks;
 pub mod clock;
 pub mod collect;
+pub mod diagnosis;
 pub mod evaluate;
 pub mod execution;
 pub mod fixture;
 pub mod guest;
+pub mod merge;
 pub mod native;
 mod native_check;
 pub mod native_evaluate;
@@ -19,6 +21,7 @@ pub mod observation;
 pub mod package;
 pub mod package_bind;
 pub mod qualification;
+pub mod repro;
 pub mod schema;
 pub mod test_receipt;
 pub mod transfer;
@@ -39,6 +42,7 @@ use evaluate::{Report, Verdict};
 use schema::{Artifact, Evidence};
 
 /// Reconstruct log accounting from verified, content-addressed fault evidence.
+#[allow(clippy::too_many_lines)]
 fn product_logs(
     root: &Path,
     cell: &schema::Cell,
@@ -86,24 +90,31 @@ fn product_logs(
                     if ingress.is_some() {
                         return Err("repeated restart ingress action".to_owned());
                     }
-                    ingress = Some((action::restart_ingress(&value)?, value.completed_unix_ms));
+                    // Peer + ss census completion (not LINE-A action completion).
+                    ingress = Some(action::restart_ingress(&value)?);
                 } else if value.role == landing.name {
                     action::verify(&value, landing, cell, fault, contract)?;
                     if killed.is_some() {
                         return Err("repeated landing kill action".to_owned());
                     }
-                    killed = Some(value.started_unix_ms);
+                    // ACK completion is the authorized abort barrier — not action
+                    // start, and not a wall-clock hold before kill.
+                    killed = Some(action::restart_ack(&value)?);
                 }
             }
             let prefix = &fault.affected_prefix;
-            if fault.expected_failures.len() != 1
-                || prefix.line != role.name
+            if restart.is_some() {
+                return Err("repeated landing-restart disconnect attribution".to_owned());
+            }
+            if fault.expected_failures.len() != 1 {
+                return Err("restart disconnect was not observed on the intact prefix".to_owned());
+            }
+            if prefix.line != role.name
                 || prefix.started_ms >= fault.started_ms
                 || prefix.completed_ms != fault.expected_failures[0]
                 || prefix.completed_ms < fault.started_ms
                 || prefix.completed_ms > fault.restored_ms
                 || prefix.received_bytes == 0
-                || restart.is_some()
             {
                 return Err("restart disconnect lacks its bounded intact prefix".to_owned());
             }
@@ -114,11 +125,19 @@ fn product_logs(
                 .and_then(|time| time.checked_add(contract.clock_guard_ms()))
                 .ok_or("restart receipt time overflow")?;
             let (peer, census_completed) = ingress.ok_or("missing verified restart ingress")?;
-            let start = killed
-                .ok_or("missing verified landing kill")?
+            let (acked_peer, ack_completed) = killed.ok_or("missing verified landing kill")?;
+            if acked_peer != peer {
+                return Err("restart census ACK peer differs from witnessed ingress".to_owned());
+            }
+            // ADR 0041 / 0047: census command completion ≤ LANDING ACK completion.
+            // Do not use LINE-A action.completed_unix_ms — that includes the ACK
+            // publish wait for LANDING's accept reply and always post-dates ACK.
+            if ack_completed < census_completed {
+                return Err("landing abort ACK predates LINE-A census".to_owned());
+            }
+            let start = ack_completed
                 .checked_add(contract.clock_guard_ms())
-                .ok_or("restart clock guard overflow")?
-                .max(census_completed);
+                .ok_or("restart clock guard overflow")?;
             if end < start {
                 return Err("prefix failure predates landing kill".to_owned());
             }

@@ -60,6 +60,11 @@ cargo test   --manifest-path tools/Cargo.toml --workspace --locked
 cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
+资格门禁的 `run:` 步骤使用 bash-native Actions shell（[ADR 0044](../../adr/0044-signal-safe-gha-pipefail-shell.md)）：
+`bash --noprofile --norc -e -o pipefail {0}`，避免 Python `KeyboardInterrupt`
+堆栈淹没真实失败。类型化对等命令为 `cargo-dev ci gha-shell`；本地验证：
+`cargo test --manifest-path tools/Cargo.toml -p rr-dev -- ci::`。
+
 工具掌管基准、剖析和互操作验收，因此工具自身未经门禁验证的测量不能作为证据。
 工具工作区曾在生产门禁之外漂移，导致 CLI 驱动、Xray 配置及格式检查失配。
 两个工作区的依赖边界不代表质量边界。
@@ -85,7 +90,9 @@ CI/Security 回执使用完整的
 阶段列表必须与冻结工具一致。
 生命周期检查绑定 `cargo test --lib --locked -- --color never` 的完整 stdout。
 契约指定每个必需测试；忽略、缺失、重复或筛选用例均不能满足要求，最终计数必须
-与实际观察到的测试结果一致。
+与实际观察到的测试结果一致。该 stdout 是纯 libtest 回执：单元测试不得向进程
+stdout 输出 JSON 或其他非 libtest 记录
+（[ADR 0052](../../adr/0052-libtest-lifecycle-stdout-is-pure-receipt.md)）。
 
 解析器与纯判定器一起进行模糊测试。对抗测试覆盖泄漏套接字、脏管道或超量池、
 缺失许可、临时资源和退役代际滞留、内存包络、载荷损坏、陈旧上传回执、采样缺失、
@@ -121,9 +128,18 @@ Linux 原始状态、比例内存、描述符目标、限制及完整调试日�
 匹配实际运行的资源管理对象。这些观察不声称测量分配器字节清单。
 
 固定运行时 Unix 套接字通过所选进程对应的内核 inode 记录与 TCP 区分，其数量
-不得超过启动清单。采集器不保留命名空间内无关套接字的路径。可执行文件哈希使用
-发布工具相同的 `sha256sum`，避免调试构建的哈希开销占用采样窗口；哈希回执缺失
-或格式错误仍会拒绝通过。
+不得超过启动清单。命名空间级 `/proc/<pid>/net/unix` 中 inode 为 `0` 的行以及
+内容完全相同的重复行在所有权过滤时忽略；同一 inode 出现冲突内容仍失败关闭
+（[ADR 0048](../../adr/0048-unix-socket-inode-census-ignores-unaddressable-rows.md)）。
+VM 恢复期与峰值 RSS 增长预算以 1 GiB 为单元；ordinary LANDING（2 GiB / 2 vCPU）
+按角色内存 GiB 缩放这些 KiB 上限，避免用 constrained 标定误杀有意更大的进程占用
+（[ADR 0051](../../adr/0051-scale-vm-rss-envelope-by-role-gib.md)）。线程增长上限保持绝对值。
+采集器不保留命名空间内无关套接字的路径。采集器自身仍打开的
+管道目标（fd > 2）会写入每次观察；与之匹配的子进程管道计入固定启动清单，而非
+产品许可（[ADR 0045](../../adr/0045-collector-inherited-pipes-are-fixed-inventory.md)）。
+产品管道与未知描述符仍保持失败关闭。可执行文件哈希使用发布工具相同的
+`sha256sum`，避免调试构建的哈希开销占用采样窗口；哈希回执缺失或格式错误仍会
+拒绝通过。
 
 `cargo dev bench stability-fixture --fixture PATH --output FRESH_DIRECTORY`
 启动已有且受控的三个 KVM 客体，检查客体 CPU、交换空间和进程身份，保留启动、
@@ -139,7 +155,8 @@ Linux 原始状态、比例内存、描述符目标、限制及完整调试日�
 终止。启动或执行失败保留原始错误及最终观察的尝试。私密配置保留在受控测试环境
 目录下，与证据包分离。
 
-并发 4（每个 LINE 并发 2）的 RTT/丢包矩阵窗口为 60 秒；其他故障及恢复阶段每个
+并发 8（每个 LINE 并发 4）的 RTT/丢包矩阵窗口为 90 秒，并在恢复前保留固定的
+12 秒准入排空，使进行中的 1 MiB 传输能在故障区间内完成；其他故障及恢复阶段每个
 LINE 并发 4，每个被测试的 LINE 至少完成 100 次传输。其他故障区间为 10 秒。方向完整性验证窗口
 为 60 秒，随后恢复 180 秒。这些时间表在验收前固定于可执行契约，对受限资源的
 LANDING 客体同样适用。
@@ -232,11 +249,28 @@ PR 的 `Candidate packages` workflow 检出精确 head，从 `cargo dev release 
 认证事件。其他对端、原因、时间、重复事件、准入限制和配置拒绝仍视为非预期。
 此归类不会改写原始日志或历史判定。
 
-主动重启 LANDING 时，LINE-A 还会在故障边界记录唯一的已建立回环入口连接。
-只有该精确对端的 Handoff 中继 EPIPE，发生在已验证的终止动作和入口观测之后、
+主动重启 LANDING 时，LINE-A 在其公网监听端口（夹具端口 9444）记录唯一已建立回环入口连接，
+并通过数据面 ACK（`rr-restart-census-ack/v1`，`192.0.2.2:19501`）将该对端发布给 LANDING。
+LANDING 仅在接受恰好一条匹配 ACK 之后才中止。正确性来自握手，而不是挂钟 sleep。
+只有该精确对端的 Handoff 中继 EPIPE，发生在已验证的 ACK 与入口普查之后、
 完整接收前缀所记录的失败时刻加现有时钟保护界限之前，才可归类为一次注入事件。
-缺失或不唯一的连接观测、其他对端、阶段、原因、错误码、重复错误及窗口外错误
+缺失或不唯一的连接观测、缺失/重复/错误 ACK、其他对端、阶段、原因、错误码、重复错误及窗口外错误
 仍会阻止验收。这只为测试夹具增加观测，不修改生产日志或生产行为。
 
-故障批次在固定恢复边界停止接收新请求，仍保留已提交的尝试及部分结果。覆盖不足
-或在途请求超出规定窗口完成仍会失败，不会把恢复之后发起的请求悄悄归入故障期。
+可在数分钟内、无需四单元 QEMU 复现 landing-restart 普查/ACK 契约：
+
+```shell
+cargo dev bench stability-repro --fault landing-restart --output FRESH_DIRECTORY
+```
+
+每个非 RTT 故障的恢复准入都会等到第一个故障检查点窗口关闭
+（[ADR 0043](../../adr/0043-landing-restart-baseline-before-recovery.md)、
+[ADR 0046](../../adr/0046-short-fault-baseline-before-recovery.md)），以便空闲进程在恢复冲击开始前给出稳定的描述符普查。
+
+该命令保留动作回执与 Class A/B/C 的 `diagnosis.json`。合法回执通过；历史空普查与
+ACK 早于普查的形状以 Class B 夹具缺陷 fail-closed。 同一套 Class 标签也会写入每单元 `cell-diagnosis.json`、`cells-summary.json` 与合并后的 `merge-diagnosis.json`，使 fail-closed 的 QEMU 运行能在数分钟内区分夹具、基础设施与产品缺陷，而不是变成数小时后的模糊 INVALID。托管资格将四个单元作为 Actions matrix 并行（每 runner 一个单元），再经 `cargo dev bench stability-merge-cells` 做身份绑定聚合（[ADR 0042](../../adr/0042-four-cell-qemu-matrix-parallelism.md)）；普通 runner 仍在 `HostLock` 与固定 fixture 端口下保留单个单元的 vCPU 亲和预算。`stability-run` 可用重复的 `--cell NAME` 只跑子集；子集跑完后必须先 merge 再做离线 Pass 裁决。
+
+故障批次在契约规定的边界软停止准入（普通故障为恢复时刻；RTT/丢包为恢复前的
+排空时刻）。到达该边界属于计划内终止，不是传输失败。已提交的尝试及部分结果仍
+保留；覆盖不足或在途请求超出规定窗口完成仍会失败，不会把恢复之后发起的请求悄
+悄归入故障期。

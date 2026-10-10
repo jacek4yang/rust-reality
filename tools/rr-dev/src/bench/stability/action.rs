@@ -265,13 +265,16 @@ pub fn verify(
         }
     } else if action.name == "landing-restart" && action.begin && role.name == "line-a" {
         restart_ingress(action)?;
+    } else if action.name == "landing-restart" && action.begin && role.name == "landing" {
+        restart_ack(action)?;
     } else if !action.commands.is_empty() {
         return Err("unexpected command outside the prescribed action".to_owned());
     }
     Ok(())
 }
 
-/// Read-only census for the isolated fixture's active ingress prefix flow.
+/// Read-only census for LINE-A's active loopback ingress (fixture listen port 9444).
+/// LANDING listens on 9443; a 9443 filter on LINE-A can never witness the prefix flow.
 pub(super) const RESTART_INGRESS_COMMAND: [&str; 11] = [
     "ss",
     "-Hnt",
@@ -282,20 +285,26 @@ pub(super) const RESTART_INGRESS_COMMAND: [&str; 11] = [
     "(",
     "sport",
     "=",
-    ":9443",
+    ":9444",
     ")",
 ];
 
-/// Record the single active prefix connection before its injected peer restart.
-pub(super) fn restart_ingress(action: &Action) -> Result<String, String> {
-    if action.name != "landing-restart"
-        || !action.begin
-        || action.role != "line-a"
-        || action.commands.len() != 1
-    {
-        return Err("missing restart ingress census".to_owned());
-    }
-    let output = command(&action.commands[0], &RESTART_INGRESS_COMMAND, action)?;
+/// Guest-to-guest control address for the restart census ACK (LINE-A → LANDING data0).
+pub(super) const RESTART_ACK_ENDPOINT: &str = "192.0.2.2:19501";
+
+/// LANDING binds this wildcard so the LINE-A data0 peer can complete the ACK.
+pub(super) const RESTART_ACK_BIND: &str = "0.0.0.0:19501";
+
+/// Wire magic: LINE-A publishes the witnessed peer; LANDING aborts only after accept.
+pub(super) const RESTART_ACK_MAGIC: &str = "rr-restart-census-ack/v1";
+pub(super) const RESTART_ACK_ACCEPTED: &str = "rr-restart-census-ack/v1-accepted";
+
+pub(super) const RESTART_ACK_SEND_ARGV: [&str; 3] =
+    ["rr-restart-census-ack", "send", RESTART_ACK_ENDPOINT];
+pub(super) const RESTART_ACK_RECV_ARGV: [&str; 3] =
+    ["rr-restart-census-ack", "receive", RESTART_ACK_BIND];
+
+pub(super) fn restart_peer_from_census(output: &str) -> Result<String, String> {
     let rows: Vec<_> = output
         .lines()
         .filter(|row| !row.trim().is_empty())
@@ -305,7 +314,7 @@ pub(super) fn restart_ingress(action: &Action) -> Result<String, String> {
     }
     let fields: Vec<_> = rows[0].split_whitespace().collect();
     if fields.len() != 4
-        || fields[2] != "127.0.0.1:9443"
+        || fields[2] != "127.0.0.1:9444"
         || fields[0].parse::<u64>().is_err()
         || fields[1].parse::<u64>().is_err()
     {
@@ -318,6 +327,77 @@ pub(super) fn restart_ingress(action: &Action) -> Result<String, String> {
         return Err("restart ingress peer is not the owned loopback client".to_owned());
     }
     Ok(peer.to_string())
+}
+
+fn restart_ack_body(stdout: &str) -> Result<(String, String), String> {
+    let mut lines = stdout.lines();
+    let peer = lines
+        .next()
+        .ok_or("restart census ACK missing peer")?
+        .to_owned();
+    let boot = lines
+        .next()
+        .ok_or("restart census ACK missing publisher boot identity")?
+        .to_owned();
+    if lines.next().is_some() || peer.is_empty() || boot.is_empty() {
+        return Err("restart census ACK body is malformed".to_owned());
+    }
+    let addr: std::net::SocketAddr = peer
+        .parse()
+        .map_err(|_| "restart census ACK peer is not a socket address")?;
+    if addr.ip() != std::net::IpAddr::from([127, 0, 0, 1]) || addr.port() == 0 {
+        return Err("restart census ACK peer is not the owned loopback client".to_owned());
+    }
+    Ok((peer, boot))
+}
+
+/// Record the single active prefix connection before its injected peer restart.
+///
+/// Begin receipts carry exactly two LINE-A commands: the `ss` census, then the
+/// ACK publish to LANDING. Correctness is the handshake, not a wall-clock hold.
+///
+/// Returns `(peer, census_completed_unix_ms)`. The census timestamp is the `ss`
+/// command completion — not the LINE-A action completion. Action completion
+/// includes waiting for LANDING's accept reply, so comparing LANDING ACK time
+/// against it falsely reports "landing abort ACK predates LINE-A census"
+/// (Frozen 38023074176 handoff cells).
+pub(super) fn restart_ingress(action: &Action) -> Result<(String, u64), String> {
+    if action.name != "landing-restart"
+        || !action.begin
+        || action.role != "line-a"
+        || action.commands.len() != 2
+    {
+        return Err("missing restart ingress census".to_owned());
+    }
+    let output = command(&action.commands[0], &RESTART_INGRESS_COMMAND, action)?;
+    let peer = restart_peer_from_census(output)?;
+    let census_completed = action.commands[0].completed_unix_ms;
+    let ack = command(&action.commands[1], &RESTART_ACK_SEND_ARGV, action)?;
+    let (acked_peer, boot) = restart_ack_body(ack)?;
+    if acked_peer != peer || boot != action.boot_id {
+        return Err("restart census ACK does not match the witnessed ingress".to_owned());
+    }
+    if action.commands[1].started_unix_ms < census_completed {
+        return Err("restart census ACK predates its ingress census".to_owned());
+    }
+    Ok((peer, census_completed))
+}
+
+/// LANDING may abort only after accepting exactly one matching census ACK.
+pub(super) fn restart_ack(action: &Action) -> Result<(String, u64), String> {
+    if action.name != "landing-restart"
+        || !action.begin
+        || action.role != "landing"
+        || action.commands.len() != 1
+    {
+        return Err("missing restart census ACK receipt".to_owned());
+    }
+    let stdout = command(&action.commands[0], &RESTART_ACK_RECV_ARGV, action)?;
+    let (peer, boot) = restart_ack_body(stdout)?;
+    if boot.is_empty() {
+        return Err("restart census ACK publisher boot identity missing".to_owned());
+    }
+    Ok((peer, action.commands[0].completed_unix_ms))
 }
 
 /// Exact sockets and command interval witnessed by a successful stale eviction.

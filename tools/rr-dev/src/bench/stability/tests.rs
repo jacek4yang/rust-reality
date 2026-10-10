@@ -515,6 +515,13 @@ fn lifecycle_receipts_require_named_unfiltered_tests_and_complete_totals() {
         text.replace("finished in 0.01s", "finished in NaNs"),
         text.replace("0 failed", "-1 failed"),
         text.replace("\ntest result:", "\ntest duplicated ... ok\ntest result:"),
+        // Generator JSON (or any non-libtest line) on stdout must fail closed
+        // (ADR 0052); Frozen lifecycle binds unfiltered libtest stdout.
+        text.replacen(
+            "test ",
+            "{\n  \"uuids\": [\"00000000-0000-0000-0000-000000000000\"]\n}\ntest ",
+            1,
+        ),
     ] {
         assert!(super::test_receipt::parse(invalid.as_bytes()).is_err());
     }
@@ -1098,6 +1105,27 @@ fn collection_receipts_reject_substitution_and_exclude_unowned_socket_paths() {
     ] {
         assert!(super::observation::owned_unix_rows(&changed, &owned).is_err());
     }
+}
+
+#[test]
+fn owned_unix_rows_skip_zero_inodes_and_identical_duplicates() {
+    // Frozen nxr/constrained integrity-10000 after rtt-100-loss-1 fail-closed on
+    // namespace-wide inode 0 / duplicate rows that cannot match socket:[N] (ADR 0048).
+    let table = "Num RefCount Protocol Flags Type St Inode Path\n0000000000000000: 00000003 00000000 00000000 0001 03 0\n0000000000000000: 00000002 00000000 00000000 0001 01 0 @abstract/teardown\n0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 101 /unrelated/private/path\n";
+    let owned = [(3, "socket:[100]".to_owned())].into_iter().collect();
+    let retained = super::observation::owned_unix_rows(table, &owned).unwrap();
+    assert!(retained.contains("03 100\n"), "{retained}");
+    assert!(
+        !retained.contains(" 0\n") && !retained.contains(" 0 "),
+        "{retained}"
+    );
+    assert!(!retained.contains("101"), "{retained}");
+    assert!(!retained.contains("private"), "{retained}");
+    let conflicting = table.replace(
+        "0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 100\n",
+        "0000000000000000: 00000003 00000000 00000000 0001 03 100\n0000000000000000: 00000003 00000000 00000000 0001 03 100 /other\n",
+    );
+    assert!(super::observation::owned_unix_rows(&conflicting, &owned).is_err());
 }
 
 fn native_fixture() -> Value {
@@ -1730,6 +1758,73 @@ fn active_reload_can_precede_the_next_counter_without_hiding_recovery_retirement
 }
 
 #[test]
+fn collector_inherited_pipes_are_fixed_not_dynamic_permits() {
+    // Native soak c58eae50 / run 38012283433: quiet baseline failed because
+    // two collector-inherited pipes entered the dynamic census while product
+    // permits omitted them. Matching collector inventory must classify them as
+    // fixed; a product-only pipe of a new inode must still fail closed.
+    let evidence: schema::Evidence = serde_json::from_value(fixture()).unwrap();
+    let baseline = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut raw: schema::Observation =
+        serde_json::from_value(raw_observation(baseline, policy)).unwrap();
+    raw.collector_pipe_targets = vec!["pipe:[12740]".to_owned(), "pipe:[12741]".to_owned()];
+    raw.descriptors.insert(9000, "pipe:[12740]".to_owned());
+    raw.descriptors.insert(9001, "pipe:[12741]".to_owned());
+    for read in &mut raw.descriptor_reads {
+        read.descriptors.clone_from(&raw.descriptors);
+    }
+    let without =
+        super::observation::normalize(&raw, policy, "native", baseline.observation.clone());
+    assert!(
+        without
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.contains("census exceeds recorded permits")),
+        "{without:?}"
+    );
+    let startup = super::observation::startup_policy(&raw, 1).unwrap();
+    assert!(
+        startup
+            .fixed_descriptor_targets
+            .iter()
+            .filter(|target| target.as_str() == "pipe:[12740]" || target.as_str() == "pipe:[12741]")
+            .count()
+            == 2
+    );
+    let sample =
+        super::observation::normalize(&raw, &startup, "native", baseline.observation.clone())
+            .unwrap();
+    assert_eq!(
+        sample.descriptors.observed_pipe_fds,
+        baseline.descriptors.observed_pipe_fds
+    );
+    assert_eq!(
+        sample.descriptors.fixed, startup.fixed_fds,
+        "harness pipes must enlarge fixed inventory"
+    );
+    assert_eq!(
+        evaluate::evaluate_native_resources(&startup, &sample, &sample, true).verdict,
+        Verdict::Pass
+    );
+    // Two product-only pipes push dynamic census past held permits.
+    raw.descriptors.insert(9002, "pipe:[99998]".to_owned());
+    raw.descriptors.insert(9003, "pipe:[99999]".to_owned());
+    for read in &mut raw.descriptor_reads {
+        read.descriptors.clone_from(&raw.descriptors);
+    }
+    let leaked =
+        super::observation::normalize(&raw, &startup, "native", baseline.observation.clone());
+    assert!(
+        leaked
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.contains("census exceeds recorded permits")),
+        "{leaked:?}"
+    );
+}
+
+#[test]
 fn injected_evictions_require_exact_peer_reason_time_and_one_use() {
     use super::execution::product_log_with_faults;
     let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,
@@ -1859,17 +1954,134 @@ fn duplicate_restart_failure_fields_are_invalid_not_expected() {
 }
 
 #[test]
-fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
-    let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":110,
+fn restart_ingress_censuses_line_a_listener_not_landing_port() {
+    // LINE-A listens on 9444; LANDING on 9443. Filtering sport=:9443 on LINE-A
+    // always yields an empty census and the Frozen QEMU INVALID:
+    // "restart requires exactly one witnessed prefix connection".
+    assert_eq!(
+        super::action::RESTART_INGRESS_COMMAND,
+        [
+            "ss",
+            "-Hnt",
+            "state",
+            "established",
+            "src",
+            "127.0.0.1",
+            "(",
+            "sport",
+            "=",
+            ":9444",
+            ")",
+        ]
+    );
+}
+
+#[test]
+fn restart_abort_is_ack_driven_not_sleep_held() {
+    // Correctness is the LINE-A → LANDING census ACK handshake. A wall-clock
+    // hold must not be the acceptance mechanism (owner mandate after 5111bc1).
+    assert!(!schema::CONTRACT.contains("RESTART_CENSUS_HOLD"));
+    assert_eq!(
+        super::action::RESTART_ACK_SEND_ARGV,
+        ["rr-restart-census-ack", "send", "192.0.2.2:19501"]
+    );
+    assert_eq!(
+        super::action::RESTART_ACK_RECV_ARGV,
+        ["rr-restart-census-ack", "receive", "0.0.0.0:19501"]
+    );
+    assert_eq!(super::action::RESTART_ACK_MAGIC, "rr-restart-census-ack/v1");
+}
+
+#[test]
+fn restart_ordering_barrier_is_census_command_not_line_a_action() {
+    // Frozen 38023074176 handoff/ordinary receipts (unix_ms truncated):
+    // LINE-A ss census completed 6524; LINE-A action completed 6565 (includes
+    // waiting for LANDING accept reply); LANDING ACK completed 6527.
+    // ACK must be ordered against census command completion (6524), not action
+    // completion (6565) — otherwise a correct handshake fails Class B.
+    let line_a = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":6501,"completed_unix_ms":6565,
         "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
         "termination_signal":null,"warm_tcp":true,"commands":[{
-        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9443",")"],
-        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"", "stdout":"0 0 127.0.0.1:9443 127.0.0.1:43028\n"}]});
+        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9444",")"],
+        "started_unix_ms":6501,"completed_unix_ms":6524,"exit_code":0,"stderr":"",
+        "stdout":"0 0 127.0.0.1:9444 127.0.0.1:40636
+"},{
+        "argv":["rr-restart-census-ack","send","192.0.2.2:19501"],
+        "started_unix_ms":6524,"completed_unix_ms":6565,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:40636
+fixture
+"}]});
+    let landing = json!({"role":"landing","boot_id":"landing-boot","started_unix_ms":6501,"completed_unix_ms":6528,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":9,"warm_tcp":null,"commands":[{
+        "argv":["rr-restart-census-ack","receive","0.0.0.0:19501"],
+        "started_unix_ms":6501,"completed_unix_ms":6527,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:40636
+fixture
+"}]});
+    let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
+    let (peer, census_completed) = super::action::restart_ingress(&parse(&line_a)).unwrap();
+    let (acked_peer, ack_completed) = super::action::restart_ack(&parse(&landing)).unwrap();
+    assert_eq!(peer, "127.0.0.1:40636");
+    assert_eq!(acked_peer, peer);
+    assert_eq!(census_completed, 6524);
+    assert_eq!(ack_completed, 6527);
+    assert!(ack_completed >= census_completed);
+    // Document the false barrier that Frozen used before ADR 0047:
+    assert!(ack_completed < 6565);
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
+    let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":120,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":null,"warm_tcp":true,"commands":[{
+        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9444",")"],
+        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"",
+        "stdout":"0 0 127.0.0.1:9444 127.0.0.1:43028
+"},{
+        "argv":["rr-restart-census-ack","send","192.0.2.2:19501"],
+        "started_unix_ms":110,"completed_unix_ms":118,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:43028
+fixture
+"}]});
     let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
     assert_eq!(
         super::action::restart_ingress(&parse(&value)).unwrap(),
-        "127.0.0.1:43028"
+        ("127.0.0.1:43028".to_owned(), 109)
     );
+    let landing = json!({"role":"landing","boot_id":"landing-boot","started_unix_ms":100,"completed_unix_ms":119,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":9,"warm_tcp":null,"commands":[{
+        "argv":["rr-restart-census-ack","receive","0.0.0.0:19501"],
+        "started_unix_ms":101,"completed_unix_ms":117,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:43028
+fixture
+"}]});
+    assert_eq!(
+        super::action::restart_ack(&parse(&landing)).unwrap(),
+        ("127.0.0.1:43028".to_owned(), 117)
+    );
+    let empty = super::action::restart_ingress(&parse(&{
+        let mut changed = value.clone();
+        changed["commands"][0]["stdout"] = json!("");
+        changed
+    }))
+    .unwrap_err();
+    assert_eq!(
+        empty,
+        "restart requires exactly one witnessed prefix connection"
+    );
+    // Exact hosted shape from run 37886641986: LINE-A guest filtered LANDING's
+    // port and recorded an empty census. After the port fix the argv itself is
+    // rejected; the empty-row error remains covered above.
+    let hosted = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":110,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":null,"warm_tcp":true,"commands":[{
+        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9443",")"],
+        "started_unix_ms":101,"completed_unix_ms":109,"exit_code":0,"stderr":"", "stdout":""}]});
+    assert!(super::action::restart_ingress(&parse(&hosted)).is_err());
     for (pointer, new) in [
         ("/role", json!("line-b")),
         ("/begin", json!(false)),
@@ -1879,12 +2091,36 @@ fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
         ("/commands/0/stdout", json!("")),
         (
             "/commands/0/stdout",
-            json!("0 0 127.0.0.1:9443 192.0.2.5:43028\n"),
+            json!(
+                "0 0 127.0.0.1:9444 192.0.2.5:43028
+"
+            ),
         ),
         (
             "/commands/0/stdout",
-            json!("0 0 127.0.0.1:9443 127.0.0.1:43028\n0 0 127.0.0.1:9443 127.0.0.1:43029\n"),
+            json!(
+                "0 0 127.0.0.1:9444 127.0.0.1:43028
+0 0 127.0.0.1:9444 127.0.0.1:43029
+"
+            ),
         ),
+        (
+            "/commands/1/stdout",
+            json!(
+                "127.0.0.1:43029
+fixture
+"
+            ),
+        ),
+        (
+            "/commands/1/stdout",
+            json!(
+                "127.0.0.1:43028
+other-boot
+"
+            ),
+        ),
+        ("/commands/1/started_unix_ms", json!(108)),
     ] {
         let mut changed = value.clone();
         *changed.pointer_mut(pointer).unwrap() = new;
@@ -1893,4 +2129,223 @@ fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
             "{pointer}"
         );
     }
+    for (pointer, new) in [
+        ("/commands/0/stdout", json!("192.0.2.5:43028\nfixture\n")),
+        ("/commands/0/stdout", json!("")),
+        ("/commands/0/stdout", json!("127.0.0.1:43028\n")),
+        (
+            "/commands/0/argv",
+            json!(["rr-restart-census-ack", "send", "192.0.2.2:19501"]),
+        ),
+        ("/role", json!("line-a")),
+    ] {
+        let mut changed = landing.clone();
+        *changed.pointer_mut(pointer).unwrap() = new;
+        assert!(
+            super::action::restart_ack(&parse(&changed)).is_err(),
+            "{pointer}"
+        );
+    }
+}
+
+#[test]
+fn rtt_contract_keeps_workload_timing_and_drain_coherent() {
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    assert_eq!(contract.rtt_concurrency_per_line, 4);
+    assert_eq!(contract.rtt_duration_ms, 90_000);
+    assert_eq!(contract.rtt_admission_drain_ms, 12_000);
+    assert!(contract.rtt_admission_drain_ms < contract.rtt_duration_ms);
+    assert!(contract.rtt_duration_ms + contract.recovery_deadline_ms < contract.fault_interval_ms);
+    let restored = 1_000_000 + contract.rtt_duration_ms;
+    assert_eq!(
+        contract.fault_admission_deadline_ms("rtt-200", restored),
+        restored - contract.rtt_admission_drain_ms
+    );
+    assert_eq!(
+        contract.fault_admission_deadline_ms("reload", restored),
+        restored
+    );
+    // Capacity check from measured 954 evidence under 1% loss (~3 completions
+    // /4s /LINE at concurrency 2). Scaled to concurrency 4 over the admit
+    // window, integer math keeps ≥100 completions with the drain reserved.
+    let admit_ms = contract.rtt_duration_ms - contract.rtt_admission_drain_ms;
+    let completions = admit_ms
+        .saturating_mul(contract.rtt_concurrency_per_line)
+        .saturating_mul(3)
+        / (4 * 2 * 1000);
+    assert!(
+        completions >= contract.transfers_per_line,
+        "RTT contract under-provisions loss coverage: expected {completions}"
+    );
+}
+
+#[test]
+fn rtt_during_transfer_past_restore_stays_invalid_after_coherent_schedule() {
+    let mut changed = fixture();
+    let fault = &mut changed["cells"][0]["faults"][8]; // rtt-200
+    let restored = fault["restored_ms"].as_u64().unwrap();
+    assert_eq!(restored - fault["started_ms"].as_u64().unwrap(), 90_000);
+    let transfer = &mut fault["during_transfers"].as_array_mut().unwrap()[0];
+    transfer["started_ms"] = json!(restored - 1);
+    transfer["completed_ms"] = json!(restored + 1);
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+}
+
+#[test]
+fn short_fault_recovery_waits_for_first_fault_checkpoint() {
+    // Frozen nxr/ordinary on 9b90036 (run 37940381711) fail-closed at
+    // fault-landing-restart-15000, and Exact-head 26c6e1c (run 38016570647)
+    // fail-closed at fault-warm-15000, both with consecutive descriptor-census
+    // mismatch while recovery admissions were already blasting LANDING. The
+    // first post-restore census must observe an idle process; recovery
+    // admissions begin only after that checkpoint window closes for every
+    // non-RTT fault (ADR 0043 / ADR 0046).
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let start = 0_u64;
+    let first = *contract.fault_checkpoint_offsets_ms.first().unwrap();
+    let expected = start + first + contract.checkpoint_tolerance_ms;
+    for name in [
+        "reload",
+        "warm",
+        "stale",
+        "cold",
+        "landing-restart",
+        "line-a-partition",
+    ] {
+        let restored = start + contract.fault_duration(name);
+        let ready = contract.recovery_ready_ms(name, start, restored);
+        assert_eq!(
+            ready, expected,
+            "{name}: recovery must clear the first census window"
+        );
+        assert!(
+            ready > restored + 1000,
+            "{name}: recovery is delayed past the ordinary restored+1s edge"
+        );
+        assert!(
+            ready.saturating_sub(restored) <= contract.recovery_deadline_ms,
+            "{name}: delayed recovery must remain inside recovery_deadline_ms"
+        );
+    }
+    let rtt_restored = start + contract.fault_duration("rtt-100");
+    assert_eq!(
+        contract.recovery_ready_ms("rtt-100", start, rtt_restored),
+        rtt_restored + 1000,
+        "RTT faults keep immediate post-restore recovery"
+    );
+}
+
+#[test]
+fn consecutive_matching_census_miss_is_class_b_harness() {
+    // Historical hosted shape from run 37940381711 — mislabeled A-product by
+    // the prior classifier. Acquisition under incoherent recovery overlap is
+    // harness schedule defect, not proof of a product leak.
+    assert_eq!(
+        super::diagnosis::classify(
+            "nxr/ordinary: landing: guest helper exited before workload completion; failed raw observation: [\"descriptor census had no consecutive complete matching reads within its fixed bound\"]"
+        ),
+        super::diagnosis::Class::B
+    );
+}
+
+#[test]
+fn prefix_disconnect_failure_timestamp_must_equal_completed_ms() {
+    // handoff/ordinary on 9b90036 failed finalization with
+    // "restart disconnect lacks its bounded intact prefix" because echo_prefix
+    // recorded failure via one elapsed() and completed_ms via another. The
+    // contract requires equality; the collector must use one instant.
+    let source =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/bench/stability/workload.rs");
+    let text = std::fs::read_to_string(&source)
+        .unwrap_or_else(|error| panic!("read {}: {error}", source.display()));
+    assert!(
+        text.contains("Some((time, _)) => time"),
+        "disconnect completion must reuse the failure timestamp"
+    );
+    assert!(
+        text.contains("On an expected disconnect the failure instant IS the prefix completion"),
+        "retain the semantic comment binding completed_ms to the failure instant"
+    );
+}
+
+#[test]
+fn role_rss_growth_scale_follows_gib_provisioning() {
+    assert_eq!(evaluate::role_rss_growth_scale(1_073_741_824), 1);
+    assert_eq!(evaluate::role_rss_growth_scale(2_147_483_648), 2);
+    assert_eq!(evaluate::role_rss_growth_scale(512 * 1024 * 1024), 1);
+}
+
+#[test]
+fn ordinary_landing_rss_envelope_scales_with_role_memory_limit() {
+    // Frozen 38057641054 handoff/ordinary: recovered RSS growth ~37–38 MiB over
+    // cold-start baseline exceeds the 32 MiB 1 GiB unit budget but stays under
+    // the 2× scaled ordinary LANDING budget (ADR 0051).
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let last_cycle = *contract.checkpoint_offsets_ms.last().unwrap();
+    let last_fault = *contract.fault_checkpoint_offsets_ms.last().unwrap();
+    let base = 6_796_u64;
+    let retained = base + 40_000; // >32768 unscaled, <65536 scaled
+
+    let bump_landing = |samples: &mut [Value], rss: u64| {
+        for sample in samples {
+            if sample["role"] == "landing" {
+                sample["rss_kib"] = json!(rss);
+                sample["hwm_kib"] = json!(rss);
+                sample["pss_kib"] = json!(rss.saturating_sub(1_000));
+                sample["anonymous_kib"] = json!(rss.saturating_sub(2_000));
+            }
+        }
+    };
+
+    let apply_recovered_growth = |cell: &mut Value| {
+        for cycle in cell["cycles"].as_array_mut().unwrap() {
+            let cycle_index = cycle["index"].as_u64().unwrap();
+            for checkpoint in cycle["checkpoints"].as_array_mut().unwrap() {
+                let offset = checkpoint["offset_ms"].as_u64().unwrap();
+                let samples = checkpoint["samples"].as_array_mut().unwrap();
+                if offset == 0 && cycle_index == 0 {
+                    bump_landing(samples, base);
+                } else if offset == last_cycle {
+                    bump_landing(samples, retained);
+                }
+            }
+        }
+        for fault in cell["faults"].as_array_mut().unwrap() {
+            for checkpoint in fault["checkpoints"].as_array_mut().unwrap() {
+                let offset = checkpoint["offset_ms"].as_u64().unwrap();
+                if offset == last_fault {
+                    bump_landing(checkpoint["samples"].as_array_mut().unwrap(), retained);
+                }
+            }
+        }
+    };
+
+    let mut ordinary = fixture();
+    let cell = ordinary["cells"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|cell| cell["name"] == "handoff/ordinary")
+        .expect("handoff/ordinary");
+    for role in cell["roles"].as_array_mut().unwrap() {
+        if role["name"] == "landing" {
+            role["vcpus"] = json!(2);
+            role["memory_limit_bytes"] = json!(2_147_483_648_u64);
+        } else {
+            role["vcpus"] = json!(1);
+            role["memory_limit_bytes"] = json!(1_073_741_824_u64);
+        }
+    }
+    apply_recovered_growth(cell);
+    assert_eq!(verdict(&ordinary), Verdict::Pass);
+
+    let mut constrained = fixture();
+    let cell = constrained["cells"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|cell| cell["name"] == "handoff/constrained")
+        .expect("handoff/constrained");
+    apply_recovered_growth(cell);
+    assert_eq!(verdict(&constrained), Verdict::Fail);
 }

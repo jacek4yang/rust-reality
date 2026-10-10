@@ -79,3 +79,16 @@ of the law is what it is.
 | [0037](0037-bound-descriptor-census-acquisition.md) | Bound descriptor census acquisition | Accepted |
 | [0038](0038-hosted-actions-are-primary-quality-gates.md) | Hosted Actions are the primary quality gates | Accepted |
 | [0039](0039-separate-active-census-from-recovery-ownership.md) | Separate active census from recovery ownership | Accepted |
+| [0040](0040-coherent-rtt-fault-workload.md) | Coherent RTT/loss fault workload | Accepted |
+| [0041](0041-ack-driven-landing-restart-census.md) | ACK-driven LANDING restart census | Accepted |
+| [0042](0042-four-cell-qemu-matrix-parallelism.md) | Four-cell QEMU parallelism via Actions matrix | Accepted |
+| [0043](0043-landing-restart-baseline-before-recovery.md) | LANDING restart baseline census before recovery admissions | Accepted |
+| [0044](0044-signal-safe-gha-pipefail-shell.md) | Signal-safe GitHub Actions pipefail shell | Accepted |
+| [0045](0045-collector-inherited-pipes-are-fixed-inventory.md) | Collector-inherited pipes are fixed inventory | Accepted |
+| [0046](0046-short-fault-baseline-before-recovery.md) | Short-fault baseline census before recovery admissions | Accepted |
+| [0047](0047-restart-ordering-uses-census-command-time.md) | Restart ordering uses census command time | Accepted |
+| [0048](0048-unix-socket-inode-census-ignores-unaddressable-rows.md) | Unix socket inode census ignores unaddressable rows | Accepted |
+| [0049](0049-guest-clock-end-offset-and-kvm-witness.md) | Guest clock end offset and kvm-clock witness | Accepted; `date --set` ban superseded by ADR 0050 |
+| [0050](0050-guest-clock-oneshot-realtime-bind.md) | One-shot guest REALTIME bind before kvm-clock witness | Accepted |
+| [0051](0051-scale-vm-rss-envelope-by-role-gib.md) | Scale VM RSS envelopes by role GiB | Accepted |
+| [0052](0052-libtest-lifecycle-stdout-is-pure-receipt.md) | Libtest lifecycle stdout is a pure receipt | Accepted |

@@ -230,6 +230,14 @@ pub(crate) fn run_check_cover(arguments: CheckCoverArgs) -> Result<(), CliError>
 /// who received an opaque file cannot reason about a routing change, a
 /// credential rotation, or a failure.
 pub(crate) fn run_generate(command: GenerateCommand) -> Result<(), CliError> {
+    generate_into(command, &mut io::stdout().lock())
+}
+
+/// Same generators as [`run_generate`], writing to an injected sink.
+///
+/// Production uses stdout. Unit tests MUST capture into a buffer so libtest
+/// stdout stays a pure receipt for Frozen lifecycle verification (ADR 0052).
+fn generate_into(command: GenerateCommand, out: &mut dyn Write) -> Result<(), CliError> {
     match command {
         GenerateCommand::Uuid { count, json } => {
             let mut values = Vec::with_capacity(usize::from(count));
@@ -237,24 +245,30 @@ pub(crate) fn run_generate(command: GenerateCommand) -> Result<(), CliError> {
                 values.push(generate_uuid()?.to_string());
             }
             if json {
-                emit_json(&json!({ "uuids": values }))
+                emit_json(out, &json!({ "uuids": values }))
             } else {
-                write_stdout(values.join("\n") + "\n")
+                write_out(out, values.join("\n") + "\n")
             }
         }
         GenerateCommand::X25519 { json } => {
             let pair = generate_x25519_key_pair()?;
             if json {
-                emit_json(&json!({
-                    "privateKey": pair.private_key().expose(),
-                    "publicKey": pair.public_key(),
-                }))
+                emit_json(
+                    out,
+                    &json!({
+                        "privateKey": pair.private_key().expose(),
+                        "publicKey": pair.public_key(),
+                    }),
+                )
             } else {
-                write_stdout(format_args!(
-                    "private key (keep secret): {}\npublic key  (give to peers): {}\n",
-                    pair.private_key().expose(),
-                    pair.public_key()
-                ))
+                write_out(
+                    out,
+                    format_args!(
+                        "private key (keep secret): {}\npublic key  (give to peers): {}\n",
+                        pair.private_key().expose(),
+                        pair.public_key()
+                    ),
+                )
             }
         }
         GenerateCommand::ShortId { count, bytes, json } => {
@@ -263,41 +277,45 @@ pub(crate) fn run_generate(command: GenerateCommand) -> Result<(), CliError> {
                 values.push(generate_short_id(bytes)?);
             }
             if json {
-                emit_json(&json!({ "shortIds": values }))
+                emit_json(out, &json!({ "shortIds": values }))
             } else {
-                write_stdout(values.join("\n") + "\n")
+                write_out(out, values.join("\n") + "\n")
             }
         }
         GenerateCommand::Psk { json } => {
             let key = generate_node_key()?;
             if json {
-                emit_json(&json!({ "psk": key.expose() }))
+                emit_json(out, &json!({ "psk": key.expose() }))
             } else {
-                write_stdout(format_args!("{}\n", key.expose()))
+                write_out(out, format_args!("{}\n", key.expose()))
             }
         }
     }
 }
 
-fn emit_json(value: &serde_json::Value) -> Result<(), CliError> {
+fn emit_json(out: &mut dyn Write, value: &serde_json::Value) -> Result<(), CliError> {
     let mut output = serde_json::to_string_pretty(value)?;
     output.push('\n');
-    write_stdout(output)
+    write_out(out, output)
+}
+
+fn write_out(out: &mut dyn Write, output: impl fmt::Display) -> Result<(), CliError> {
+    write!(out, "{output}").map_err(CliError::Io)
 }
 
 pub(crate) fn write_stdout(output: impl fmt::Display) -> Result<(), CliError> {
-    write!(io::stdout().lock(), "{output}").map_err(CliError::Io)
+    write_out(&mut io::stdout().lock(), output)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::run_generate;
+    use super::generate_into;
     use crate::cli::model::GenerateCommand;
 
     #[test]
     fn every_generator_emits_only_what_was_asked_for() {
-        // The generators write to stdout, so the contract under test is that
-        // each one succeeds and that none of them needs a configuration.
+        // Capture into a buffer: writing JSON to real stdout pollutes Frozen
+        // lifecycle libtest receipts (ADR 0052).
         for command in [
             GenerateCommand::Uuid {
                 count: 2,
@@ -311,7 +329,17 @@ mod tests {
             },
             GenerateCommand::Psk { json: true },
         ] {
-            run_generate(command).expect("a generator must not need a configuration");
+            let mut sink = Vec::new();
+            generate_into(command, &mut sink).expect("a generator must not need a configuration");
+            let value: serde_json::Value =
+                serde_json::from_slice(&sink).expect("json generator must emit one JSON value");
+            assert!(
+                value.get("uuids").is_some()
+                    || value.get("privateKey").is_some()
+                    || value.get("shortIds").is_some()
+                    || value.get("psk").is_some(),
+                "unexpected generator payload: {value}"
+            );
         }
     }
 }

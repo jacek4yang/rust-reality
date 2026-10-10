@@ -24,6 +24,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 mod bench;
 mod check;
 mod checks;
+mod ci;
 mod deploy;
 mod docs;
 mod doctor;
@@ -105,6 +106,11 @@ enum Command {
     Deploy {
         #[command(subcommand)]
         command: DeployCommand,
+    },
+    /// CI helpers (Actions shell parity; no repository Python scripts).
+    Ci {
+        #[command(subcommand)]
+        command: CiCommand,
     },
 }
 
@@ -429,6 +435,10 @@ enum BenchCommand {
         #[arg(long)]
         evidence: PathBuf,
     },
+    /// Minutes-scale single-fault stability reproduction (no four-cell QEMU).
+    StabilityRepro(bench::stability::repro::Plan),
+    /// Merge per-cell `stability-run --cell` outputs into one identity-bound bundle.
+    StabilityMergeCells(bench::stability::merge::Plan),
     /// List the benchmark suites and the legacy scripts they supersede.
     List,
     /// Validate the benchmark environment (tools, host lock, workspace, ports).
@@ -1127,6 +1137,15 @@ enum RepoCommand {
     Check,
 }
 
+#[derive(Subcommand)]
+enum CiCommand {
+    /// Run one Actions-style script with bash `-e`/`pipefail` (ADR 0044).
+    GhaShell {
+        /// Path to the temporary Actions `run` script (`{0}`).
+        script: PathBuf,
+    },
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let repo = cli.repo.unwrap_or_else(default_repo_root);
@@ -1207,6 +1226,7 @@ fn main() -> ExitCode {
                 }
             }
         },
+        Command::Ci { command } => run_ci(command),
         Command::Check {
             all,
             output,
@@ -1223,6 +1243,22 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+    }
+}
+
+/// Dispatches a `cargo-dev ci` subcommand.
+fn run_ci(command: CiCommand) -> ExitCode {
+    match command {
+        CiCommand::GhaShell { script } => match ci::run_gha_shell(&script) {
+            Ok(status) => {
+                let code = ci::shell_exit_code(status);
+                ExitCode::from(u8::try_from(code).unwrap_or(1))
+            }
+            Err(error) => {
+                eprintln!("ci gha-shell: {error}");
+                ExitCode::FAILURE
+            }
+        },
     }
 }
 
@@ -1653,6 +1689,20 @@ fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 }
             }
         }
+        BenchCommand::StabilityRepro(plan) => match bench::stability::repro::run(plan) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("bench stability-repro: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        BenchCommand::StabilityMergeCells(plan) => match bench::stability::merge::run(plan) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("bench stability-merge-cells: {error}");
+                ExitCode::FAILURE
+            }
+        },
         BenchCommand::ShapeProxy {
             listen_port,
             upstream_port,

@@ -39,7 +39,9 @@ jobs:
       CARGO_TERM_COLOR: never
     defaults:
       run:
-        shell: python3 -c "import subprocess,sys; sys.exit(subprocess.call(['bash','--noprofile','--norc','-e','-o','pipefail',sys.argv[1]], close_fds=True))" {0}
+        # Bash-native Actions shell (ADR 0044): no Python, no KeyboardInterrupt stacks.
+        # Typed local twin: `cargo-dev ci gha-shell`. No github.* in this field.
+        shell: bash --noprofile --norc -e -o pipefail {0}
     steps:
       - name: Check out the frozen source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
