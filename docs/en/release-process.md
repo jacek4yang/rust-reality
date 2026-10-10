@@ -98,8 +98,9 @@ VMs or completing a throughput benchmark is sufficient:
    half-close and cancellation contracts. Use explicit time inputs or controlled
    test-runtime time where supported. Do not shorten production deadlines,
    adjust clocks during product lifetimes, or replace these tests with a larger
-   connection count. Pre-start guest clock calibration binds the host schedule;
-   it must not accelerate any production deadline.
+   connection count. Pre-start guest clock calibration disables NTP, witnesses kvm-clock, and
+   bounds host/guest skew to the workload schedule (ADR 0049); it must not
+   accelerate any production deadline or warp guest time with `date --set`.
 7. **Reviewable verdict.** Retain every case and failure, raw samples, integrity
    receipts and a fail-closed audit against the criteria above. Fixture and
    evaluator code must be reviewable and validated; a hand-written success

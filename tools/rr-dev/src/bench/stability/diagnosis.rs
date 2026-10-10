@@ -54,6 +54,12 @@ pub fn classify(message: &str) -> Class {
         || lower.contains("duplicate or zero unix socket inode")
         || lower.contains("conflicting unix socket inode")
         || lower.contains("owned unix socket rows")
+        || lower.contains("guest clock is not bounded")
+        || lower.contains("missing guest clock setup")
+        || lower.contains("clock setup or ordering was substituted")
+        || lower.contains("guest clock setup did not complete")
+        || lower.contains("unexpected clock phase or clock mutation")
+        || lower.contains("clock receipts do not bind")
     {
         Class::B
     } else if lower.contains("deadline")
@@ -125,5 +131,19 @@ mod tests {
     fn ambiguous_product_signals_stay_class_a() {
         assert_eq!(classify("unexpected Handoff rejection"), Class::A);
         assert_eq!(classify("integrity transfer failed"), Class::A);
+    }
+
+    #[test]
+    fn guest_clock_bound_phrases_are_harness() {
+        assert_eq!(
+            classify("landing: guest clock is not bounded to the host workload schedule"),
+            Class::B
+        );
+        assert_eq!(
+            classify(
+                "handoff/ordinary: guest clock is not bounded to the host workload schedule; raw evidence and partial cell retained"
+            ),
+            Class::B
+        );
     }
 }

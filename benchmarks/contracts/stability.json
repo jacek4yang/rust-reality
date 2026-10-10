@@ -25,6 +25,7 @@
   ],
   "checkpoint_tolerance_ms": 2000,
   "clock_max_offset_ms": 250,
+  "clock_max_end_offset_ms": 1000,
   "clock_max_roundtrip_ms": 500,
   "clock_max_drift_ms": 50,
   "cycle_interval_ms": 183000,

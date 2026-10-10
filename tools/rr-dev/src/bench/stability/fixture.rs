@@ -401,6 +401,10 @@ impl Machines {
         let mut commands = Vec::new();
         let mut errors = Vec::new();
         if before {
+            // Disable NTP and witness kvm-clock. Do not `date --set`: warping
+            // REALTIME is unnecessary when kvm-clock already tracks the host and
+            // has been observed to let ordinary landing accumulate hundreds of ms
+            // of skew under parallel hosted QEMU (ADR 0049).
             for step in 0..2 {
                 let started = collect::unix_ms()?;
                 let argv = if step == 0 {
@@ -408,7 +412,7 @@ impl Machines {
                         .map(str::to_owned)
                         .to_vec()
                 } else {
-                    clock::set_argv(started)
+                    clock::clocksource_argv()
                 };
                 let outcome = self
                     .ssh_channel(

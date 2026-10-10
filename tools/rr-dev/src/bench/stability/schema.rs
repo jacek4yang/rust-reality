@@ -21,6 +21,7 @@ pub struct Contract {
     pub checkpoint_offsets_ms: Vec<u64>,
     pub checkpoint_tolerance_ms: u64,
     pub clock_max_offset_ms: u64,
+    pub clock_max_end_offset_ms: u64,
     pub clock_max_roundtrip_ms: u64,
     pub clock_max_drift_ms: u64,
     pub cycle_interval_ms: u64,

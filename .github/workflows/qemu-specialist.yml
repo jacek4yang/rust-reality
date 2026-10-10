@@ -369,6 +369,7 @@ jobs:
           name: hosted-qemu-diagnostics-${{ env.HEAD_SHA }}-${{ env.CELL_SLUG }}
           path: |
             ${{ runner.temp }}/rr-cloud-cell/**/*clock-transport*.log
+            ${{ runner.temp }}/rr-cloud-cell/**/*clock-*.json
             ${{ runner.temp }}/rr-cloud-cell/**/*terminal*.json
             ${{ runner.temp }}/rr-cloud-cell/**/cell-diagnosis.json
             ${{ runner.temp }}/rr-cloud-cell/cells-summary.json

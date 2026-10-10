@@ -73,8 +73,8 @@ soak 就被跳过或改为可选。
 6. **时间边界。** 保留相关 replay/TTL、generation/credential 退休、共享不活动、
    write-stall、half-close 与取消合约的确定性测试。在支持处使用显式时间输入
    或受控测试 runtime 时钟；不得缩短生产 deadline、在产品生命周期内调整时钟，
-   或用更多连接次数替代这些测试。启动前的客体时钟校准用于绑定主机时间表，
-   不得加速任何生产期限。
+   或用更多连接次数替代这些测试。启动前的客体时钟校准关闭 NTP、核验 kvm-clock，并将主客时钟偏差约束在工作负载时间表内（ADR 0049）；
+   不得加速任何生产期限，也不得用 `date --set` 改写客体墙上时间。
 7. **可审查判定。** 保留全部用例及失败、原始样本、完整性回执和按上述条件执行的
    fail-closed 审计。fixture 与 evaluator 源码必须可审查且经过验证；手写 success
    Boolean 不是证据。缺失用例仍标记未执行。范围使用 `LOCAL_QEMU` 或 `LOCAL_KVM`，
