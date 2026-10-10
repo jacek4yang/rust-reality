@@ -344,8 +344,7 @@ pub fn run(plan: &Plan) -> Result<(), String> {
         }
         (None, true) => {
             return Err(
-                "stability-merge-cells requires --cells-root or at least one --cell-dir"
-                    .to_owned(),
+                "stability-merge-cells requires --cells-root or at least one --cell-dir".to_owned(),
             );
         }
         (None, false) => plan.cell_dirs.clone(),

@@ -1072,7 +1072,6 @@ fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-
 fn write_cell_matrix_marker(
     root: &Path,
     selected: &[String],
