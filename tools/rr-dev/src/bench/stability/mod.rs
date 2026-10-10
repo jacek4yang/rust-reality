@@ -90,7 +90,8 @@ fn product_logs(
                     if ingress.is_some() {
                         return Err("repeated restart ingress action".to_owned());
                     }
-                    ingress = Some((action::restart_ingress(&value)?, value.completed_unix_ms));
+                    // Peer + ss census completion (not LINE-A action completion).
+                    ingress = Some(action::restart_ingress(&value)?);
                 } else if value.role == landing.name {
                     action::verify(&value, landing, cell, fault, contract)?;
                     if killed.is_some() {
@@ -128,6 +129,9 @@ fn product_logs(
             if acked_peer != peer {
                 return Err("restart census ACK peer differs from witnessed ingress".to_owned());
             }
+            // ADR 0041 / 0047: census command completion ≤ LANDING ACK completion.
+            // Do not use LINE-A action.completed_unix_ms — that includes the ACK
+            // publish wait for LANDING's accept reply and always post-dates ACK.
             if ack_completed < census_completed {
                 return Err("landing abort ACK predates LINE-A census".to_owned());
             }

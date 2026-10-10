@@ -45,3 +45,5 @@ pass: expected restart EPIPE still needs the witnessed peer and ACK-ordered
 kill. Harness races surface as explicit ACK/census errors instead of multi-hour
 vague INVALID. This does not claim the data path is bug-free and does not
 reintroduce TSan.
+
+Offline evaluation must order LANDING ACK completion against the LINE-A `ss` census command time, not the LINE-A action completion ([ADR 0047](0047-restart-ordering-uses-census-command-time.md)).

@@ -355,7 +355,13 @@ fn restart_ack_body(stdout: &str) -> Result<(String, String), String> {
 ///
 /// Begin receipts carry exactly two LINE-A commands: the `ss` census, then the
 /// ACK publish to LANDING. Correctness is the handshake, not a wall-clock hold.
-pub(super) fn restart_ingress(action: &Action) -> Result<String, String> {
+///
+/// Returns `(peer, census_completed_unix_ms)`. The census timestamp is the `ss`
+/// command completion — not the LINE-A action completion. Action completion
+/// includes waiting for LANDING's accept reply, so comparing LANDING ACK time
+/// against it falsely reports "landing abort ACK predates LINE-A census"
+/// (Frozen 38023074176 handoff cells).
+pub(super) fn restart_ingress(action: &Action) -> Result<(String, u64), String> {
     if action.name != "landing-restart"
         || !action.begin
         || action.role != "line-a"
@@ -365,15 +371,16 @@ pub(super) fn restart_ingress(action: &Action) -> Result<String, String> {
     }
     let output = command(&action.commands[0], &RESTART_INGRESS_COMMAND, action)?;
     let peer = restart_peer_from_census(output)?;
+    let census_completed = action.commands[0].completed_unix_ms;
     let ack = command(&action.commands[1], &RESTART_ACK_SEND_ARGV, action)?;
     let (acked_peer, boot) = restart_ack_body(ack)?;
     if acked_peer != peer || boot != action.boot_id {
         return Err("restart census ACK does not match the witnessed ingress".to_owned());
     }
-    if action.commands[1].started_unix_ms < action.commands[0].completed_unix_ms {
+    if action.commands[1].started_unix_ms < census_completed {
         return Err("restart census ACK predates its ingress census".to_owned());
     }
-    Ok(peer)
+    Ok((peer, census_completed))
 }
 
 /// LANDING may abort only after accepting exactly one matching census ACK.

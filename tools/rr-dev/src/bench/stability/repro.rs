@@ -137,11 +137,11 @@ pub fn run(plan: &Plan) -> Result<(), String> {
 
     let line_a = action::parse(&serde_json::to_vec(&valid_line_a()).unwrap())?;
     match action::restart_ingress(&line_a) {
-        Ok(peer) if peer == "127.0.0.1:43028" => {
+        Ok((peer, census_completed)) if peer == "127.0.0.1:43028" && census_completed == 109 => {
             cases.push(json!({"case":"valid-line-a-census-ack","result":"pass","class":null}));
         }
-        Ok(peer) => {
-            return Err(format!("unexpected valid census peer {peer}"));
+        Ok(other) => {
+            return Err(format!("unexpected valid census receipt {other:?}"));
         }
         Err(error) => {
             return Err(format!("valid LINE-A receipt must pass: {error}"));

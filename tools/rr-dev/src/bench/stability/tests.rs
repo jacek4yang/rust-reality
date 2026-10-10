@@ -1965,6 +1965,45 @@ fn restart_abort_is_ack_driven_not_sleep_held() {
 }
 
 #[test]
+fn restart_ordering_barrier_is_census_command_not_line_a_action() {
+    // Frozen 38023074176 handoff/ordinary receipts (unix_ms truncated):
+    // LINE-A ss census completed 6524; LINE-A action completed 6565 (includes
+    // waiting for LANDING accept reply); LANDING ACK completed 6527.
+    // ACK must be ordered against census command completion (6524), not action
+    // completion (6565) — otherwise a correct handshake fails Class B.
+    let line_a = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":6501,"completed_unix_ms":6565,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":null,"warm_tcp":true,"commands":[{
+        "argv":["ss","-Hnt","state","established","src","127.0.0.1","(","sport","=",":9444",")"],
+        "started_unix_ms":6501,"completed_unix_ms":6524,"exit_code":0,"stderr":"",
+        "stdout":"0 0 127.0.0.1:9444 127.0.0.1:40636
+"},{
+        "argv":["rr-restart-census-ack","send","192.0.2.2:19501"],
+        "started_unix_ms":6524,"completed_unix_ms":6565,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:40636
+fixture
+"}]});
+    let landing = json!({"role":"landing","boot_id":"landing-boot","started_unix_ms":6501,"completed_unix_ms":6528,
+        "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
+        "termination_signal":9,"warm_tcp":null,"commands":[{
+        "argv":["rr-restart-census-ack","receive","0.0.0.0:19501"],
+        "started_unix_ms":6501,"completed_unix_ms":6527,"exit_code":0,"stderr":"",
+        "stdout":"127.0.0.1:40636
+fixture
+"}]});
+    let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
+    let (peer, census_completed) = super::action::restart_ingress(&parse(&line_a)).unwrap();
+    let (acked_peer, ack_completed) = super::action::restart_ack(&parse(&landing)).unwrap();
+    assert_eq!(peer, "127.0.0.1:40636");
+    assert_eq!(acked_peer, peer);
+    assert_eq!(census_completed, 6524);
+    assert_eq!(ack_completed, 6527);
+    assert!(ack_completed >= census_completed);
+    // Document the false barrier that Frozen used before ADR 0047:
+    assert!(ack_completed < 6565);
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn restart_ingress_requires_one_exact_owned_connection_and_successful_census() {
     let value = json!({"role":"line-a","boot_id":"fixture","started_unix_ms":100,"completed_unix_ms":120,
@@ -1982,7 +2021,7 @@ fixture
     let parse = |v: &Value| super::action::parse(&serde_json::to_vec(v).unwrap()).unwrap();
     assert_eq!(
         super::action::restart_ingress(&parse(&value)).unwrap(),
-        "127.0.0.1:43028"
+        ("127.0.0.1:43028".to_owned(), 109)
     );
     let landing = json!({"role":"landing","boot_id":"landing-boot","started_unix_ms":100,"completed_unix_ms":119,
         "name":"landing-restart","begin":true,"error":null,"configuration_sha256":"a".repeat(64),
