@@ -164,16 +164,23 @@ mod tests {
     use super::*;
     use std::{
         fs,
+        io::Read,
         path::{Path, PathBuf},
-        process::{Command, Stdio},
+        process::{Child, Command, ExitStatus, Stdio},
         thread,
         time::{Duration, Instant},
     };
+
+    #[cfg(unix)]
+    use rustix::process::{Pid, Signal, kill_process_group};
 
     /// Poll interval while waiting for a semantic ready ACK (not a timing guess).
     const READY_POLL: Duration = Duration::from_millis(10);
     /// Bound for the child to publish its ready ACK after spawn.
     const READY_BOUND: Duration = Duration::from_secs(5);
+    /// Bound for cooperative SIGINT to reap the script leader before escalating.
+    #[cfg(unix)]
+    const INT_REAP_BOUND: Duration = Duration::from_secs(2);
 
     fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -216,6 +223,92 @@ mod tests {
         }
     }
 
+    /// Live member PIDs of `pgid` (Linux `/proc`), excluding the caller's view races.
+    #[cfg(unix)]
+    fn live_pids_in_process_group(pgid: u32) -> Vec<u32> {
+        let Ok(entries) = fs::read_dir("/proc") else {
+            return Vec::new();
+        };
+        let mut pids = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(pid_str) = name.to_str() else {
+                continue;
+            };
+            let Ok(member) = pid_str.parse::<u32>() else {
+                continue;
+            };
+            let Ok(stat) = fs::read_to_string(entry.path().join("stat")) else {
+                continue;
+            };
+            // `/proc/<pid>/stat`: `pid (comm) state ppid pgrp ...` — comm may contain
+            // spaces/parens, so locate the final `)` then take field index 4 (pgrp).
+            let Some(close) = stat.rfind(')') else {
+                continue;
+            };
+            let rest = stat[close + 1..].split_whitespace().collect::<Vec<_>>();
+            // after `)`: state ppid pgrp → indices 0,1,2
+            let Some(pgrp_str) = rest.get(2) else {
+                continue;
+            };
+            if pgrp_str.parse::<u32>().ok() == Some(pgid) {
+                pids.push(member);
+            }
+        }
+        pids.sort_unstable();
+        pids
+    }
+
+    /// SIGINT the owned group, escalate to SIGKILL on a bound, then reap pipes.
+    ///
+    /// `Child::wait_with_output` alone is unsafe here: a surviving `sleep` inherits
+    /// the piped stdout/stderr write ends and blocks the parent forever after the
+    /// bash leader exits (Class B hang on Actions stage-14 tools tests).
+    #[cfg(unix)]
+    fn interrupt_reap_script_group(mut child: Child) -> (ExitStatus, String) {
+        let pgid = Pid::from_child(&child);
+        let pgid_u32 = child.id();
+        let _ = kill_process_group(pgid, Signal::INT);
+
+        let deadline = Instant::now() + INT_REAP_BOUND;
+        let mut status = None;
+        while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(done)) => {
+                    status = Some(done);
+                    break;
+                }
+                Ok(None) => thread::sleep(READY_POLL),
+                Err(error) => panic!("try_wait after SIGINT: {error}"),
+            }
+        }
+
+        // Always SIGKILL the group: reaps `sleep` orphans that kept pipe write ends
+        // open after the leader exited (or never honored INT).
+        let _ = kill_process_group(pgid, Signal::KILL);
+        let _ = child.kill();
+
+        let status = match status {
+            Some(done) => done,
+            None => child.wait().expect("wait after SIGKILL"),
+        };
+
+        let mut err = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes);
+            err = String::from_utf8_lossy(&bytes).into_owned();
+        }
+
+        let leftovers = live_pids_in_process_group(pgid_u32);
+        assert!(
+            leftovers.is_empty(),
+            "process group {pgid_u32} still has live members after INT+KILL: {leftovers:?}; \
+             sleep orphans are forbidden"
+        );
+        (status, err)
+    }
+
     #[test]
     fn success_and_pipefail() {
         let (dir, script) = write_temp_script("#!/bin/bash\necho ok\n");
@@ -239,7 +332,7 @@ mod tests {
              # Arm INT before publishing readiness so SIGINT cannot race trap setup.\n\
              trap 'exit 130' INT\n\
              : >\"${RR_GHA_SHELL_READY}\"\n\
-             # Block until SIGINT; fixed sleep is not the readiness contract.\n\
+             # Long blocker proves group kill — correctness is INT/KILL+wait, not sleep end.\n\
              while :; do sleep 3600; done\n",
         );
         let ready = dir.join("ready.ack");
@@ -252,42 +345,40 @@ mod tests {
             .arg("pipefail")
             .arg(&script)
             .env("RR_GHA_SHELL_READY", &ready)
-            .stdout(Stdio::piped())
+            // stdout null avoids a second inherited write-end; stderr stays piped so
+            // KeyboardInterrupt/Traceback absence remains observable.
+            .stdout(Stdio::null())
             .stderr(Stdio::piped());
         command.process_group(0);
         let child = command.spawn().expect("spawn");
-        let pid = child.id();
         wait_for_ready_ack(&ready, READY_BOUND);
-        // `kill` may return non-zero on a process-group signal even when the
-        // leader receives INT (group members can race ESRCH). Child exit is
-        // the contract; do not require kill(1) success.
-        let _ = Command::new("kill")
-            .args(["-INT", &format!("-{pid}")])
-            .status()
-            .expect("spawn kill");
-        let output = child.wait_with_output().expect("wait");
-        let err = String::from_utf8_lossy(&output.stderr);
+        let (status, err) = interrupt_reap_script_group(child);
         let _ = fs::remove_dir_all(&dir);
         assert!(
             !err.contains("KeyboardInterrupt") && !err.contains("Traceback"),
             "stderr was:\n{err}"
         );
         assert!(
-            !output.status.success(),
+            !status.success(),
             "expected interrupted failure after ready ACK, code={:?} stderr={err}",
-            output.status.code()
+            status.code()
         );
-        let code = shell_exit_code(output.status);
+        let code = shell_exit_code(status);
+        // Cooperative trap exits 130; escalation SIGKILL yields 128+9 when INT did not finish.
         assert!(
-            code == 130 || code == 128 + libc_sigint(),
-            "interrupted exit should be 130 or 128+SIGINT, got {code} stderr={err}"
+            code == 130 || code == 128 + libc_sigint() || code == 128 + libc_sigkill(),
+            "interrupted exit should be 130, 128+SIGINT, or 128+SIGKILL after escalate, got {code} stderr={err}"
         );
     }
 
     #[cfg(unix)]
     fn libc_sigint() -> i32 {
-        // SIGINT is 2 on Linux/Unix; keep the assertion portable without libc crate.
         2
+    }
+
+    #[cfg(unix)]
+    fn libc_sigkill() -> i32 {
+        9
     }
 
     #[cfg(unix)]
@@ -309,6 +400,45 @@ mod tests {
         assert!(
             result.is_err(),
             "missing ready ACK must fail closed rather than proceed to kill"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sigint_group_kill_reaps_sleep_orphan_holding_pipes() {
+        // Regression for Actions hang: leader can exit while `sleep` still holds
+        // inherited pipe write ends; parent must SIGKILL the pgid before draining.
+        let (dir, script) = write_temp_script(
+            "#!/bin/bash\n\
+             trap 'exit 130' INT\n\
+             : >\"${RR_GHA_SHELL_READY}\"\n\
+             # Start sleep then exit the leader without waiting — deliberate orphan.\n\
+             sleep 3600 &\n\
+             exit 130\n",
+        );
+        let ready = dir.join("ready.ack");
+        let mut command = Command::new("bash");
+        command
+            .arg("--noprofile")
+            .arg("--norc")
+            .arg("-e")
+            .arg("-o")
+            .arg("pipefail")
+            .arg(&script)
+            .env("RR_GHA_SHELL_READY", &ready)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command.process_group(0);
+        let child = command.spawn().expect("spawn");
+        let pgid_u32 = child.id();
+        wait_for_ready_ack(&ready, READY_BOUND);
+        // Leader may already be exiting; still run the same INT→KILL→assert path.
+        let (_status, _err) = interrupt_reap_script_group(child);
+        let leftovers = live_pids_in_process_group(pgid_u32);
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            leftovers.is_empty(),
+            "orphan sleep must be reaped with the process group, still live: {leftovers:?}"
         );
     }
 

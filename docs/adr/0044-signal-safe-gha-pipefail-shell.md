@@ -64,3 +64,11 @@ Interrupt proofs in `ci::` (and matching `process::` ownership tests) use an
 trap is armed; the parent waits on that file with a bounded diagnosable deadline
 before signalling the process group. Fixed `sleep` before `kill` is forbidden —
 that race produced empty-stderr false passes on hosted Actions.
+
+Interrupt proofs MUST use process-group semantics (`process_group(0)` +
+`kill_process_group` SIGINT, then SIGKILL escalate on a bound) and MUST assert
+the group has no live members afterward. `Child::wait_with_output` alone is
+forbidden for these proofs: a surviving descendant `sleep` inherits piped
+stdout/stderr write ends and blocks the parent forever after the bash leader
+exits (Actions CI run `38010061875` stage-14 hang). Correctness is group
+reaping, not shortening or lengthening the blocker sleep.
