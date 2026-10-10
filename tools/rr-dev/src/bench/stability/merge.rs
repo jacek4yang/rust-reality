@@ -175,6 +175,14 @@ fn ingest_cell(
             copy_file(root, out, name)?;
         }
     }
+    // Offline evaluation reads transfer `source` paths at the campaign root
+    // (payload-1.bin / payload-4.bin). Cell runners retain them; merge must
+    // too or the aggregate verdict is INVALID despite green cells (Class B).
+    for name in ["payload-1.bin", "payload-4.bin"] {
+        copy_file(root, out, name).map_err(|error| {
+            format!("missing cell artifacts for offline evaluation ({name}): {error}")
+        })?;
+    }
     for cell in &evidence.cells {
         if !expected.contains(&cell.name) {
             return Err(format!("unexpected cell {}", cell.name));
@@ -440,9 +448,95 @@ mod tests {
             "contract.json",
             "environment.json",
             "workload.json",
+            "payload-1.bin",
+            "payload-4.bin",
         ] {
             fs::write(root.join(name), name.as_bytes()).unwrap();
         }
+    }
+
+    #[test]
+    fn merge_fail_closed_without_payload_bins() {
+        let work = Workspace::create("stability-merge-no-payload").unwrap();
+        let only = work.join("only");
+        fs::create_dir(&only).unwrap();
+        for name in [
+            "source.tar",
+            "rust-reality",
+            "rr-dev",
+            "contract.json",
+            "environment.json",
+            "workload.json",
+        ] {
+            fs::write(only.join(name), name.as_bytes()).unwrap();
+        }
+        save(
+            &only.join("evidence.json"),
+            &Evidence {
+                schema: "rr-stability-evidence/v1".into(),
+                identity: minimal_identity(),
+                checks: vec![],
+                cells: vec![],
+            },
+        )
+        .unwrap();
+        let err = run(&Plan {
+            output: work.join("out"),
+            cell_dirs: vec![only],
+            cells_root: None,
+        })
+        .unwrap_err();
+        assert!(
+            err.contains("payload-1.bin") || err.contains("payload-4.bin"),
+            "{err}"
+        );
+        assert_eq!(classify(&err), Class::B);
+    }
+
+    #[test]
+    fn merge_retains_payload_bins_across_cells() {
+        let work = Workspace::create("stability-merge-payload-retain").unwrap();
+        let left = work.join("left");
+        let right = work.join("right");
+        fs::create_dir(&left).unwrap();
+        fs::create_dir(&right).unwrap();
+        write_identity_files(&left);
+        write_identity_files(&right);
+        // Distinct bytes would fail identity-style byte compare on second cell.
+        fs::write(left.join("payload-1.bin"), b"shared-payload-1").unwrap();
+        fs::write(left.join("payload-4.bin"), b"shared-payload-4").unwrap();
+        fs::write(right.join("payload-1.bin"), b"shared-payload-1").unwrap();
+        fs::write(right.join("payload-4.bin"), b"shared-payload-4").unwrap();
+        save(
+            &left.join("evidence.json"),
+            &Evidence {
+                schema: "rr-stability-evidence/v1".into(),
+                identity: minimal_identity(),
+                checks: vec![],
+                cells: vec![],
+            },
+        )
+        .unwrap();
+        save(
+            &right.join("evidence.json"),
+            &Evidence {
+                schema: "rr-stability-evidence/v1".into(),
+                identity: minimal_identity(),
+                checks: vec![],
+                cells: vec![],
+            },
+        )
+        .unwrap();
+        let out = work.join("out");
+        let err = run(&Plan {
+            output: out.clone(),
+            cell_dirs: vec![left, right],
+            cells_root: None,
+        })
+        .unwrap_err();
+        assert!(err.contains("missing cells"), "{err}");
+        assert_eq!(fs::read(out.join("payload-1.bin")).unwrap(), b"shared-payload-1");
+        assert_eq!(fs::read(out.join("payload-4.bin")).unwrap(), b"shared-payload-4");
     }
 
     #[test]
