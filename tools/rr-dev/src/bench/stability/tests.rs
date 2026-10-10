@@ -1108,7 +1108,10 @@ fn owned_unix_rows_skip_zero_inodes_and_identical_duplicates() {
     let owned = [(3, "socket:[100]".to_owned())].into_iter().collect();
     let retained = super::observation::owned_unix_rows(table, &owned).unwrap();
     assert!(retained.contains("03 100\n"), "{retained}");
-    assert!(!retained.contains(" 0\n") && !retained.contains(" 0 "), "{retained}");
+    assert!(
+        !retained.contains(" 0\n") && !retained.contains(" 0 "),
+        "{retained}"
+    );
     assert!(!retained.contains("101"), "{retained}");
     assert!(!retained.contains("private"), "{retained}");
     let conflicting = table.replace(
