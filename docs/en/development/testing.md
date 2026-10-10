@@ -119,7 +119,10 @@ stage's stdout/stderr objects; its stage list must match the frozen harness.
 Lifecycle checks bind the complete stdout from
 `cargo test --lib --locked -- --color never`. The contract names each required
 test; ignored, missing, duplicated or filtered cases cannot satisfy it, and the
-terminal totals must reproduce the observed case results.
+terminal totals must reproduce the observed case results. That stdout is a pure
+libtest receipt: unit tests MUST NOT emit JSON or other non-libtest records to
+the process stdout
+([ADR 0052](../../adr/0052-libtest-lifecycle-stdout-is-pure-receipt.md)).
 
 The schema and pure evaluator are fuzzed together. Adversarial tests cover
 leaked sockets, dirty/excessive pipes, missing permits, transient retention,

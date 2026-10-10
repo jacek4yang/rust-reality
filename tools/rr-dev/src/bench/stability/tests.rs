@@ -515,6 +515,13 @@ fn lifecycle_receipts_require_named_unfiltered_tests_and_complete_totals() {
         text.replace("finished in 0.01s", "finished in NaNs"),
         text.replace("0 failed", "-1 failed"),
         text.replace("\ntest result:", "\ntest duplicated ... ok\ntest result:"),
+        // Generator JSON (or any non-libtest line) on stdout must fail closed
+        // (ADR 0052); Frozen lifecycle binds unfiltered libtest stdout.
+        text.replacen(
+            "test ",
+            "{\n  \"uuids\": [\"00000000-0000-0000-0000-000000000000\"]\n}\ntest ",
+            1,
+        ),
     ] {
         assert!(super::test_receipt::parse(invalid.as_bytes()).is_err());
     }
