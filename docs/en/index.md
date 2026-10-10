@@ -56,6 +56,7 @@ English | [简体中文](../zh-CN/index.md)
 | --- | --- |
 | [Contributing guide](../../CONTRIBUTING.md) | How to set up, validate, and land a change. |
 | [Repository layout and change routing](development/repository-layout.md) | What each directory owns and where a given kind of change belongs. |
+| [Roadmap](development/roadmap.md) | Three qualified phases: server reliability, unified client, and transport evolution. |
 | [Development workflow](development/development-workflow.md) | Build, `cargo dev` tooling, the validation escalation ladder, and PR rules. |
 | [Cryptographic providers](development/crypto-providers.md) | Production providers, dev-only oracles, and dependency ledger reproduction. |
 | [Testing](development/testing.md) | The validation layers, focused runs, and the tooling gate. |
