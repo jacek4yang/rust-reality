@@ -535,8 +535,14 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.contains("missing cells"), "{err}");
-        assert_eq!(fs::read(out.join("payload-1.bin")).unwrap(), b"shared-payload-1");
-        assert_eq!(fs::read(out.join("payload-4.bin")).unwrap(), b"shared-payload-4");
+        assert_eq!(
+            fs::read(out.join("payload-1.bin")).unwrap(),
+            b"shared-payload-1"
+        );
+        assert_eq!(
+            fs::read(out.join("payload-4.bin")).unwrap(),
+            b"shared-payload-4"
+        );
     }
 
     #[test]
