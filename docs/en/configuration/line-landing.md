@@ -203,8 +203,10 @@ lose:
 
 The landing sees traffic in the clear. It is a machine you control and trust;
 NXR is not protecting the traffic from the landing, it is protecting your
-egress IP from the public internet. When you need the landing itself to be
-unable to read the stream, that is [Handoff](handoff.md).
+egress IP from the public internet. When you want the private hop to carry
+client TLS ciphertext and move per-byte TLS/Vision work onto the landing —
+while accepting that the landing then holds the live session keys — that is
+[Handoff](handoff.md).
 
 ## Next
 

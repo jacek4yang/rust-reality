@@ -20,7 +20,7 @@
 | [出站](configuration/outbounds.md) | 两个内置出站，和你可以声明的三种。 |
 | [路由](configuration/routing.md) | 规则、匹配器、按用户区分的策略，以及 geo 数据。 |
 | [线路节点与落地节点](configuration/line-landing.md) | 两台机器，让客户端连的 IP 不是流量出去的 IP。 |
-| [Handoff](configuration/handoff.md) | 同样的拓扑，但落地节点读不了它转发的东西。 |
+| [Handoff](configuration/handoff.md) | 同样的拓扑；线路节点变成薄的密文 relay，落地节点持有 TLS 会话。 |
 | [多落地节点](configuration/multi-landing.md) | 多个出口，按用户选。 |
 | [DNS 与网络](configuration/dns-and-network.md) | 解析器、缓存，以及出站地址族策略。 |
 | [运行时与资源](configuration/runtime-and-resources.md) | 机器姿态、推导出的上限，以及什么时候钉住才正当。 |

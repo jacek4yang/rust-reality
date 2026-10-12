@@ -2,34 +2,49 @@
 
 English | [简体中文](../../zh-CN/configuration/handoff.md)
 
-The same two-machine topology as [line and landing](line-landing.md), with one
-difference: the landing cannot read what it forwards.
+The same two-machine topology as [line and landing](line-landing.md), with a
+different ownership of the live TLS session after the transfer.
 
 ## What it changes
 
-With NXR, the line node terminates the client's session, then relays plaintext
-to the landing. The landing sees everything.
+With NXR, the line node terminates the client's session, then relays the
+authenticated flow as plaintext to the landing. The landing sees everything
+and dials the destination. Session keys never leave the line node.
 
-With Handoff, the line node terminates the client's *handshake*, then hands the
-whole live TLS session to the landing — sealed. The landing forwards ciphertext
-it holds no key for, and the line node drops out of the path entirely.
+With Handoff, the line node terminates the client's *handshake*, finishes
+VLESS decode and routing, then transfers the whole live TLS session to the
+landing in one sealed message — traffic keys, record sequences, cipher suite,
+routing decision, and pending buffers. After a successful transfer:
+
+- the **landing** reconstructs the TLS 1.3 record layers, holds the session
+  keys, dials the destination, and runs the standard Vision relay;
+- the **line node** becomes a thin raw relay: it splices client TLS ciphertext
+  against the handoff socket in both directions and never touches TLS or Vision
+  state for that session again.
 
 | | NXR | Handoff |
 | --- | --- | --- |
-| landing can read the stream | yes | **no** |
-| line node after transfer | relays for the connection's life | nothing |
-| entry-side memory per connection | a relay | none once transferred |
-| landing must be trusted with content | yes | no |
+| landing can read the stream | yes | **yes** (holds transferred session keys) |
+| line node after transfer | relays plaintext for the connection's life | thin raw ciphertext splice (no TLS/Vision) |
+| LINE↔LANDING hop content | plaintext of the authenticated flow | client TLS ciphertext |
+| where session keys live after setup | line node only | **landing** (its memory is part of the secrecy boundary) |
+| landing must be trusted with content | yes | yes |
 
 Two consequences follow, and both are worth having:
 
-**The landing is no longer a place traffic can be read.** If the landing is
-seized, hosted somewhere you do not fully trust, or shared, it forwards bytes
-it cannot interpret.
+**Per-byte TLS/Vision work moves to the landing.** After the one-time transfer
+the line node's steady state is a splice pump, not AEAD or Vision. That is
+edge-compute migration: the public line node sheds crypto CPU when a stronger
+private landing is available. Measured evidence lives in
+[performance.md](../performance.md#handoff-line-node-offload-measured-single-host).
 
-**The line node stops being a bottleneck.** After the transfer it holds no
-buffers and no relay task for that connection, so its memory and CPU do not
-scale with how much data flows.
+**The private hop carries ciphertext, not NXR plaintext.** Observers of the
+LINE↔LANDING link see TLS record sizes and timing, not payload. That does
+*not* mean the landing cannot read the stream — it holds the live session
+keys and is inside the session's secrecy boundary. See
+[architecture.md](../architecture.md#handoff-session-transfer),
+[protocol.md](../protocol.md#handoff-the-internal-session-transfer-hop), and
+[threat-model.md](../threat-model.md#handoff-boundary).
 
 ## What it costs
 
@@ -180,14 +195,25 @@ connection is dropped by any of them.
 
 ## Choosing between NXR and Handoff
 
-Use **NXR** when the landing is a machine you control as fully as the line
-node, and you would rather have the simpler thing.
+Use **NXR** when any of these is true:
+
+- the landing is a machine you control as fully as the line node, and you
+  would rather have the simpler hop;
+- session keys must never leave the line node (NXR transfers no key material;
+  the private hop then carries plaintext after its one-time authentication).
 
 Use **Handoff** when any of these is true:
 
-- the landing is hosted somewhere you do not fully trust,
-- the line node is small and you do not want its memory scaling with traffic,
-- you want the property that a seized landing yields nothing readable.
+- the public line node is CPU-constrained and a stronger private landing can
+  absorb per-byte TLS/Vision work;
+- you want the LINE↔LANDING hop to carry client TLS ciphertext rather than
+  NXR plaintext.
+
+Do **not** choose Handoff because you distrust the landing's ability to read
+content. After a successful transfer the landing holds the live session keys
+and can read the stream; a seized landing is inside the secrecy boundary.
+Both topologies still require a firewall-restricted landing listener and a
+landing you trust with the destinations it dials.
 
 Both topologies are otherwise identical to operate, and the entry node's
 configuration differs by one outbound `type` and one extra key.

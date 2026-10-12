@@ -20,7 +20,7 @@ English | [简体中文](../zh-CN/index.md)
 | [Outbounds](configuration/outbounds.md) | The two built-in outbounds and the three you can declare. |
 | [Routing](configuration/routing.md) | Rules, matchers, per-user policies, and geo data. |
 | [Line and landing nodes](configuration/line-landing.md) | Two machines, so the IP clients reach is not the IP traffic leaves from. |
-| [Handoff](configuration/handoff.md) | The same topology, with a landing that cannot read what it forwards. |
+| [Handoff](configuration/handoff.md) | The same topology; LINE becomes a thin ciphertext relay and LANDING owns the TLS session. |
 | [Multiple landings](configuration/multi-landing.md) | Several exits, chosen per user. |
 | [DNS and network](configuration/dns-and-network.md) | Resolvers, caching, and outbound address-family policy. |
 | [Runtime and resources](configuration/runtime-and-resources.md) | Machine posture, derived limits, and when pinning is justified. |
