@@ -4,22 +4,55 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-10-17
+
+TLS 1.3 KeyUpdate, Handoff continuation-state v2, and diagnostic observability
+for LINE→LANDING failures. Configuration for ordinary VLESS/REALITY/Vision
+and NXR remains compatible. **Handoff is not a mixed-generation upgrade:**
+LINE and LANDING must share continuation-state version 2; mixed pairs reject
+transfer. See [Handoff deploying and rolling back](docs/en/configuration/handoff.md#deploying-and-rolling-back-the-current-contract).
+
 ### Added
 
 - Authenticated TLS 1.3 application sessions now process peer KeyUpdate messages
   and rotate traffic keys before their confidentiality limits.
+- Production-safe, weak read-only transport telemetry and warm-pool dial-failure
+  attribution (observer path; no hot-path retune). Staged failure classification
+  and a diagnostic harness for intermittent LINE→LANDING connection failures
+  (#253 lab attribution H1–H4).
 
 ### Changed
 
 - Handoff continuation state is now version 2 so current traffic secrets and a
   pending KeyUpdate response survive transfer. Upgrade LINE and LANDING
-  together; mixed continuation-state versions reject Handoff.
+  together; mixed continuation-state versions reject Handoff. Operator upgrade
+  and rollback require a coordinated drain of both ends before reopening
+  admission.
+- Bilingual README and Handoff operator docs align LINE thin-relay / LANDING
+  key-ownership wording with the current architecture.
 
 ### Fixed
 
 - Incomplete TLS record writes permanently invalidate the write direction.
   Cancellation, socket errors, and timeouts cannot replay ambiguous ciphertext
   or export it as valid Handoff state.
+- KeyUpdate write hardening on the authenticated path (integrated with upstream
+  TLS 1.3 KeyUpdate support).
+
+### Security
+
+- Bump production `rustls` from 0.23.45 to 0.23.46 for the advisory gate; fuzz
+  and tools lockfiles stay aligned. Audit and deny gates remain enabled.
+
+### Known open (not fixed by this release)
+
+- **#253:** Laboratory H1–H4 discriminators map failure stages; the production
+  intermittent LINE→LANDING root cause remains **NOT_PROVEN**. No warm-pool or
+  hot-path retune ships in this release.
+- **#261 / #264:** Quantitative Outcome B on current main does not prove a
+  live-object leak; historical PSS slope failures are consistent with free-page
+  high-water / ADR 0034 contract-drift diagnostics. Resource thresholds are
+  **unchanged**. Issues stay open for owner review.
 
 ## [2.0.2] - 2026-10-11
 

@@ -83,7 +83,7 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
-v2.0.2 retains these tables as historical comparison references. They are not
+v2.0.3 retains these tables as historical comparison references. They are not
 new v2 measurements or production Internet performance claims. Current provider
 decisions and their evidence limits are recorded in
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md).
