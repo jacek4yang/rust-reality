@@ -511,21 +511,25 @@ No event carries a target, an SNI value, a UUID, a key, or any payload.
 
 ## Shared client wire boundary
 
-The VLESS module also exposes client-side `encode_vision_tcp_request` and
+The VLESS module exposes client-side `encode_vision_tcp_request` and
 `decode_response` over the same `UserId`, `Destination`, and Addons model as
-the server. These are allocation-free wire operations, not a client listener
-or an enabled client role. The caller owns buffers, connection establishment,
-deadlines, and cancellation. Request validation is atomic with respect to the
-output buffer; response parsing borrows the header and preserves all trailing
-application bytes.
+the server. These are allocation-free wire operations: the caller owns buffers,
+connection establishment, deadlines, and cancellation. Request validation is
+atomic with respect to the output buffer; response parsing borrows the header
+and preserves all trailing application bytes.
 
 A VLESS response contains a version and a length-prefixed Addons protobuf.
 Its second byte is not an error status. A valid header alone must not be used
 as proof that an arbitrary peer reached the destination. Route selection and
 application-byte commit policy remain above the wire codec.
 
-Client candidate ownership is defined by `rr-session::ClientRace` and driven by
-`runtime::client::select_client_transport`: at most two authentication attempts,
-one overall deadline, one selected transport, and no detached loser. Both
-candidates stop before destination requests. See [ADR 0032](../adr/0032-client-candidates-stop-before-destination-open.md).
-These primitives are not yet wired to a REALITY client handshake or local inbound.
+`role: "client"` wires these codecs to a REALITY client handshake, Vision
+framing (including Continue), and loopback SOCKS5 / HTTP CONNECT inbounds.
+Multi-LINE groups use sticky primary + hedge selection. Client candidate
+ownership is defined by `rr-session::ClientRace` and driven by
+`runtime::client::select_client_transport` / the client `LineGroup` path: at
+most two authentication attempts, one overall deadline, one selected transport,
+and no detached loser. Both candidates stop before destination requests. There
+is no mid-session migration and no request replay. See
+[ADR 0032](../adr/0032-client-candidates-stop-before-destination-open.md) and
+[client configuration](configuration/client.md).

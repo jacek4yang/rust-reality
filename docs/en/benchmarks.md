@@ -433,9 +433,9 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
-## v2.0.4 release comparison evidence
+## v2.1.0 release comparison evidence
 
-v2.0.4 retains the historical comparator tables below with their original
+v2.1.0 retains the historical comparator tables below with their original
 artifact and hardware attribution. The X25519 decision is architectural
 consolidation at arithmetic parity; the cover-class change measures cache
 classification, not a new CPU speedup. Provider and worker decisions are final

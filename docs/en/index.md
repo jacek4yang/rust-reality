@@ -15,6 +15,7 @@ English | [简体中文](../zh-CN/index.md)
 | Document | Purpose |
 | --- | --- |
 | [Standalone node](configuration/standalone.md) | Build a single-node configuration one decision at a time. |
+| [Client role](configuration/client.md) | Local SOCKS5 / HTTP CONNECT client to an entry. |
 | [Users and credentials](configuration/users-and-credentials.md) | What to generate, which half goes where, how to rotate it. |
 | [Cover targets](configuration/cover-targets.md) | Choosing and validating the host this server impersonates. |
 | [Outbounds](configuration/outbounds.md) | The two built-in outbounds and the three you can declare. |

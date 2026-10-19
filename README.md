@@ -83,7 +83,7 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
-v2.0.4 retains these tables as historical comparison references. They are not
+v2.1.0 retains these tables as historical comparison references. They are not
 new v2 measurements or production Internet performance claims. Current provider
 decisions and their evidence limits are recorded in
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md).
@@ -320,6 +320,9 @@ One strict JSON file. The first field decides the shape of the rest:
   routing.
 - **`role: "landing"`** — a hidden node behind a firewall, reachable only from
   an entry node, whose IP is what destinations see.
+- **`role: "client"`** — a local loopback node: SOCKS5 and/or HTTP CONNECT
+  inbound, REALITY LINEs to an entry, optional multi-LINE sticky+hedge
+  selection (ADR 0032). Not a public listener.
 
 Unknown fields, unknown enum values, duplicate keys, dangling references, and
 reused key material are all rejected before a listener is bound, with the

@@ -64,11 +64,15 @@ The first field decides the shape of everything after it:
 - **`landing`** — a hidden node. It accepts one internal protocol from an
   entry node and dials the destination. It has no users, no REALITY identity,
   and no routing, because it makes none of those decisions.
+- **`client`** — a local loopback node. It accepts SOCKS5 and/or HTTP CONNECT,
+  authenticates outbound to an entry, and never holds a public REALITY
+  identity. See [client](client.md).
 
-A field belonging to the other role is rejected by name. There is no
-configuration that is both, on purpose: the whole point of splitting them is
-to keep a burnable public IP away from a clean egress IP, and one process
-holding both defeats it.
+A field belonging to another role is rejected by name. There is no
+configuration that mixes `entry` and `landing` on purpose: the whole point of
+splitting them is to keep a burnable public IP away from a clean egress IP,
+and one process holding both defeats it. The client role is a separate local
+process shape, not a combined public listener.
 
 ## Names, and where they come from
 
@@ -193,6 +197,7 @@ never moves an established session onto a new routing table.
 | you want to | page |
 | --- | --- |
 | build a single-node config field by field | [standalone](standalone.md) |
+| run a local SOCKS5 / HTTP CONNECT client | [client](client.md) |
 | add users, rotate keys, know what to share | [users and credentials](users-and-credentials.md) |
 | pick or validate a cover target | [cover targets](cover-targets.md) |
 | send traffic somewhere other than out | [outbounds](outbounds.md) |

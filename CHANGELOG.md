@@ -4,6 +4,49 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-18
+
+Feature release: unified **VLESS + REALITY + Vision client** (`role: "client"`).
+SOCKS5 and HTTP CONNECT (HTTPS_PROXY, CONNECT-only) loopback inbounds, single-
+and multi-LINE groups with sticky primary + hedge selection, and health that
+trips after repeated authentication faults for **new** sessions only. No mid-
+session migration and no request replay (ADR 0032). Server entry/landing
+behavior, NXR, and Handoff continuation-state v2 are unchanged. This release
+makes **no measured performance improvement claim**; historical comparator
+tables remain reference evidence from prior publications.
+
+### Added
+
+- **`role: "client"`** local node: loopback SOCKS5 (default) and HTTP CONNECT
+  inbounds; REALITY-authenticated LINEs to an entry; optional `lineGroups` and
+  `selection` (hedge / timeout) ([#295](https://github.com/jacek4yang/rust-reality/pull/295)–[#299](https://github.com/jacek4yang/rust-reality/pull/299)).
+- Live-process E2E gates: `client_socks5_e2e`, `client_http_connect_e2e`,
+  `client_multi_line_e2e` (curl → client → entry → origin).
+- Native qualification step for the unified-client live-process E2E suite on
+  the exact proposed source.
+
+### Changed
+
+- Configuration role vocabulary is now `entry` | `landing` | `client`.
+- Bilingual README / architecture / configuration docs describe the client
+  role; historical benchmark tables are retained under the v2.1.0 heading
+  without new marketing claims.
+
+### Known open (not fixed by this release)
+
+- **#253:** Intermittent LINE→LANDING `ECONNREFUSED` field RCA remains
+  unresolved. Laboratory discriminators from v2.0.3 still apply; no hot-path
+  retune ships here.
+- **#291:** Historical rollback timer verification is production operations
+  and out of scope for this publication.
+
+### Performance note
+
+No new setup CPS or throughput campaign is claimed for v2.1.0. Published
+comparator tables remain the historical v2.0.x evidence set. Client path
+correctness is gated by live-process E2E and existing server Native / Frozen
+non-regression; do not read retained ratios as a client-vs-Xray product claim.
+
 ## [2.0.4] - 2026-10-18
 
 Maintenance release: pin the workspace to **Rust 1.99.1** and align

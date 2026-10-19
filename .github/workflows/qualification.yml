@@ -118,6 +118,13 @@ jobs:
             "$OPENSSL_BIN" version -a
             sha256sum "$XRAY_BIN" "$OPENSSL_BIN" tools/target/debug/rr-dev Cargo.lock tools/Cargo.lock
           } > "$Q/identities.txt"
+      - name: Unified client live-process E2E (SOCKS5, HTTP CONNECT, multi-LINE)
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          # Exact-head source live processes (entry + client + origin). Same SHA
+          # as the frozen candidate; exercises Role::Client end-to-end.
+          cargo test --locked --test client_socks5_e2e --test client_http_connect_e2e --test client_multi_line_e2e -- --nocapture
       - name: Unmodified Xray REALITY and Vision interoperability
         timeout-minutes: 5
         run: |
