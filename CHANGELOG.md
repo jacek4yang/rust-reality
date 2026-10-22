@@ -4,6 +4,27 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-22
+
+XUDP over NXR and Handoff. Direct, NXR, and Handoff all carry SOCKS5 UDP
+ASSOCIATE as Vision Mux datagrams. Guest-kernel qualification proves the
+landing emits the datagram. This release makes **no measured performance
+improvement claim** and does **not** claim native QUIC transport.
+
+### Added
+
+- XUDP egress over NXR and Handoff (ADR 0060). Block remains fail-closed.
+- Guest-kernel UDP qualification: four KVM cells (`nxr`/`handoff` ×
+  `ordinary`/`constrained`). The origin echo observes the landing listener
+  address `192.0.2.2`.
+
+### Changed
+
+- Server UDP egress is no longer Direct-only.
+
+Issues [#253](https://github.com/jacek4yang/rust-reality/issues/253) and
+[#291](https://github.com/jacek4yang/rust-reality/issues/291) remain open.
+
 ## [2.1.0] - 2026-10-19
 
 Feature release: unified **VLESS + REALITY + Vision client** (`role: "client"`)

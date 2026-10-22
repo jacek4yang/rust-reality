@@ -35,8 +35,8 @@ English | [简体中文](../zh-CN/index.md)
 | [CLI reference](cli.md) | Every command, option, default, output, signal, and exit behavior. |
 | [Threat model](threat-model.md) | Security goals, trust boundaries, NXR limitations, and non-goals. |
 | [Engineering and release program](release-process.md) | Evidence tiers, PR/tag lifecycle, canaries, rollback. |
-| [v2.1.0 acceptance summary](releases/v2.1.0-acceptance.md) | Final SHA scaffold; asymmetric interop; no reused gate tips. |
-| [Security policy](../../SECURITY.md) | Supported versions and private vulnerability reporting. |
+| [v2.2.0 acceptance summary](releases/v2.2.0-acceptance.md) | Final SHA scaffold; NXR/Handoff XUDP; no reused gate tips. |
+| [v2.1.0 acceptance summary](releases/v2.1.0-acceptance.md) | Historical. Direct-only UDP egress. |
 
 ## Design and evidence
 

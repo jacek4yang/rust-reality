@@ -114,6 +114,10 @@ const REQUIRED_PAIRS: &[(&str, &str)] = &[
         "docs/en/releases/v2.1.0-acceptance.md",
         "docs/zh-CN/releases/v2.1.0-acceptance.md",
     ),
+    (
+        "docs/en/releases/v2.2.0-acceptance.md",
+        "docs/zh-CN/releases/v2.2.0-acceptance.md",
+    ),
 ];
 
 /// Wording that must never read as current behaviour again.

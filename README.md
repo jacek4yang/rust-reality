@@ -38,6 +38,8 @@ Xray-compatible client
   [bounded landing compatibility](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md).
 - Xray-core 26.7.28-compatible public VLESS + REALITY + Vision data path,
   gated end to end with an unmodified Xray client.
+- v2.2.0 carries SOCKS5 UDP ASSOCIATE as XUDP over Direct, NXR, and Handoff.
+  This is not native QUIC, and it is not a measured speedup.
 - Authenticated REALITY setup uses a validated prebuilt cover profile when an
   exact conservative ClientHello class is ready, otherwise a warm live-cover
   TCP socket and then the ordinary cold live-cover path. Unauthenticated,
@@ -83,7 +85,7 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
-v2.1.0 retains these tables as historical comparison references. They are not
+v2.2.0 retains these tables as historical comparison references. They are not
 new v2 measurements or production Internet performance claims. Current provider
 decisions and their evidence limits are recorded in
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md).

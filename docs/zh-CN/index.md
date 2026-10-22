@@ -35,8 +35,8 @@
 | [命令行参考](cli.md) | 全部命令、选项、默认值、输出、信号和退出行为。 |
 | [威胁模型](threat-model.md) | 安全目标、信任边界、NXR 局限与非目标。 |
 | [工程与发布流程](release-process.md) | 证据等级、PR/tag 生命周期、金丝雀、回滚。 |
-| [v2.1.0 发布验收摘要](releases/v2.1.0-acceptance.md) | Final SHA 脚手架；非对称互操作；禁止复用旧 tip。 |
-| [安全策略](../../SECURITY.md) | 支持的版本与私密漏洞报告。 |
+| [v2.2.0 发布验收摘要](releases/v2.2.0-acceptance.md) | Final SHA 脚手架；NXR/Handoff XUDP；禁止复用旧 tip。 |
+| [v2.1.0 发布验收摘要](releases/v2.1.0-acceptance.md) | 历史记录。当时 UDP 出站仅 Direct。 |
 
 ## 设计与证据
 

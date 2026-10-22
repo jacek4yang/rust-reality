@@ -37,6 +37,8 @@
 - 已认证 REALITY 建连会在精确、保守的 ClientHello class 准备好时使用已验证的
   prebuilt cover profile；否则依次使用 warm live-cover TCP 和普通 cold
   live-cover 路径。未认证、畸形、不支持及重放流量始终看到真实 cover。
+- v2.2.0 将 SOCKS5 UDP ASSOCIATE 作为 XUDP 承载于 Direct、NXR 与 Handoff。
+  这不是原生 QUIC，也不是已测量的加速。
 - 方向级 Vision Direct：每个方向在认证完成的瞬间就切换到 raw 内核 relay
   （优先 `splice`），分裂脑从结构上不可能发生。
 - 可选 Handoff 拓扑：线路机可以通过一条已认证的密封信道，把已接受会话的
@@ -69,7 +71,7 @@
 
 ## 与 Xray-core 的性能对比
 
-v2.1.0 将下表保留为历史对比参考，不把它们表述为新的 v2 测量或生产互联网性能。
+v2.2.0 将下表保留为历史对比参考，不把它们表述为新的 v2 测量或生产互联网性能。
 当前密码学实现选择及证据边界见
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md)。
 

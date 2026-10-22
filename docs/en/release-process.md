@@ -47,12 +47,14 @@ changes rerun package and official-artifact smoke tests.
 
 ### Tier B — stress and isolated multi-node qualification
 
-For the v2.1.0 candidate, track the filled tip and gate URLs in
-[v2.1.0 acceptance summary](releases/v2.1.0-acceptance.md). Fill Final SHA only
+For the v2.2.0 candidate, track the filled tip and gate URLs in
+[v2.2.0 acceptance summary](releases/v2.2.0-acceptance.md). Fill Final SHA only
 after exact-main CI / Security / Native / Frozen on **that** tip (do not reuse
-older gate runs). XUDP is Vision Mux datagram carriage — not native QUIC/MASQUE;
-server UDP egress is Direct-only; stock Xray Client→RR XUDP is required ingress;
-rust-reality Client→stock Xray Server is not required (ADR 0059). Issues
+older gate runs, including the qualification head that merged #322). XUDP is
+Vision Mux datagram carriage — not native QUIC/MASQUE; server UDP egress is
+Direct, NXR, or Handoff; Block fails closed; stock Xray Client→RR XUDP is
+required ingress; rust-reality Client→stock Xray Server is not required
+(ADR 0059). Issues
 [#253](https://github.com/jacek4yang/rust-reality/issues/253) and
 [#291](https://github.com/jacek4yang/rust-reality/issues/291) remain known open.
 

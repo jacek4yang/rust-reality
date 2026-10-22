@@ -36,9 +36,9 @@ soak 就被跳过或改为可选。
 
 ### B 层：压力与隔离多节点资格验证
 
-v2.1.0 候选请在 [v2.1.0 发布验收摘要](releases/v2.1.0-acceptance.md) 跟踪 tip 与门禁 URL。
-仅在 **该 tip** 上的 exact-main CI / Security / Native / Frozen 全绿后填写 Final SHA（禁止复用旧门禁）。
-XUDP 是 Vision Mux 数据报承载——不是原生 QUIC/MASQUE；服务端 UDP 出站仅 Direct；
+v2.2.0 候选请在 [v2.2.0 发布验收摘要](releases/v2.2.0-acceptance.md) 跟踪 tip 与门禁 URL。
+仅在 **该 tip** 上的 exact-main CI / Security / Native / Frozen 全绿后填写 Final SHA（禁止复用旧门禁，包括合入 #322 的资格 tip）。
+XUDP 是 Vision Mux 数据报承载——不是原生 QUIC/MASQUE；服务端 UDP 出站为 Direct、NXR 或 Handoff；Block 失败关闭；
 stock Xray Client→RR XUDP 为必需入向；rust-reality Client→stock Xray Server 不要求（ADR 0059）。
 [#253](https://github.com/jacek4yang/rust-reality/issues/253) 与
 [#291](https://github.com/jacek4yang/rust-reality/issues/291) 仍为已知未决。
