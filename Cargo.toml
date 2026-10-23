@@ -55,7 +55,7 @@ serde_path_to_error = { version = "0.1.20", default-features = false }
 # an `asm` feature here (unknown features are a hard error).
 sha2 = { version = "0.11.0", default-features = false, features = ["zeroize"] }
 subtle = { version = "2.6.1", default-features = false }
-tokio = { version = "1.52.3", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.53.3", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 uuid = { version = "1.24.0", default-features = false, features = ["std"] }
 zeroize = { version = "1.9.0", default-features = false, features = ["alloc", "derive"] }
@@ -112,7 +112,7 @@ x25519-dalek = { version = "3.0.0", default-features = false, features = ["preco
 allocation-counter = "0.8.1"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 ring = { version = "0.17.14", default-features = false }
-tokio = { version = "1.52.3", default-features = false, features = ["test-util", "rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }
+tokio = { version = "1.53.3", default-features = false, features = ["test-util", "rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }
 # Test-only genuine HTTP/3 over SOCKS5 UDP ASSOCIATE (PR Q2). Never linked into
 # the production binary; `cargo tree -e normal` must not show these.
 quinn = { version = "0.11.12", default-features = false, features = ["rustls-ring", "runtime-tokio", "log"] }
