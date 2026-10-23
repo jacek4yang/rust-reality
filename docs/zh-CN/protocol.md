@@ -37,7 +37,7 @@
   长度混淆，并支持 **Direct** 转换：当某方向完成认证并识别出内层 TLS 1.3
   应用数据后，该方向切换为 raw relay（优先 Linux `splice`），边界不变量见
   [architecture.zh-CN.md](architecture.md)。公网入站不支持纯 VLESS、
-  仅 TLS 的 VLESS、WebSocket、QUIC 或非 Vision flow。UDP 目标通过 **XUDP**（VLESS Mux `0x03` / `v1.mux.cool:666`）在 Vision 流上承载，支持 **Direct** 与 **NXR** 出站；见 [development/xudp.md](../en/development/xudp.md)。Handoff 的 UDP 仍失败关闭直至后续版本。
+  仅 TLS 的 VLESS、WebSocket、QUIC 或非 Vision flow。UDP 目标通过 **XUDP**（VLESS Mux `0x03` / `v1.mux.cool:666`）在 Vision 流上承载，支持 **Direct**、**NXR** 与 **Handoff** 出站（[ADR 0060](../adr/0060-xudp-over-nxr-and-handoff.md)）；见 [development/xudp.md](../en/development/xudp.md)。NXR/Handoff 以自身能力鉴权，不得静默回退到 Direct；Block 失败关闭。
 
 公网栈与 Xray-core 客户端线兼容；兼容性门禁见
 [benchmarks.zh-CN.md](benchmarks.md)。

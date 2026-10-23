@@ -536,5 +536,7 @@ is no mid-session migration and no request replay. See
 
 UDP destinations from the client SOCKS5 **UDP ASSOCIATE** path use **XUDP**
 (VLESS Mux `0x03` inside Vision) on the same committed LINE. Server egress is
-Direct-only; NXR/Handoff UDP fails closed. See
+**Direct**, **NXR**, or **Handoff**
+([ADR 0060](../adr/0060-xudp-over-nxr-and-handoff.md)); Block fails closed and
+there is no silent Direct fallback. See
 [XUDP and Vision UDP/443](development/xudp.md).

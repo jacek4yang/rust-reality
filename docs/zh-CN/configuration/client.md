@@ -33,6 +33,7 @@ REALITY 身份，也不得绑到非回环地址。
 
 同一 SOCKS5 监听亦接受 **UDP ASSOCIATE**。数据报经 **XUDP**（VLESS Mux `0x03` /
 Vision）在一条已提交的 LINE 上承载；不是第二套公网协议，也不是原生 QUIC。
-UDP/443 仅在 LINE 设置 `allowUdp443: true` 时允许。服务端 XUDP 出站仅
-**Direct**；NXR/Handoff 显式失败关闭。详见英文
+UDP/443 仅在 LINE 设置 `allowUdp443: true` 时允许。服务端 XUDP 出站为
+**Direct**、**NXR** 或 **Handoff**（[ADR 0060](../../adr/0060-xudp-over-nxr-and-handoff.md)）；
+Block 与不支持的出站失败关闭，且不得静默回退到 Direct。详见英文
 [XUDP and Vision UDP/443](../../en/development/xudp.md)。

@@ -47,8 +47,10 @@ framing; the association never migrates mid-session.
 
 UDP/443 is refused unless the LINE sets `allowUdp443: true` (stock
 `xtls-rprx-vision-udp443` policy). Wire Addons still advertise
-`xtls-rprx-vision`. Server egress for XUDP is **Direct only**; NXR and Handoff
-fail closed. See [XUDP and Vision UDP/443](../development/xudp.md).
+`xtls-rprx-vision`. Server egress for XUDP is **Direct**, **NXR**, or
+**Handoff** ([ADR 0060](../../adr/0060-xudp-over-nxr-and-handoff.md)); Block and
+unsupported outbounds fail closed with no silent Direct fallback. See
+[XUDP and Vision UDP/443](../development/xudp.md).
 
 ```json
 {
