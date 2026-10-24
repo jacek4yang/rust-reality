@@ -122,8 +122,10 @@ its memory is part of the session's secrecy boundary. The Handoff listener
 must be reachable only from the line nodes' addresses.
 
 The current framing is `HND1` with protocol version 1 and continuation-state
-version 2. Version-1 state is rejected, not converted. The deployment and drain
-boundary for upgrades and rollback is the [Handoff operator contract](configuration/handoff.md#deploying-and-rolling-back-the-current-contract).
+version 3 (explicit session kind, inbound tag, and sealed Handoff policy
+snapshot). Version-1 and version-2 state are rejected, not converted. The
+deployment and drain boundary for upgrades and rollback is the
+[Handoff operator contract](configuration/handoff.md#deploying-and-rolling-back-the-current-contract).
 
 The TCP connection may likewise be established in advance without changing
 Handoff wire bytes or authority. The first transfer byte ends a bounded

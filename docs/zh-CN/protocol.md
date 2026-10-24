@@ -89,8 +89,9 @@ TLS 密文。
 转移的目标应用路由策略，且持有活跃会话密钥，因此其内存属于会话保密边界的
 一部分。Handoff listener 必须只允许线路机的地址访问。
 
-当前使用 `HND1` 封装、协议版本 1 和续接状态版本 2。版本 1 的状态会被拒绝，
-不会转换。升级与回滚的部署和排空边界见 [Handoff 运维契约](configuration/handoff.md#部署与回滚当前契约)。
+当前使用 `HND1` 封装、协议版本 1 和续接状态版本 3（显式会话类型、入站标签和
+密封的 Handoff 策略快照）。版本 1 与版本 2 的状态会被拒绝，不会转换。升级与
+回滚的部署和排空边界见 [Handoff 运维契约](configuration/handoff.md#部署与回滚当前契约)。
 
 TCP 同样可以提前建立，且不改变 Handoff wire bytes 或权限。首个 transfer 字节
 结束有界零字节 idle 阶段并启动短 transfer 认证截止时间。每次 checkout 都密封

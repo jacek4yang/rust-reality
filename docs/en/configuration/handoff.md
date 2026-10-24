@@ -164,18 +164,27 @@ connection that fails after authentication rather than a validation error.
 ## Deploying and rolling back the current contract
 
 The current transfer uses `HND1` framing, protocol version **1**, and
-continuation-state version **2**. The framing version does not imply acceptance
-of version-1 state. Version 2 transfers each direction's current traffic secret
-and next record sequence, plus any pending KeyUpdate response. LANDING can then
-answer the request and derive later traffic generations. Version-1 state
-contained only derived keys and IVs and cannot provide that capability.
+continuation-state version **3**. The framing version does not imply acceptance
+of older state versions. Version 3 transfers each direction's current traffic
+secret and next record sequence, plus any pending KeyUpdate response, and adds
+an explicit session kind (TCP Vision or XUDP), an inbound tag, and a sealed
+Handoff policy snapshot so LANDING can authorize UDP destinations without
+LINE-side UDP ownership. LANDING can then answer KeyUpdate requests and derive
+later traffic generations.
+
+Older sealed blobs are rejected by this build, not converted:
+
+- Version 1 contained only derived keys and IVs and cannot retain KeyUpdate
+  state.
+- Version 2 transferred KeyUpdate-capable TCP secrets without session kind or
+  policy snapshot; this build does not silently reinterpret it as XUDP.
 
 There is one current parser, with no negotiation, downgrade, or conversion.
-A version-1 LINE cannot transfer to a version-2 LANDING. A version-2 LINE cannot
-transfer to a version-1 LANDING. The receiving side rejects a mismatched header
-before reading the body or connecting the destination. It closes without
-response bytes, so the affected client connection fails. Retired PSKs or
-private keys permit credential rotation only, not mixed state versions.
+A LINE and LANDING with mismatched continuation-state versions reject the
+transfer. The receiving side rejects a mismatched header before reading the
+body or connecting the destination. It closes without response bytes, so the
+affected client connection fails. Retired PSKs or private keys permit
+credential rotation only, not mixed state versions.
 
 For a contract-changing upgrade:
 
@@ -190,9 +199,9 @@ For a contract-changing upgrade:
 4. Qualify the exact binaries together, including requested and later KeyUpdate,
    before returning the cohort to service.
 
-Rollback crosses the same drain boundary. Stop new version-2 sessions and drain
+Rollback crosses the same drain boundary. Stop new version-3 sessions and drain
 or terminate them, then restore a matching earlier binary pair before reopening
-admission. An earlier binary cannot import version-2 state or take over a live
+admission. An earlier binary cannot import version-3 state or take over a live
 LANDING-owned session. Existing sessions continue only while their original
 owners remain running. Do not roll back one reachable endpoint independently.
 

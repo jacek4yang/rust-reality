@@ -4,9 +4,9 @@ English | [简体中文](docs/zh-CN/security.md)
 
 ## Supported code
 
-Security fixes are applied to the latest 1.x GitHub Release and the current
-`main` branch; older 1.x releases are not maintained unless a release notice
-says otherwise. Do not deploy an arbitrary development commit.
+Security fixes are applied to the latest 2.x GitHub Release and the current
+`main` branch; older 2.x and 1.x releases are not maintained unless a release
+notice says otherwise. Do not deploy an arbitrary development commit.
 
 ## Reporting
 
