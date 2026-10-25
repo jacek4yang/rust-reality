@@ -6,7 +6,7 @@
 //! routing correctness, routing cost, four deployment topologies, the complete
 //! one-leg netem matrix, and long-flow relay evidence. Routing probes, SOCKS
 //! throughput cells, and relay-log evidence live in [`super::deployment_probe`].
-//! Routing policy builders and geosite/geoip fixtures live in [`super::deployment_routing`].
+//! Routing correctness builders + section runner live in [`super::deployment_routing`].
 //! Transport / landing JSON mutations live in [`super::deployment_transport`].
 //! RTT / netem matrix orchestration lives in [`super::deployment_rtt`].
 //! Four-topology setup/throughput orchestration lives in [`super::deployment_topology`].
@@ -429,100 +429,7 @@ fn prepare_shared_fixture(state: &mut RunState<'_>) -> Result<SharedFixture, Str
 }
 
 fn run_routing_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result<(), String> {
-    let fixed_socks_port = state.port()?;
-    let server_port = state.port()?;
-    let socks_ports = [state.port()?, state.port()?, state.port()?, state.port()?];
-    state.spawn_helper(
-        "deployment-fixed-socks",
-        &[
-            "bench".to_owned(),
-            "socks-server".to_owned(),
-            "--port".to_owned(),
-            fixed_socks_port.to_string(),
-            "--fixed-target".to_owned(),
-            format!("127.0.0.1:{}", fixture.fixed_origin_port),
-        ],
-        "fixed-socks.log",
-        fixed_socks_port,
-    )?;
-    let uuids = generate_uuids(&state.rust, 4)?;
-    let generated = soak::generated_public_config(
-        &soak::PublicNodeSpec::standalone(
-            server_port,
-            &format!("127.0.0.1:{}", fixture.cover_port),
-        ),
-        &state.workspace,
-        "assets-routing-base",
-    )?;
-    let routing_assets = state.workspace.join("assets-routing");
-    write_routing_assets(&routing_assets)?;
-    let routing = routing_config(&RoutingConfigInput {
-        base: &generated.json,
-        uuids: &uuids,
-        origin_a_port: fixture.route_origin_port,
-        socks_b_port: fixed_socks_port,
-        blocked_port: 9666,
-        geosite_label: ROUTING_GEOSITE_LABEL,
-        assets: &routing_assets,
-    })?;
-    let server_config = state.workspace.join("routing-server.json");
-    soak::write_config(&server_config, &routing.json)?;
-    soak::check_config(&state.rust.path, &server_config)?;
-    let server = soak::spawn_rust(
-        "deployment-routing-server",
-        &state.rust,
-        &server_config,
-        &state.workspace,
-        &isolated_environment(),
-        &state.workspace.join("routing-server.log"),
-        server_port,
-    )?;
-    state.children.push(server);
-    for index in 0..4 {
-        let identity = RealityIdentity {
-            uuid: uuids[index].clone(),
-            short_id: routing.short_ids[index].clone(),
-            server_name: "localhost".to_owned(),
-            target: format!("127.0.0.1:{}", fixture.cover_port),
-        };
-        state.spawn_xray_client(
-            &format!("deployment-routing-client-{index}"),
-            server_port,
-            socks_ports[index],
-            &generated.public_key,
-            &identity,
-        )?;
-    }
-    let cases = route_cases(&RouteMatrixInput {
-        uuids: &uuids,
-        socks_ports: &socks_ports,
-        origin_a_port: fixture.route_origin_port,
-        origin_b_port: fixture.fixed_origin_port,
-        blocked_port: 9666,
-        sha_a: &fixture.sha_a,
-        sha_b: &fixture.sha_b,
-    })?;
-    let results = probe_routes(&cases);
-    state.run.write_jsonl(
-        "routing-correctness.jsonl",
-        &results
-            .iter()
-            .map(|result| result.to_json().to_compact_json())
-            .collect::<Vec<_>>(),
-    )?;
-    let summary = routing_summary(&results);
-    state
-        .run
-        .write_new("summary-routing.json", &summary.to_python_json())?;
-    if results.iter().all(|result| result.passed) {
-        Ok(())
-    } else {
-        Err(format!(
-            "deployment routing correctness failed {}/{} cases",
-            results.iter().filter(|result| !result.passed).count(),
-            results.len()
-        ))
-    }
+    super::deployment_routing::run_routing_section(state, fixture)
 }
 
 pub(crate) fn generate_uuids(binary: &Binary, count: usize) -> Result<Vec<String>, String> {
