@@ -1,12 +1,4 @@
-use std::{
-    error::Error,
-    fmt, io,
-    net::IpAddr,
-    ops::Range,
-    os::fd::{AsFd as _, BorrowedFd},
-    sync::Arc,
-    time::Duration,
-};
+use std::{error::Error, fmt, io, net::IpAddr, ops::Range, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -63,6 +55,10 @@ mod nested;
 #[cfg(feature = "fuzzing")]
 pub use nested::fuzz_nested_tls_header_prefix;
 pub(crate) use nested::{NestedRead, NestedRecordReader, NestedTlsDetector, PaddingDecision};
+
+mod abort;
+
+use abort::{AbortableSocket as _, DirectionAbortGuard, SocketAbortGuard};
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
 const MAX_REQUEST_BUFFER_SIZE: usize = MAX_REQUEST_HEADER_SIZE + MAX_PLAINTEXT_LEN;
@@ -1674,172 +1670,6 @@ struct SessionContext<'session> {
     timeout: Duration,
     handoff: &'session DirectHandoff,
     relay: &'session TcpRelay,
-}
-
-/// A session socket an abort guard can reset while it still borrows it.
-trait AbortableSocket {
-    /// Borrows the descriptor for the duration of the borrow of `self`.
-    fn abort_fd(&self) -> BorrowedFd<'_>;
-
-    /// Releases the socket without the graceful shutdown a normal drop performs.
-    ///
-    /// Tokio's `OwnedWriteHalf` shuts its direction down when dropped, which
-    /// puts a FIN on the wire *ahead* of the abortive close. The peer reads
-    /// that FIN as a clean end of stream and never observes the reset behind
-    /// it, so arming `SO_LINGER {on,0}` alone does not deliver the contract.
-    /// Every abort path therefore releases through this instead of dropping.
-    ///
-    /// Read halves and whole streams have nothing to suppress, so for them
-    /// this is an ordinary drop.
-    fn release_aborted(self);
-}
-
-impl AbortableSocket for TlsApplicationReader<OwnedReadHalf> {
-    fn abort_fd(&self) -> BorrowedFd<'_> {
-        self.fd()
-    }
-
-    fn release_aborted(self) {}
-}
-
-impl AbortableSocket for TlsApplicationWriter<OwnedWriteHalf> {
-    fn abort_fd(&self) -> BorrowedFd<'_> {
-        self.fd()
-    }
-
-    fn release_aborted(self) {
-        let (half, _records, _key_update_response_pending) = self.into_handoff_parts();
-        half.forget();
-    }
-}
-
-impl AbortableSocket for OwnedReadHalf {
-    fn abort_fd(&self) -> BorrowedFd<'_> {
-        self.as_ref().as_fd()
-    }
-
-    fn release_aborted(self) {}
-}
-
-impl AbortableSocket for OwnedWriteHalf {
-    fn abort_fd(&self) -> BorrowedFd<'_> {
-        self.as_ref().as_fd()
-    }
-
-    fn release_aborted(self) {
-        self.forget();
-    }
-}
-
-impl AbortableSocket for NestedRecordReader {
-    fn abort_fd(&self) -> BorrowedFd<'_> {
-        self.fd()
-    }
-
-    fn release_aborted(self) {}
-}
-
-impl AbortableSocket for TcpStream {
-    fn abort_fd(&self) -> BorrowedFd<'_> {
-        self.as_fd()
-    }
-
-    fn release_aborted(self) {}
-}
-
-/// Marks `socket` so its close delivers a reset instead of a FIN.
-///
-/// The caller holds a borrow, which is what proves the descriptor is still
-/// open and still the intended socket.
-fn arm_abort(socket: &impl AbortableSocket) {
-    let _ignored = rr_linux::socket::abort_linger(socket.abort_fd());
-}
-
-/// Resets one socket with `SO_LINGER {on,0}` unless it is disarmed.
-///
-/// Used where abort authority covers a single socket, or two sockets whose
-/// lifetimes differ — one guard each, both dropping before either closes.
-struct SocketAbortGuard<'socket, S: AbortableSocket> {
-    socket: &'socket S,
-    disarmed: bool,
-}
-
-impl<'socket, S: AbortableSocket> SocketAbortGuard<'socket, S> {
-    const fn new(socket: &'socket S) -> Self {
-        Self {
-            socket,
-            disarmed: false,
-        }
-    }
-
-    const fn disarm(&mut self) {
-        self.disarmed = true;
-    }
-}
-
-impl<S: AbortableSocket> Drop for SocketAbortGuard<'_, S> {
-    fn drop(&mut self) {
-        if !self.disarmed {
-            arm_abort(self.socket);
-        }
-    }
-}
-
-/// Resets both sockets of one relay direction unless it is disarmed —
-/// cancellation via `try_join`, shutdown abort, or any error path. An aborted
-/// transfer must be distinguishable from graceful completion: the peer
-/// observes a reset, never a clean short EOF that could make a truncated
-/// stream look complete. Graceful exits disarm the guard, preserving FIN and
-/// independent half-close.
-///
-/// # Why this holds the borrows rather than descriptor numbers
-///
-/// The guard used to hold captured descriptor *numbers*, so it could outlive
-/// the sockets it was meant to reset. When one direction finished before the
-/// other failed, it did exactly that: both marks returned `EBADF` and the peer
-/// received a clean FIN for a truncated transfer — the one outcome this type
-/// exists to prevent (#195).
-///
-/// Holding the borrows makes the invariant structural instead of a matter of
-/// drop-order discipline. A value cannot be moved, closed, or dropped while it
-/// is mutably borrowed, so an armed guard is *provably* resetting a live
-/// socket, and the borrow checker rejects any future edit that would hand a
-/// socket onward without disarming first. The direction's I/O runs through
-/// [`Self::parts_mut`], so the guard is the only owner of the borrows and
-/// nothing aliases them.
-struct DirectionAbortGuard<'sockets, C: AbortableSocket, D: AbortableSocket> {
-    client: &'sockets mut C,
-    destination: &'sockets mut D,
-    disarmed: bool,
-}
-
-impl<'sockets, C: AbortableSocket, D: AbortableSocket> DirectionAbortGuard<'sockets, C, D> {
-    const fn new(client: &'sockets mut C, destination: &'sockets mut D) -> Self {
-        Self {
-            client,
-            destination,
-            disarmed: false,
-        }
-    }
-
-    /// Lends both sockets to the direction's framed phase.
-    const fn parts_mut(&mut self) -> (&mut C, &mut D) {
-        (self.client, self.destination)
-    }
-
-    const fn disarm(&mut self) {
-        self.disarmed = true;
-    }
-}
-
-impl<C: AbortableSocket, D: AbortableSocket> Drop for DirectionAbortGuard<'_, C, D> {
-    fn drop(&mut self) {
-        if self.disarmed {
-            return;
-        }
-        arm_abort(self.client);
-        arm_abort(self.destination);
-    }
 }
 
 /// Owns the uplink sockets so the abort guard can only ever borrow live ones.
