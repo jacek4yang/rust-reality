@@ -3,7 +3,7 @@
 //! Owns the reviewed topo-a..d comparison section: standalone, NXR LINE+LANDING,
 //! SOCKS-outbound LINE, and stock Xray comparator, plus per-topology setup-rate
 //! and SOCKS throughput cells. Process lifecycle still rides on
-//! [`super::deployment::RunState`].
+//! [`super::deployment_state::RunState`].
 
 use std::time::Duration;
 
@@ -17,11 +17,12 @@ use crate::{
 };
 
 use super::deployment::{
-    RunState, SharedFixture, deployment_public_config, generate_uuids, isolated_environment,
-    setup_row_json, spawn_generated_rust,
+    SharedFixture, deployment_public_config, generate_uuids, isolated_environment, setup_row_json,
+    spawn_generated_rust,
 };
 use super::deployment_plan::ThroughputCell;
 use super::deployment_probe::{SocksThroughputPlan, run_socks_throughput};
+use super::deployment_state::RunState;
 use super::deployment_transport::{identity_for, landing_config, line_spec};
 use super::suites;
 

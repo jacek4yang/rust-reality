@@ -2,14 +2,14 @@
 //!
 //! Owns [`SharedFixture`] construction so section runners can share one prepared
 //! origin/cover topology. Process lifecycle still rides on
-//! [`super::deployment::RunState`].
+//! [`super::deployment_state::RunState`].
 
 use std::{collections::BTreeSet, io::Write as _, path::Path};
 
 use crate::hash;
 
-use super::deployment::RunState;
 use super::deployment_routing::write_routing_assets;
+use super::deployment_state::RunState;
 
 #[derive(Debug)]
 pub(crate) struct SharedFixture {

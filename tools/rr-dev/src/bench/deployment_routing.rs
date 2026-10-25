@@ -4,7 +4,7 @@
 //! four-user route-case matrix, and the live routing-correctness section runner.
 //! Plan dimensions stay in [`super::deployment_plan`]; probe execution helpers
 //! stay in [`super::deployment_probe`]. Process lifecycle still rides on
-//! [`super::deployment::RunState`].
+//! [`super::deployment_state::RunState`].
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -17,11 +17,12 @@ use crate::{
     perf::json_in::Value,
 };
 
-use super::deployment::{RunState, SharedFixture, generate_uuids, isolated_environment};
+use super::deployment::{SharedFixture, generate_uuids, isolated_environment};
 use super::deployment_json::{
     first_client, number, object, replace_clients, root_object, string, strings,
 };
 use super::deployment_probe::{RouteCase, RouteExpectation, probe_routes, routing_summary};
+use super::deployment_state::RunState;
 use super::suites;
 
 pub(crate) struct RoutingConfig {

@@ -2,7 +2,7 @@
 //!
 //! Owns the reviewed long-flow section: spawn LANDING+LINE, drive a large SOCKS
 //! download, and require splice-backend relay evidence from the LANDING log.
-//! Process lifecycle still rides on [`super::deployment::RunState`].
+//! Process lifecycle still rides on [`super::deployment_state::RunState`].
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -13,9 +13,10 @@ use crate::{
 };
 
 use super::deployment::{
-    RunState, SharedFixture, deployment_public_config, isolated_environment, spawn_generated_rust,
+    SharedFixture, deployment_public_config, isolated_environment, spawn_generated_rust,
 };
 use super::deployment_probe::{SocksThroughputPlan, relay_evidence, run_socks_throughput};
+use super::deployment_state::RunState;
 use super::deployment_transport::{identity_for, landing_config, line_spec};
 
 pub(crate) fn run_longflow_section(
