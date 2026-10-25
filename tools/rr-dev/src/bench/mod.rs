@@ -31,6 +31,7 @@ pub mod attribution;
 pub mod config;
 pub mod cover;
 pub mod deployment;
+pub mod deployment_cost;
 pub mod deployment_json;
 pub mod deployment_netns;
 pub mod deployment_plan;

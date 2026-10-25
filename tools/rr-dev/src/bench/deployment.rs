@@ -10,6 +10,7 @@
 //! Transport / landing JSON mutations live in [`super::deployment_transport`].
 //! RTT / netem matrix orchestration lives in [`super::deployment_rtt`].
 //! Four-topology setup/throughput orchestration lives in [`super::deployment_topology`].
+//! Routing-cost variant matrix lives in [`super::deployment_cost`].
 
 use std::{
     collections::BTreeSet,
@@ -287,152 +288,8 @@ fn execute_sections(state: &mut RunState<'_>) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-struct CostVariant {
-    label: &'static str,
-    uuids: usize,
-    rules: usize,
-    global_rules: usize,
-    strategy: &'static str,
-    domain_destination: bool,
-    with_ip: bool,
-}
-
-const COST_VARIANTS: [CostVariant; 5] = [
-    CostVariant {
-        label: "simple",
-        uuids: 1,
-        rules: 0,
-        global_rules: 0,
-        strategy: "AsIs",
-        domain_destination: false,
-        with_ip: false,
-    },
-    CostVariant {
-        label: "medium",
-        uuids: 100,
-        rules: 16,
-        global_rules: 4,
-        strategy: "AsIs",
-        domain_destination: false,
-        with_ip: true,
-    },
-    CostVariant {
-        label: "complex",
-        uuids: 1_000,
-        rules: 64,
-        global_rules: 8,
-        strategy: "AsIs",
-        domain_destination: false,
-        with_ip: true,
-    },
-    CostVariant {
-        label: "complex-ipifnonmatch",
-        uuids: 1_000,
-        rules: 64,
-        global_rules: 8,
-        strategy: "IPIfNonMatch",
-        domain_destination: true,
-        with_ip: true,
-    },
-    CostVariant {
-        label: "complex-ipondemand",
-        uuids: 1_000,
-        rules: 64,
-        global_rules: 8,
-        strategy: "IPOnDemand",
-        domain_destination: true,
-        with_ip: true,
-    },
-];
-
 fn run_cost_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Result<(), String> {
-    for variant in COST_VARIANTS {
-        let server_port = state.port()?;
-        let socks_port = state.port()?;
-        let uuids = generate_uuids(&state.rust, variant.uuids)?;
-        let generated = soak::generated_public_config(
-            &soak::PublicNodeSpec::standalone(
-                server_port,
-                &format!("127.0.0.1:{}", fixture.cover_port),
-            ),
-            &state.workspace,
-            &format!("assets-cost-{}", variant.label),
-        )?;
-        let json = scale_config(&ScaleConfigInput {
-            base: &generated.json,
-            uuids: &uuids,
-            rules: variant.rules,
-            global_rules: variant.global_rules,
-            with_ip: variant.with_ip,
-            strategy: variant.strategy,
-            assets: &state
-                .workspace
-                .join(&format!("assets-cost-{}", variant.label)),
-        })?;
-        let config_path = state
-            .workspace
-            .join(&format!("cost-{}.json", variant.label));
-        soak::write_config(&config_path, &json)?;
-        soak::check_config(&state.rust.path, &config_path)?;
-        let server = soak::spawn_rust(
-            &format!("deployment-cost-{}-server", variant.label),
-            &state.rust,
-            &config_path,
-            &state.workspace,
-            &isolated_environment(),
-            &state
-                .workspace
-                .join(&format!("cost-{}-server.log", variant.label)),
-            server_port,
-        )?;
-        state.children.push(server);
-        let identity = RealityIdentity {
-            uuid: uuids[0].clone(),
-            short_id: generated.short_id,
-            server_name: "localhost".to_owned(),
-            target: format!("127.0.0.1:{}", fixture.cover_port),
-        };
-        state.spawn_xray_client(
-            &format!("deployment-cost-{}-client", variant.label),
-            server_port,
-            socks_port,
-            &generated.public_key,
-            &identity,
-        )?;
-        let destination = if variant.domain_destination {
-            super::workload::Destination::Domain("localhost".to_owned())
-        } else {
-            super::workload::Destination::Loopback
-        };
-        if super::workload::connect_through(socks_port, &destination, fixture.route_origin_port)
-            .is_none()
-        {
-            return Err(format!(
-                "deployment cost {} warm-up did not reach the native origin",
-                variant.label
-            ));
-        }
-        let rows = super::workload::run_slot_to(
-            &super::workload::SetupRatePlan {
-                socks_port,
-                origin_port: fixture.route_origin_port,
-                connections: state.plan.program.connections,
-                concurrencies: state.plan.program.concurrencies.clone(),
-                samples: state.plan.program.samples,
-                implementation: format!("cost-{}", variant.label),
-                block: 0,
-                position: 0,
-                record_latencies: false,
-            },
-            &destination,
-        )?;
-        state.run.write_jsonl(
-            &format!("setup-cost-{}.jsonl", variant.label),
-            &rows.iter().map(setup_row_json).collect::<Vec<_>>(),
-        )?;
-    }
-    Ok(())
+    super::deployment_cost::run_cost_section(state, fixture)
 }
 
 pub(crate) fn setup_row_json(row: &super::workload::SampleRow) -> String {
@@ -955,7 +812,7 @@ fn deployment_run_summary(state: &RunState<'_>) -> Result<Json, String> {
 
 fn cost_artifacts(state: &RunState<'_>) -> Result<Json, String> {
     let expected_rows = state.plan.program.samples * state.plan.program.concurrencies.len();
-    COST_VARIANTS
+    super::deployment_cost::COST_VARIANTS
         .iter()
         .map(|variant| {
             setup_artifact(
