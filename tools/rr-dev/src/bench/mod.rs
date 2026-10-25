@@ -36,6 +36,7 @@ pub mod deployment_netns;
 pub mod deployment_plan;
 pub mod deployment_probe;
 pub mod deployment_routing;
+pub mod deployment_rtt;
 pub mod deployment_transport;
 pub mod dns;
 pub mod echo;
