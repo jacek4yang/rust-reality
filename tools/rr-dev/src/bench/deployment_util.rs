@@ -3,7 +3,7 @@
 //! Owns UUID generation, isolated child env, sample-row JSON, public-config
 //! generation, generated-rust process spawn, and small file/jsonl utilities used
 //! by section runners. Process lifecycle still rides on
-//! [`super::deployment::RunState`].
+//! [`super::deployment_state::RunState`].
 
 use std::{
     io::Write as _,
@@ -16,8 +16,8 @@ use crate::{
     process::Tool,
 };
 
-use super::deployment::RunState;
 use super::deployment_plan::count;
+use super::deployment_state::RunState;
 use super::suites;
 
 pub(crate) fn setup_row_json(row: &super::workload::SampleRow) -> String {

@@ -2,7 +2,7 @@
 //!
 //! Owns environment.json writing, section summary aggregation, cost/topology
 //! artifact verification, publication contract JSON, and parsed-JSON conversion.
-//! Process lifecycle still rides on [`super::deployment::RunState`].
+//! Process lifecycle still rides on [`super::deployment_state::RunState`].
 
 use std::path::Path;
 
@@ -12,9 +12,9 @@ use crate::{
     process::Tool,
 };
 
-use super::deployment::RunState;
 use super::deployment_plan::{Section, count};
 use super::deployment_probe::json_string;
+use super::deployment_state::RunState;
 
 pub(crate) fn write_environment(state: &RunState<'_>) -> Result<(), String> {
     let commit = Tool::new("git")

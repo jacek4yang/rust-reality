@@ -2,7 +2,7 @@
 //!
 //! Owns the one-leg netns RTT characterization section: warm/cold NXR, SOCKS,
 //! and Handoff pairs plus pool-summary evidence. Process lifecycle still rides
-//! on [`super::deployment::RunState`]; this module keeps the netem matrix
+//! on [`super::deployment_state::RunState`]; this module keeps the netem matrix
 //! independently reviewable beside the broader deployment suite.
 
 use std::{
@@ -24,11 +24,12 @@ use crate::{
 };
 
 use super::deployment::{
-    RunState, SharedFixture, deployment_public_config, isolated_environment, jsonl_body,
-    parsed_to_json, setup_row_json, write_new_file,
+    SharedFixture, deployment_public_config, isolated_environment, jsonl_body, parsed_to_json,
+    setup_row_json, write_new_file,
 };
 use super::deployment_plan::{count, loss_token};
 use super::deployment_probe::json_string;
+use super::deployment_state::RunState;
 use super::deployment_transport::{
     identity_for, landing_config_at, landing_variant_config, line_spec_to, transport_line_config,
     xray_client_ports,

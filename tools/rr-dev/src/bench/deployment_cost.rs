@@ -2,14 +2,13 @@
 //!
 //! Owns the reviewed cost-variant matrix (simple → complex IP strategies) and
 //! its SOCKS setup-rate cells. Process lifecycle still rides on
-//! [`super::deployment::RunState`].
+//! [`super::deployment_state::RunState`].
 
 use crate::bench::{config::RealityIdentity, soak};
 
-use super::deployment::{
-    RunState, SharedFixture, generate_uuids, isolated_environment, setup_row_json,
-};
+use super::deployment::{SharedFixture, generate_uuids, isolated_environment, setup_row_json};
 use super::deployment_routing::{ScaleConfigInput, scale_config};
+use super::deployment_state::RunState;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CostVariant {
