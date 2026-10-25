@@ -7,6 +7,7 @@
 //! one-leg netem matrix, and long-flow relay evidence. Routing probes, SOCKS
 //! throughput cells, and relay-log evidence live in [`super::deployment_probe`].
 //! Routing policy builders and geosite/geoip fixtures live in [`super::deployment_routing`].
+//! Transport / landing JSON mutations live in [`super::deployment_transport`].
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -47,7 +48,6 @@ pub use super::deployment_probe::{
 };
 pub use deployment_plan::{Plan, PlanKind, Section, ThroughputCell};
 
-use super::deployment_json::{number, root_object, string};
 #[expect(
     unused_imports,
     reason = "pub(crate) re-exports preserve the historical deployment:: routing API"
@@ -55,6 +55,11 @@ use super::deployment_json::{number, root_object, string};
 pub(crate) use super::deployment_routing::{
     ROUTING_GEOSITE_LABEL, RouteMatrixInput, RoutingConfig, RoutingConfigInput, ScaleConfigInput,
     route_cases, routing_config, scale_config, write_routing_assets,
+};
+
+use super::deployment_transport::{
+    identity_for, landing_config, landing_config_at, landing_variant_config, line_spec,
+    line_spec_to, transport_line_config, xray_client_ports,
 };
 
 #[derive(Debug, Clone)]
@@ -506,7 +511,7 @@ fn run_topology_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
             &nxr_key,
         ),
     )?;
-    let nxr_landing = landing_config(state, "nxr-landing", nxr_landing_port, &nxr_key, "warn")?;
+    let nxr_landing = landing_config(nxr_landing_port, &nxr_key, "warn")?;
     spawn_generated_rust(state, "topo-b-landing", nxr_landing_port, &nxr_landing)?;
     spawn_generated_rust(state, "topo-b-line", nxr_line_port, &nxr_line.json)?;
     let nxr_identity = identity_for(&nxr_line, fixture.cover_port);
@@ -622,70 +627,6 @@ fn deployment_public_config(
     Ok(generated)
 }
 
-fn line_spec(
-    line_port: u16,
-    cover_port: u16,
-    landing_port: u16,
-    key: &str,
-) -> soak::PublicNodeSpec {
-    line_spec_to(line_port, cover_port, "127.0.0.1", landing_port, key)
-}
-
-fn line_spec_to(
-    line_port: u16,
-    cover_port: u16,
-    peer_address: &str,
-    peer_port: u16,
-    key: &str,
-) -> soak::PublicNodeSpec {
-    soak::PublicNodeSpec::line(
-        line_port,
-        &format!("127.0.0.1:{cover_port}"),
-        crate::bench::config::LandingLink {
-            protocol: "nxr",
-            address: peer_address.to_owned(),
-            port: peer_port,
-            psk: key.to_owned(),
-            landing_public_key: None,
-        },
-    )
-}
-
-fn landing_config(
-    state: &RunState<'_>,
-    label: &str,
-    port: u16,
-    key: &str,
-    level: &str,
-) -> Result<String, String> {
-    landing_config_at(state, label, "127.0.0.1", port, key, level)
-}
-
-fn landing_config_at(
-    state: &RunState<'_>,
-    label: &str,
-    listen: &str,
-    port: u16,
-    key: &str,
-    level: &str,
-) -> Result<String, String> {
-    let _ = (state, label);
-    let rendered = crate::bench::config::rust_landing(
-        listen,
-        port,
-        &crate::bench::config::LandingLink {
-            protocol: "nxr",
-            address: listen.to_owned(),
-            port,
-            psk: key.to_owned(),
-            landing_public_key: None,
-        },
-        None,
-    )
-    .to_python_json();
-    suites::set_rust_log_level(&rendered, level)
-}
-
 fn spawn_generated_rust(
     state: &mut RunState<'_>,
     label: &str,
@@ -706,104 +647,6 @@ fn spawn_generated_rust(
     )?;
     state.children.push(child);
     Ok(path)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a transport variant's exact endpoint and sole warm/cold difference stay explicit"
-)]
-fn transport_line_config(
-    raw: &str,
-    inbound_port: u16,
-    protocol: &str,
-    address: &str,
-    outbound_port: u16,
-    warm_tcp: bool,
-    log_level: &str,
-    cache: &Path,
-) -> Result<String, String> {
-    let mut root = root_object(raw)?;
-    let Some(Value::Object(log)) = root.get_mut("log") else {
-        return Err("generated transport config has no log object".to_owned());
-    };
-    log.insert("level".to_owned(), string(log_level));
-    let Some(Value::Object(assets)) = root.get_mut("assets") else {
-        return Err("generated transport config has no assets object".to_owned());
-    };
-    assets.insert(
-        "cacheDirectory".to_owned(),
-        string(cache.display().to_string()),
-    );
-    replace_listener_port(&mut root, inbound_port)?;
-    let Some(Value::Object(outbounds)) = root.get_mut("outbounds") else {
-        return Err("generated transport config has no outbounds object".to_owned());
-    };
-    let outbound = outbounds
-        .values_mut()
-        .find(|outbound| outbound.str_field("outbound", "type") == Ok(protocol))
-        .ok_or_else(|| format!("generated transport config has no {protocol} outbound"))?;
-    let Value::Object(outbound) = outbound else {
-        unreachable!("the type lookup only matches outbound objects")
-    };
-    outbound.insert("address".to_owned(), string(address));
-    outbound.insert("port".to_owned(), number(u64::from(outbound_port)));
-    outbound.insert("warmTcp".to_owned(), Value::Bool(warm_tcp));
-    Ok(suites::render_compact(&Value::Object(root)))
-}
-
-fn replace_listener_port(root: &mut BTreeMap<String, Value>, port: u16) -> Result<(), String> {
-    let Some(Value::Array(listeners)) = root.get_mut("listeners") else {
-        return Err("generated transport config has no listeners array".to_owned());
-    };
-    let [Value::Object(listener)] = listeners.as_mut_slice() else {
-        return Err("generated transport config must have exactly one listener object".to_owned());
-    };
-    listener.insert("port".to_owned(), number(u64::from(port)));
-    Ok(())
-}
-
-fn landing_variant_config(raw: &str, inbound_port: u16) -> Result<String, String> {
-    let mut root = root_object(raw)?;
-    // Current landing nodes have no entry-side asset cache.
-    replace_listener_port(&mut root, inbound_port)?;
-    Ok(suites::render_compact(&Value::Object(root)))
-}
-
-fn xray_client_ports(raw: &str, server_port: u16, socks_port: u16) -> Result<String, String> {
-    let mut root = root_object(raw)?;
-    let Some(Value::Array(inbounds)) = root.get_mut("inbounds") else {
-        return Err("generated Xray client has no inbounds array".to_owned());
-    };
-    let Some(Value::Object(inbound)) = inbounds.first_mut() else {
-        return Err("generated Xray client has no first inbound".to_owned());
-    };
-    inbound.insert("port".to_owned(), number(u64::from(socks_port)));
-    let Some(Value::Array(outbounds)) = root.get_mut("outbounds") else {
-        return Err("generated Xray client has no outbounds array".to_owned());
-    };
-    let Some(Value::Object(outbound)) = outbounds.first_mut() else {
-        return Err("generated Xray client has no first outbound".to_owned());
-    };
-    let Some(Value::Object(settings)) = outbound.get_mut("settings") else {
-        return Err("generated Xray client outbound has no settings".to_owned());
-    };
-    let Some(Value::Array(servers)) = settings.get_mut("vnext") else {
-        return Err("generated Xray client has no vnext array".to_owned());
-    };
-    let Some(Value::Object(server)) = servers.first_mut() else {
-        return Err("generated Xray client has no first vnext server".to_owned());
-    };
-    server.insert("port".to_owned(), number(u64::from(server_port)));
-    Ok(suites::render_compact(&Value::Object(root)))
-}
-
-fn identity_for(generated: &soak::GeneratedPublicConfig, cover_port: u16) -> RealityIdentity {
-    RealityIdentity {
-        uuid: generated.uuid.clone(),
-        short_id: generated.short_id.clone(),
-        server_name: "localhost".to_owned(),
-        target: format!("127.0.0.1:{cover_port}"),
-    }
 }
 
 fn run_topology_setup(
@@ -1147,14 +990,7 @@ fn build_rtt_nxr_pair(
     let warm_socks = state.port()?;
     let cold_socks = state.port()?;
     let key = soak::node_key(&state.rust.path)?;
-    let landing = landing_config_at(
-        state,
-        "rtt-nxr-landing",
-        "0.0.0.0",
-        landing_port,
-        &key,
-        "warn",
-    )?;
+    let landing = landing_config_at("0.0.0.0", landing_port, &key, "warn")?;
     spawn_rtt_namespace_rust(
         state,
         topology,
@@ -1756,7 +1592,7 @@ fn run_longflow_section(state: &mut RunState<'_>, fixture: &SharedFixture) -> Re
         "longflow-line",
         &line_spec(line_port, fixture.cover_port, landing_port, &key),
     )?;
-    let landing = landing_config(state, "longflow-landing", landing_port, &key, "debug")?;
+    let landing = landing_config(landing_port, &key, "debug")?;
     let landing_path = state.workspace.join("longflow-landing.json");
     let landing_log = state.workspace.join("longflow-landing.log");
     soak::write_config(&landing_path, &landing)?;
@@ -2348,6 +2184,8 @@ fn isolated_environment() -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bench::deployment_json::root_object;
+    use crate::bench::deployment_transport::replace_listener_port;
 
     fn transport_fixture(protocol: &'static str) -> (String, config::LandingLink) {
         let identity = config::RealityIdentity {
