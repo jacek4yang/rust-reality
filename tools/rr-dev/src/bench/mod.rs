@@ -43,6 +43,7 @@ pub mod deployment_rtt;
 pub mod deployment_summary;
 pub mod deployment_topology;
 pub mod deployment_transport;
+pub mod deployment_util;
 pub mod dns;
 pub mod echo;
 pub mod engine;
