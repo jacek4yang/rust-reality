@@ -35,16 +35,16 @@ use crate::{
 use super::deployment_plan::{self, count, loss_token};
 use super::suites;
 
-pub use deployment_plan::{Plan, PlanKind, Section, ThroughputCell};
+use super::deployment_probe::json_string;
 #[expect(
     unused_imports,
     reason = "public re-exports preserve the historical deployment:: probe API"
 )]
 pub use super::deployment_probe::{
-    probe_routes, relay_evidence, routing_summary, run_socks_throughput, RelayEvidence,
-    RouteCase, RouteExpectation, RouteResult, SocksThroughputPlan, SocksThroughputRow,
+    RelayEvidence, RouteCase, RouteExpectation, RouteResult, SocksThroughputPlan,
+    SocksThroughputRow, probe_routes, relay_evidence, routing_summary, run_socks_throughput,
 };
-use super::deployment_probe::json_string;
+pub use deployment_plan::{Plan, PlanKind, Section, ThroughputCell};
 
 #[derive(Debug)]
 pub(crate) struct RoutingConfig {
