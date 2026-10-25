@@ -2,7 +2,7 @@
 //!
 //! These helpers are shared by the native deployment sections but do not own
 //! process lifecycle or netns topology. Keeping them beside `deployment.rs`
-//! lets section orchestration stay focused on RunState while the pure probe
+//! lets section orchestration stay focused on `RunState` while the pure probe
 //! contracts remain independently reviewable.
 
 use std::{
