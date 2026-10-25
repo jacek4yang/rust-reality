@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, io, net::IpAddr, ops::Range, sync::Arc, time::Duration};
+use std::{net::IpAddr, ops::Range, sync::Arc, time::Duration};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -12,14 +12,14 @@ use tokio::{
 use crate::protocol::{
     handoff::{ContinuationState, HandoffError, HandoffPolicySnapshot, SessionKind},
     reality::tls13::{
-        IdleDeadline, IdleError, MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader,
+        IdleDeadline, MAX_PLAINTEXT_LEN, TlsApplicationIoError, TlsApplicationReader,
         TlsApplicationWriter, VectoredRead,
     },
     vless::{
         Command, DecodeError, Destination, RequestValidationError, UserId, VERSION,
-        VISION_FRAME_SIZE, VisionCommand, VisionDecodeError, VisionDecoder, VisionEncodeError,
-        VisionEncoder, VisionMode, VisionPayload, authorize_authenticated_vision_xudp,
-        decode_request, decode_request_ref, validate_authenticated_vision_fields,
+        VISION_FRAME_SIZE, VisionCommand, VisionDecoder, VisionEncoder, VisionMode, VisionPayload,
+        authorize_authenticated_vision_xudp, decode_request, decode_request_ref,
+        validate_authenticated_vision_fields,
     },
 };
 
@@ -30,11 +30,9 @@ use super::{
         DirectHandoff, Direction, DirectionState, InvalidTransition, RawDecision, RawRelayGrant,
     },
     handoff::HandoffLineError,
-    outbound::{
-        OutboundConnectError, OutboundConnectOutcome, OutboundRegistry, SessionOutboundOutcome,
-    },
+    outbound::{OutboundConnectOutcome, OutboundRegistry, SessionOutboundOutcome},
     reality::RealityEstablished,
-    routing::{AssetMatcher, RouteResolutionError, RoutingCompileError, RoutingTable},
+    routing::{AssetMatcher, RoutingCompileError, RoutingTable},
     xudp::{
         XUDP_ASSOCIATION_IDLE, XudpDirectAssociation, XudpEgressCapability, XudpNxrAssociation,
         XudpSessionError, authorize_xudp_egress, drain_xudp_frames, process_xudp_global_map,
@@ -59,6 +57,11 @@ pub(crate) use nested::{NestedRead, NestedRecordReader, NestedTlsDetector, Paddi
 mod abort;
 
 use abort::{AbortableSocket as _, DirectionAbortGuard, SocketAbortGuard};
+
+mod error;
+
+pub use error::VisionSessionError;
+use error::{idle_failure, is_benign_teardown, operation_deadline};
 
 const MAX_REQUEST_HEADER_SIZE: usize = 533;
 const MAX_REQUEST_BUFFER_SIZE: usize = MAX_REQUEST_HEADER_SIZE + MAX_PLAINTEXT_LEN;
@@ -2428,24 +2431,6 @@ async fn run_handoff(
     }
 }
 
-/// Returns whether a raw-stage I/O error is a benign peer-teardown race.
-///
-/// A reset or broken pipe once the raw relay owns the sockets means the peer
-/// tore the connection down mid-transfer. An idle `TimedOut` reaching here
-/// never moved a byte: the relay reclassifies a write_stall timeout that
-/// truncated a live transfer as `ConnectionAborted` after resetting both
-/// sockets, so a `TimedOut` is always the relay's own write_stall policy ending
-/// a stalled, untouched direction — a clean teardown from the session's
-/// perspective, never a transport failure. In all three cases the session's
-/// accumulated counts stay valid and must not be suppressed by a
-/// session-level relay error.
-fn is_benign_teardown(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset | io::ErrorKind::TimedOut
-    )
-}
-
 /// Converts a duration to microseconds, saturating at the representable bound.
 fn micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
@@ -2544,92 +2529,6 @@ where
             return Ok(copied);
         }
         copied = copied.saturating_add(length_u64(read));
-    }
-}
-
-/// A Vision data session failed after REALITY authentication.
-#[derive(Debug)]
-pub enum VisionSessionError {
-    Timeout,
-    AllocationFailed,
-    RequestTooLarge { limit: usize },
-    Decode(DecodeError),
-    Validate(RequestValidationError),
-    Route(RouteResolutionError),
-    Outbound(OutboundConnectError),
-    Tls(TlsApplicationIoError),
-    VisionDecode(VisionDecodeError),
-    VisionEncode(VisionEncodeError),
-    DestinationTruncatedTlsRecord,
-    DirectTransition(InvalidTransition),
-    Handoff(io::Error),
-    HandoffLine(HandoffLineError),
-    Relay(io::Error),
-    Io(io::Error),
-    Xudp(XudpSessionError),
-}
-
-impl fmt::Display for VisionSessionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Timeout => formatter.write_str("Vision session operation timed out"),
-            Self::AllocationFailed => formatter.write_str("bounded Vision allocation failed"),
-            Self::RequestTooLarge { limit } => {
-                write!(formatter, "VLESS request exceeds {limit}-byte bound")
-            }
-            Self::Decode(source) => source.fmt(formatter),
-            Self::Validate(source) => source.fmt(formatter),
-            Self::Route(source) => source.fmt(formatter),
-            Self::Outbound(source) => source.fmt(formatter),
-            Self::Tls(source) => source.fmt(formatter),
-            Self::VisionDecode(source) => source.fmt(formatter),
-            Self::VisionEncode(source) => source.fmt(formatter),
-            Self::DestinationTruncatedTlsRecord => {
-                formatter.write_str("destination closed inside a TLS record")
-            }
-            Self::DirectTransition(source) => source.fmt(formatter),
-            Self::Handoff(_) => formatter.write_str("Vision Direct socket recovery failed"),
-            Self::HandoffLine(source) => source.fmt(formatter),
-            Self::Relay(_) => formatter.write_str("unified raw relay failed"),
-            Self::Io(_) => formatter.write_str("Vision relay socket I/O failed"),
-            Self::Xudp(source) => source.fmt(formatter),
-        }
-    }
-}
-
-impl Error for VisionSessionError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Decode(source) => Some(source),
-            Self::Validate(source) => Some(source),
-            Self::Route(source) => Some(source),
-            Self::Outbound(source) => Some(source),
-            Self::Tls(source) => Some(source),
-            Self::VisionDecode(source) => Some(source),
-            Self::VisionEncode(source) => Some(source),
-            Self::DirectTransition(source) => Some(source),
-            Self::Handoff(source) | Self::Relay(source) | Self::Io(source) => Some(source),
-            Self::HandoffLine(source) => Some(source),
-            Self::Xudp(source) => Some(source),
-            Self::Timeout
-            | Self::AllocationFailed
-            | Self::RequestTooLarge { .. }
-            | Self::DestinationTruncatedTlsRecord => None,
-        }
-    }
-}
-
-fn operation_deadline(timeout: Duration) -> Result<Instant, VisionSessionError> {
-    Instant::now()
-        .checked_add(timeout)
-        .ok_or(VisionSessionError::Timeout)
-}
-
-/// Maps an idle-guarded operation failure to the session error.
-fn idle_failure(error: IdleError) -> VisionSessionError {
-    match error {
-        IdleError::Timeout => VisionSessionError::Timeout,
-        IdleError::Io(source) => VisionSessionError::Io(source),
     }
 }
 
