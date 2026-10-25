@@ -33,6 +33,7 @@ pub mod cover;
 pub mod deployment;
 pub mod deployment_netns;
 pub mod deployment_plan;
+pub mod deployment_probe;
 pub mod dns;
 pub mod echo;
 pub mod engine;
