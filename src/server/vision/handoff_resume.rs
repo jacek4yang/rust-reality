@@ -27,7 +27,8 @@ use crate::transport::TcpRelay;
 
 use super::abort::SocketAbortGuard;
 use super::error::VisionSessionError;
-use super::relay::{SessionContext, join_directions, relay_downlink, relay_uplink};
+use super::relay::{SessionContext, join_directions, relay_downlink};
+use super::relay_uplink::relay_uplink;
 use super::stats::{VisionRelayStats, session_stats};
 use crate::server::direct::DirectHandoff;
 
