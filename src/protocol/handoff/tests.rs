@@ -12,9 +12,10 @@ use super::{
     HandoffError, HandoffLandingKeys, HandoffPolicySnapshot, HandoffPsk, HandoffReplayCache,
     MAX_BLOB_LEN, MAX_MESSAGE_LEN, MAX_PENDING_CIPHERTEXT_LEN, MAX_PREFETCHED_PLAINTEXT_LEN,
     MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, STATE_VERSION_OFFSET, SealedDomainMatcher,
-    SealedHandoffRouteRule, SealedIpNetwork, SealedPortRange, SessionKind, StaticX25519Key,
-    decode_blob, encode_blob, message_len_from_header, open_transfer, seal_transfer,
+    SealedHandoffRouteRule, SealedIpNetwork, SealedPortRange, SessionKind, decode_blob,
+    encode_blob, message_len_from_header, open_transfer, seal_transfer,
 };
+use crate::crypto::StaticX25519Key;
 use crate::protocol::reality::tls13::{CipherSuite, HashAlgorithm, TrafficSecret};
 use crate::protocol::vless::{Address, Destination};
 
