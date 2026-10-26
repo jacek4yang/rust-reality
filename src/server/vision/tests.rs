@@ -66,7 +66,7 @@ async fn failed_handoff_reunite_still_aborts_carrier() {
         .expect_err("unrelated client halves must fail closed");
     assert!(matches!(
         error,
-        VisionSessionError::HandoffLine(super::HandoffLineError::Reunite)
+        VisionSessionError::HandoffLine(crate::server::handoff::HandoffLineError::Reunite)
     ));
     drop(landing);
     let mut byte = [0_u8; 1];
