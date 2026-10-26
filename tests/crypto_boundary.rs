@@ -55,7 +55,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     ("ring", &["src/protocol/reality/tls13/record.rs"]),
     // The RustCrypto AEADs. `record.rs` is the `--no-default-features`
     // provider and the equivalence oracle; `auth.rs` (AES-256-GCM, REALITY
-    // session id) and `handoff.rs` (ChaCha20-Poly1305) use them
+    // session id) and `handoff/mod.rs` (ChaCha20-Poly1305) use them
     // unconditionally and are not behind the feature switch.
     (
         "aes_gcm",
@@ -67,7 +67,8 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     (
         "chacha20poly1305",
         &[
-            "src/protocol/handoff.rs",
+            "src/protocol/handoff/mod.rs",
+            "src/protocol/handoff/tests.rs",
             "src/protocol/reality/tls13/record.rs",
         ],
     ),
@@ -86,7 +87,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         &[
             "crates/rr-crypto/src/x25519/aarch64.rs",
             "crates/rr-crypto/src/x25519/x86_64.rs",
-            "src/protocol/handoff.rs",
+            "src/protocol/handoff/mod.rs",
             "src/protocol/nxr.rs",
             // ADR 0060 Option A: NXR UDP open/session MAC digests.
             "src/protocol/nxr_udp.rs",
@@ -113,7 +114,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     (
         "hkdf",
         &[
-            "src/protocol/handoff.rs",
+            "src/protocol/handoff/mod.rs",
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/tls13/keys.rs",
         ],
@@ -138,7 +139,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         &[
             "src/crypto/keygen.rs",
             "src/crypto/x25519.rs",
-            "src/protocol/handoff.rs",
+            "src/protocol/handoff/tests.rs",
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/client_handshake.rs",
             "src/protocol/reality/client_offer.rs",
@@ -214,7 +215,7 @@ fn the_normal_dependency_graph_excludes_retired_and_research_providers() {
 /// `crypto::entropy` is the single cryptographic source. The other two are
 /// exceptions with stated reasons, and each is expected to disappear or stay
 /// forever on its own merits rather than by neglect. C3c removed the third:
-/// `protocol/handoff.rs` drew through `getrandom::SysRng` only because
+/// `protocol/handoff` drew through `getrandom::SysRng` only because
 /// `x25519_dalek::EphemeralSecret::random_from_rng` demanded an RNG object;
 /// its migration onto `EphemeralX25519Key::generate` folded that draw back
 /// into the owned source.
