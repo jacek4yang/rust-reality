@@ -2,9 +2,7 @@
 //!
 //! Kept in a dedicated file so production modules stay readable.
 
-use crate::runtime::policy::{
-    DirectBarrierPolicy, ResourceGovernorPolicy, WarmConnectionPolicy,
-};
+use crate::runtime::policy::{DirectBarrierPolicy, ResourceGovernorPolicy, WarmConnectionPolicy};
 use std::{io, net::Ipv4Addr, sync::Arc, time::Duration};
 
 use crate::crypto::StaticX25519Key;
@@ -29,8 +27,8 @@ use crate::{
     protocol::{
         handoff::{
             CONTINUATION_STATE_VERSION, ContinuationState, HEADER_LEN, HandoffError,
-            HandoffLandingKeys, HandoffPolicySnapshot, HandoffPsk, HandoffReplayCache,
-            SessionKind, message_len_from_header, open_transfer, seal_transfer,
+            HandoffLandingKeys, HandoffPolicySnapshot, HandoffPsk, HandoffReplayCache, SessionKind,
+            message_len_from_header, open_transfer, seal_transfer,
         },
         reality::tls13::{
             CipherSuite, ContentType, EstablishedTls, ExportedRecordState, Tls13RecordLayer,
@@ -260,8 +258,7 @@ async fn silent_warm_carrier_times_out_without_replaying_a_committed_transfer() 
     .expect("warm READY barrier");
     let (mut client, server) = tcp_pair().await;
     let (tls, mut client_write, _client_read) = tls_states();
-    let established =
-        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, tls), USER);
+    let established = RealityEstablished::from_test_parts(TlsApplicationIo::new(server, tls), USER);
     let request = vision_request(443, b"one logical request");
     let mut record = Vec::new();
     client_write
@@ -558,11 +555,8 @@ async fn sealed_v3_resume_preserves_generations_buffers_response_and_future_upda
         let layer = |seed| {
             Tls13RecordLayer::from_traffic_secret(
                 suite,
-                TrafficSecret::from_bytes(
-                    suite.hash(),
-                    &[seed; 48][..suite.hash().output_len()],
-                )
-                .expect("traffic secret"),
+                TrafficSecret::from_bytes(suite.hash(), &[seed; 48][..suite.hash().output_len()])
+                    .expect("traffic secret"),
             )
             .expect("record layer")
         };
@@ -633,17 +627,8 @@ async fn sealed_v3_resume_preserves_generations_buffers_response_and_future_upda
         let state = open_transfer(&message, &handler.keys, &handler.replay, timestamp, 30)
             .expect("authenticated v3 transfer")
             .into_state();
-        let (
-            exported,
-            user,
-            destination,
-            pending,
-            prefetched,
-            response_pending,
-            kind,
-            tag,
-            policy,
-        ) = state.into_parts().expect("move transferred state");
+        let (exported, user, destination, pending, prefetched, response_pending, kind, tag, policy) =
+            state.into_parts().expect("move transferred state");
         assert_eq!(user, *USER.as_bytes());
         assert_eq!(destination.port(), 443);
         assert_eq!(prefetched, b"prefetched Vision bytes");
@@ -966,8 +951,7 @@ async fn landing_rejects_a_replayed_transfer_on_preestablished_sockets() {
             let (first, _) = listener.accept().await?;
             let (second, _) = listener.accept().await?;
             let first_handler = handler.clone();
-            let (first, second) =
-                tokio::join!(first_handler.handle(first), handler.handle(second));
+            let (first, second) = tokio::join!(first_handler.handle(first), handler.handle(second));
             Ok::<_, io::Error>([first, second])
         };
         let peer = async {
@@ -1106,10 +1090,8 @@ async fn run_shared_landing_session(
         client_read_records.records_used(),
         expected_first_visible_server_sequence
     );
-    let established = RealityEstablished::from_test_parts(
-        TlsApplicationIo::new(server, established_tls),
-        USER,
-    );
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
     let request = vision_request(destination_address.port(), b"ping");
 
     let exchange = async {
@@ -1242,10 +1224,8 @@ async fn line_splices_post_transfer_uplink_records_to_landing() {
     let line_handler = handoff_vision_handler(landing_address);
     let (mut client, server) = tcp_pair().await;
     let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
-    let established = RealityEstablished::from_test_parts(
-        TlsApplicationIo::new(server, established_tls),
-        USER,
-    );
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
     let request = vision_request(destination_address.port(), b"ping");
 
     let exchange = async {
@@ -1396,10 +1376,8 @@ async fn landing_serves_a_transferred_session_through_a_socks5_egress() {
     let line_handler = handoff_vision_handler(landing_address);
     let (mut client, server) = tcp_pair().await;
     let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
-    let established = RealityEstablished::from_test_parts(
-        TlsApplicationIo::new(server, established_tls),
-        USER,
-    );
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
     let request = vision_request(destination_port, b"ping");
 
     let exchange = async {
@@ -1540,10 +1518,8 @@ async fn landing_ends_a_transferred_session_silently_when_the_egress_blackholes(
     let line_handler = handoff_vision_handler(landing_address);
     let (mut client, server) = tcp_pair().await;
     let (established_tls, mut client_write_records, _client_read_records) = tls_states();
-    let established = RealityEstablished::from_test_parts(
-        TlsApplicationIo::new(server, established_tls),
-        USER,
-    );
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
     // Port 9 is the discard sink: if the landing dialed despite the
     // blackhole, the session would fail with a destination error instead
     // of ending cleanly.
@@ -1584,8 +1560,7 @@ async fn landing_ends_a_transferred_session_silently_when_the_egress_blackholes(
     let (line, landing, client_result) = timeout(TEST_TIMEOUT, exchange)
         .await
         .expect("blackhole exchange must not time out");
-    let landing_stats =
-        landing.expect("a blackholed egress must end the session without an error");
+    let landing_stats = landing.expect("a blackholed egress must end the session without an error");
     assert_eq!(landing_stats.inbound_to_outbound_bytes(), 0);
     assert_eq!(landing_stats.outbound_to_inbound_bytes(), 0);
     client_result.expect("client I/O must succeed");
@@ -1628,10 +1603,8 @@ async fn line_aborts_the_client_when_landing_rejects_the_transfer() {
     let line_handler = handoff_vision_handler(landing_address);
     let (mut client, server) = tcp_pair().await;
     let (established_tls, mut client_write_records, _client_read_records) = tls_states();
-    let established = RealityEstablished::from_test_parts(
-        TlsApplicationIo::new(server, established_tls),
-        USER,
-    );
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
     let request = vision_request(9, b"ping");
 
     let exchange = async {
@@ -1696,10 +1669,8 @@ async fn line_transfer_failure_on_unreachable_landing_fails_the_session() {
     let line_handler = handoff_vision_handler(landing_address);
     let (mut client, server) = tcp_pair().await;
     let (established_tls, mut client_write_records, _client_read_records) = tls_states();
-    let established = RealityEstablished::from_test_parts(
-        TlsApplicationIo::new(server, established_tls),
-        USER,
-    );
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
     let request = vision_request(9, b"ping");
 
     let exchange = async {
@@ -1886,10 +1857,7 @@ async fn read_response_header_record(
 }
 
 /// Seals `payload` into as many application records as its size requires.
-fn seal_application_records(
-    records: &mut Tls13RecordLayer,
-    payload: &[u8],
-) -> io::Result<Vec<u8>> {
+fn seal_application_records(records: &mut Tls13RecordLayer, payload: &[u8]) -> io::Result<Vec<u8>> {
     let mut output = Vec::new();
     for chunk in payload.chunks(16_000) {
         // `seal_into` replaces its output, so each record is staged apart.
@@ -2020,8 +1988,8 @@ async fn line_completes_a_clean_session_when_the_client_resets_at_teardown() {
         b"ping"
     );
     landing.expect("LANDING handler must succeed");
-    let line_stats = line
-        .expect("a teardown reset must not fail a session that already completed byte-exactly");
+    let line_stats =
+        line.expect("a teardown reset must not fail a session that already completed byte-exactly");
     assert!(
         line_stats.downlink_bytes() > 0,
         "LINE must report the spliced downlink ciphertext it moved"
