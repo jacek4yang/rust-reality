@@ -44,13 +44,15 @@ use stats::session_stats;
 mod framing;
 
 mod relay;
+mod relay_downlink;
 mod relay_uplink;
 
 #[cfg(test)]
 use framing::length_u64;
 #[cfg(test)]
 use relay::run_directional;
-use relay::{SessionContext, join_directions, relay_downlink};
+use relay::{SessionContext, join_directions};
+use relay_downlink::relay_downlink;
 use relay_uplink::relay_uplink;
 
 mod handoff_relay;
