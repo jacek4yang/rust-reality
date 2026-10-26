@@ -1,0 +1,2152 @@
+//! Handoff LINE/LANDING unit tests.
+//!
+//! Kept in a dedicated file so production modules stay readable.
+
+use crate::runtime::policy::{DirectBarrierPolicy, ResourceGovernorPolicy, WarmConnectionPolicy};
+use std::{io, net::Ipv4Addr, sync::Arc, time::Duration};
+
+use crate::crypto::StaticX25519Key;
+use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    time::timeout,
+};
+
+use super::landing::{resume_tls, unix_seconds};
+use super::{HandoffLandingError, HandoffLandingHandler, HandoffLine, HandoffLineError};
+use crate::{
+    config::{
+        SecretString,
+        node::{
+            outbound::{HandoffOutboundConfig, OutboundConfig, Socks5Config},
+            routing::RoutingConfig,
+            user::UserConfig,
+        },
+    },
+    protocol::{
+        handoff::{
+            CONTINUATION_STATE_VERSION, ContinuationState, HEADER_LEN, HandoffError,
+            HandoffLandingKeys, HandoffPolicySnapshot, HandoffPsk, HandoffReplayCache, SessionKind,
+            message_len_from_header, open_transfer, seal_transfer,
+        },
+        reality::tls13::{
+            CipherSuite, ContentType, EstablishedTls, ExportedRecordState, Tls13RecordLayer,
+            TlsApplicationIo, TrafficSecret, read_tls_record, resume_application_halves,
+        },
+        vless::{
+            Address, Command, Destination, UserId, VERSION, VISION_FLOW, VisionCommand,
+            VisionDecoder, VisionEncoder,
+        },
+    },
+    runtime::PressureGauge,
+    server::{
+        connector::DestinationConnector,
+        outbound::OutboundRegistry,
+        reality::RealityEstablished,
+        routing::{EmptyAssetMatcher, RoutingTable},
+        vision::{VisionHandler, VisionSessionError},
+        warm_pool::WarmPoolAuthority,
+    },
+    transport::{FdBudget, TcpRelay, TcpRelayConfig},
+};
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(3);
+const USER: UserId = UserId::new([0x33; 16]);
+const PSK: [u8; 32] = [0x55; 32];
+const LANDING_SECRET: [u8; 32] = [0x77; 32];
+
+fn test_relay() -> TcpRelay {
+    TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
+        .expect("test relay policy must compile")
+}
+
+fn test_landing_handler() -> HandoffLandingHandler {
+    let replay = HandoffReplayCache::new(1_024, Duration::from_secs(120))
+        .expect("test replay cache must compile");
+    HandoffLandingHandler::new(
+        HandoffLandingKeys::single(HandoffPsk::new(PSK), StaticX25519Key::new(&LANDING_SECRET)),
+        replay,
+        30,
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        test_relay(),
+        Duration::from_secs(1),
+    )
+}
+
+fn handoff_line(address: std::net::SocketAddr) -> HandoffLine {
+    let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
+    HandoffLine::from_settings(&HandoffOutboundConfig {
+        address: address.ip().to_string(),
+        port: address.port(),
+        psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+        landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
+        connect_timeout_ms: Some(1_000),
+        first_byte_timeout_ms: Some(1_000),
+        warm_tcp: Some(false),
+    })
+    .expect("test handoff settings must compile")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn warm_handoff_sends_no_transfer_bytes_before_checkout() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let address = listener.local_addr().expect("landing address");
+    let policy = WarmConnectionPolicy {
+        min_ready: 1,
+        max_ready: 2,
+        max_connecting: 1,
+        refill_batch: 1,
+        idle_timeout_ms: 30_000,
+        max_lifetime_ms: 60_000,
+        shrink_delay_ms: 30_000,
+    };
+    let fd_budget = FdBudget::new(4_096);
+    let pressure = PressureGauge::new();
+    let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
+    let line = HandoffLine::from_settings_with_warm_pool(
+        &HandoffOutboundConfig {
+            address: address.ip().to_string(),
+            port: address.port(),
+            psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+            landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
+            connect_timeout_ms: Some(2_000),
+            first_byte_timeout_ms: Some(2_000),
+            warm_tcp: Some(true),
+        },
+        DestinationConnector::new(Duration::from_secs(2)),
+        &fd_budget,
+        Some((11, WarmPoolAuthority::new(&policy, 1, pressure), &policy)),
+    )
+    .expect("line settings must compile");
+    let pool = line.warm_pool().expect("warm pool must exist").clone();
+    let _activated = pool.activate();
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+    let landing = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let mut probe = [0_u8; 1];
+        assert!(
+            matches!(stream.try_read(&mut probe), Err(ref error) if error.kind() == io::ErrorKind::WouldBlock)
+        );
+        accepted_tx
+            .send(())
+            .map_err(|()| io::Error::other("receiver closed"))?;
+        let mut header = [0_u8; HEADER_LEN];
+        stream.read_exact(&mut header).await?;
+        let total = message_len_from_header(&header).map_err(io::Error::other)?;
+        let mut remainder = vec![0_u8; total - HEADER_LEN];
+        stream.read_exact(&mut remainder).await?;
+        Ok::<_, io::Error>(())
+    });
+    accepted_rx.await.expect("warm TCP must reach landing");
+    timeout(Duration::from_secs(2), async {
+        while pool.snapshot().ready != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pool must become ready");
+    let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443));
+    let (stream, permit) = line
+        .transfer(&fd_budget, &state, [0x42; 32])
+        .await
+        .expect("warm transfer must write");
+    drop(stream);
+    drop(permit);
+    landing
+        .await
+        .expect("landing must join")
+        .expect("landing result");
+    assert_eq!(pool.snapshot().checkout_hit, 1);
+    assert_eq!(pool.snapshot().cold_fallback, 0);
+    let _deactivated = pool.deactivate();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stale_warm_handoff_socket_is_discarded_before_cold_fallback() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let address = listener.local_addr().expect("landing address");
+    let policy = WarmConnectionPolicy {
+        min_ready: 1,
+        max_ready: 1,
+        max_connecting: 1,
+        refill_batch: 1,
+        idle_timeout_ms: 30_000,
+        max_lifetime_ms: 60_000,
+        shrink_delay_ms: 30_000,
+    };
+    let fd_budget = FdBudget::new(4_096);
+    let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
+    let line = HandoffLine::from_settings_with_warm_pool(
+        &HandoffOutboundConfig {
+            address: address.ip().to_string(),
+            port: address.port(),
+            psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+            landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
+            connect_timeout_ms: Some(2_000),
+            first_byte_timeout_ms: Some(2_000),
+            warm_tcp: Some(true),
+        },
+        DestinationConnector::new(Duration::from_secs(2)),
+        &fd_budget,
+        Some((
+            12,
+            WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+            &policy,
+        )),
+    )
+    .expect("line settings must compile");
+    let pool = line.warm_pool().expect("warm pool must exist").clone();
+    assert!(pool.activate());
+    let (mut stale_peer, _) = listener.accept().await.expect("warm peer must connect");
+    timeout(Duration::from_secs(2), async {
+        while pool.snapshot().ready != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pool must become ready");
+    stale_peer
+        .shutdown()
+        .await
+        .expect("peer FIN must be observable");
+    drop(stale_peer);
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443));
+    let (stream, permit) = line
+        .transfer(&fd_budget, &state, [0x43; 32])
+        .await
+        .expect("cold fallback must submit a fresh transfer");
+    drop(stream);
+    drop(permit);
+    let snapshot = pool.snapshot();
+    assert_eq!(snapshot.checkout_hit, 0);
+    assert_eq!(snapshot.checkout_miss, 1);
+    assert_eq!(snapshot.cold_fallback, 1);
+    assert_eq!(snapshot.stale_discard, 1);
+    pool.deactivate();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn silent_warm_carrier_times_out_without_replaying_a_committed_transfer() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("fault listener");
+    let budget = FdBudget::new(64);
+    let handler = handoff_vision_handler_with_warm(
+        listener.local_addr().expect("address"),
+        true,
+        budget.clone(),
+    );
+    handler.outbounds().activate_warm_pools();
+    let (mut blackhole, _) = timeout(TEST_TIMEOUT, listener.accept())
+        .await
+        .expect("warm dial deadline")
+        .expect("warm dial");
+    timeout(TEST_TIMEOUT, async {
+        while handler.outbounds().warm_pool_snapshots()[0].pool.ready != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("warm READY barrier");
+    let (mut client, server) = tcp_pair().await;
+    let (tls, mut client_write, _client_read) = tls_states();
+    let established = RealityEstablished::from_test_parts(TlsApplicationIo::new(server, tls), USER);
+    let request = vision_request(443, b"one logical request");
+    let mut record = Vec::new();
+    client_write
+        .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+        .expect("seal request");
+    client.write_all(&record).await.expect("send request");
+    // The fault consumes the *complete* transfer, acknowledging TCP bytes
+    // but withholding all protocol downlink. A safe retry is impossible:
+    // a real peer could already have acted on these authenticated bytes.
+    let consume = async {
+        let mut header = [0_u8; HEADER_LEN];
+        blackhole
+            .read_exact(&mut header)
+            .await
+            .expect("transfer header");
+        let length = message_len_from_header(&header).expect("bounded transfer");
+        let mut remainder = vec![0_u8; length - HEADER_LEN];
+        blackhole
+            .read_exact(&mut remainder)
+            .await
+            .expect("complete transfer");
+        // Keep the socket open in the enclosing scope until the deadline.
+        length
+    };
+    let (result, length) = timeout(TEST_TIMEOUT, async {
+        tokio::join!(handler.handle(established), consume)
+    })
+    .await
+    .expect("silent warm flow must fail within the first-byte bound");
+    assert!(length > HEADER_LEN);
+    assert!(matches!(
+        result,
+        Err(VisionSessionError::HandoffLine(
+            HandoffLineError::LandingRejected
+        ))
+    ));
+    let error = timeout(TEST_TIMEOUT, client.read(&mut [0_u8; 1]))
+        .await
+        .expect("client reset deadline")
+        .expect_err("failed transferred session must reset");
+    assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
+    let snapshot = handler.outbounds().warm_pool_snapshots()[0].pool;
+    assert_eq!(snapshot.checkout_total, 1);
+    assert_eq!(snapshot.checkout_hit, 1);
+    assert_eq!(
+        snapshot.cold_fallback, 0,
+        "complete transfer must never be cold-replayed"
+    );
+    assert_eq!(
+        snapshot.in_use, 0,
+        "failed flow releases its checkout permit"
+    );
+    // Refilling TCP is allowed; replaying protocol bytes on that socket is
+    // not. Observe the sole replacement without changing socket policy.
+    let (mut replacement, _) = timeout(TEST_TIMEOUT, listener.accept())
+        .await
+        .expect("refill deadline")
+        .expect("refill TCP");
+    assert!(
+        timeout(Duration::from_millis(30), replacement.read(&mut [0_u8; 1]))
+            .await
+            .is_err(),
+        "refill must remain protocol-unprivileged"
+    );
+    handler.outbounds().deactivate_warm_pools();
+    drop(blackhole);
+    drop(replacement);
+    timeout(TEST_TIMEOUT, async {
+        while budget.in_use() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("every warm and checked-out descriptor permit returns");
+    assert_eq!(budget.underflows(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn first_handoff_byte_enters_the_short_authentication_deadline() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let address = listener.local_addr().expect("landing address");
+    let client = TcpStream::connect(address);
+    let accepted = listener.accept();
+    let (client, accepted) = tokio::join!(client, accepted);
+    let mut client = client.expect("client must connect");
+    let (server, _) = accepted.expect("landing must accept");
+    let handler = test_landing_handler();
+    let task = tokio::spawn(async move { handler.handle(server).await });
+
+    client.write_all(b"H").await.expect("first byte");
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(matches!(
+        task.await.expect("handler must join"),
+        Err(HandoffLandingError::Timeout)
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mixed_continuation_versions_close_without_response_or_destination_dial() {
+    let destination =
+        std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("destination must bind");
+    destination
+        .set_nonblocking(true)
+        .expect("nonblocking destination");
+    let state = test_state(Destination::new(
+        Address::Ipv4(Ipv4Addr::LOCALHOST),
+        destination
+            .local_addr()
+            .expect("destination address")
+            .port(),
+    ));
+    for state_version in [0, 1, CONTINUATION_STATE_VERSION + 1] {
+        for include_body in [false, true] {
+            let (mut line, landing) = tcp_pair().await;
+            let handler = Arc::new(test_landing_handler());
+            let accepted_handler = handler.clone();
+            let task = tokio::spawn(async move { accepted_handler.handle(landing).await });
+            let mut message = Vec::new();
+            seal_transfer(
+                &state,
+                &HandoffPsk::new(PSK),
+                &StaticX25519Key::new(&LANDING_SECRET).public_key(),
+                [0x44; 32],
+                unix_seconds().expect("clock"),
+                &mut message,
+            )
+            .expect("transfer fixture");
+            message[5] = state_version;
+            let sent = if include_body {
+                &message[..]
+            } else {
+                &message[..HEADER_LEN]
+            };
+            line.write_all(sent).await.expect("mixed-version transfer");
+            assert!(matches!(
+                timeout(TEST_TIMEOUT, task)
+                    .await
+                    .expect("rejection deadline")
+                    .expect("handler join"),
+                Err(HandoffLandingError::Protocol(HandoffError::Version))
+            ));
+            let mut response = [0_u8; 1];
+            let closed = timeout(TEST_TIMEOUT, line.read(&mut response))
+                .await
+                .expect("silent close deadline");
+            assert!(
+                matches!(&closed, Ok(0))
+                    || matches!(&closed, Err(error) if error.kind() == io::ErrorKind::ConnectionReset),
+                "mixed-version rejection must expose no response bytes"
+            );
+            assert_eq!(handler.replay.entry_count(), 0);
+            assert!(
+                matches!(destination.accept(), Err(error) if error.kind() == io::ErrorKind::WouldBlock),
+                "version rejection must not reach destination connect"
+            );
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn valid_handoff_authenticates_across_the_pre_auth_idle_age_matrix() {
+    let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9));
+    let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
+    for (index, idle_age) in [0, 1, 5, 15, 30, 59].into_iter().enumerate() {
+        let (mut client, server) = tcp_pair().await;
+        let handler = test_landing_handler();
+        let mut message = Vec::new();
+        seal_transfer(
+            &state,
+            &HandoffPsk::new(PSK),
+            &landing_public,
+            [u8::try_from(index).expect("small matrix index"); 32],
+            unix_seconds().expect("clock must be valid"),
+            &mut message,
+        )
+        .expect("transfer must seal");
+        let task = tokio::spawn(async move { handler.handle(server).await });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(idle_age)).await;
+        assert!(
+            !task.is_finished(),
+            "valid Handoff idle age {idle_age}s must remain accepted"
+        );
+        client.write_all(&message).await.expect("transfer write");
+        assert!(matches!(
+            task.await.expect("handler must join"),
+            Err(HandoffLandingError::Destination(_))
+        ));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn unused_handoff_socket_expires_at_pre_auth_idle_deadline() {
+    let (_client, server) = tcp_pair().await;
+    let handler = test_landing_handler();
+    let task = tokio::spawn(async move { handler.handle(server).await });
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(60)).await;
+    assert!(matches!(
+        task.await.expect("handler must join"),
+        Err(HandoffLandingError::Timeout)
+    ));
+}
+
+fn test_state(destination: Destination) -> ContinuationState {
+    test_state_with_server_sequence(destination, 0)
+}
+
+fn test_state_with_server_sequence(
+    destination: Destination,
+    server_sequence: u64,
+) -> ContinuationState {
+    let suite = CipherSuite::ChaCha20Poly1305Sha256;
+    let policy = HandoffPolicySnapshot::tcp_placeholder(destination.clone());
+    ContinuationState::new(
+        suite,
+        TrafficSecret::from_bytes(suite.hash(), &[0x11; 32]).expect("client secret"),
+        1,
+        TrafficSecret::from_bytes(suite.hash(), &[0x12; 32]).expect("server secret"),
+        server_sequence,
+        false,
+        SessionKind::Tcp,
+        [0x33; 16],
+        "public-reality",
+        destination,
+        Vec::new(),
+        Vec::new(),
+        policy,
+    )
+    .expect("test state must be valid")
+}
+
+#[test]
+fn landing_resume_preserves_sequence_and_key_update_capability() {
+    let suite = CipherSuite::ChaCha20Poly1305Sha256;
+    let state = test_state_with_server_sequence(
+        Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443),
+        1,
+    );
+    let (exported, ..) = state.into_parts().expect("state must separate");
+    let mut resumed = resume_tls(exported).expect("sequence-one state must resume");
+    assert_eq!(resumed.client_records_mut().records_used(), 1);
+    assert_eq!(resumed.server_records_mut().records_used(), 1);
+
+    let mut wire = Vec::new();
+    resumed
+        .server_records_mut()
+        .seal_into(ContentType::ApplicationData, b"next", 0, &mut wire)
+        .expect("resumed server must seal at sequence one");
+    assert_eq!(resumed.server_records_mut().records_used(), 2);
+
+    let peer_state = ExportedRecordState::from_parts(
+        suite,
+        TrafficSecret::from_bytes(suite.hash(), &[0x12; 32]).expect("peer server secret"),
+        1,
+    )
+    .expect("peer state must build");
+    let mut peer = Tls13RecordLayer::from_exported_state(peer_state).expect("peer must resume");
+    let opened = peer
+        .open_in_place(&mut wire)
+        .expect("peer must authenticate the next sequence-one record");
+    assert_eq!(opened.content_type(), ContentType::ApplicationData);
+    assert_eq!(opened.plaintext(), b"next");
+    assert_eq!(peer.records_used(), 2);
+
+    resumed
+        .server_records_mut()
+        .update_traffic_secret()
+        .expect("resumed generation must update");
+    peer.update_traffic_secret()
+        .expect("peer generation must update");
+    assert_eq!(resumed.server_records_mut().records_used(), 0);
+    assert_eq!(peer.records_used(), 0);
+    resumed
+        .server_records_mut()
+        .seal_into(ContentType::ApplicationData, b"updated", 0, &mut wire)
+        .expect("updated resumed server must seal");
+    let opened = peer
+        .open_in_place(&mut wire)
+        .expect("peer must authenticate the updated generation");
+    assert_eq!(opened.plaintext(), b"updated");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sealed_v3_resume_preserves_generations_buffers_response_and_future_updates() {
+    for suite in [
+        CipherSuite::Aes128GcmSha256,
+        CipherSuite::Aes256GcmSha384,
+        CipherSuite::ChaCha20Poly1305Sha256,
+    ] {
+        let layer = |seed| {
+            Tls13RecordLayer::from_traffic_secret(
+                suite,
+                TrafficSecret::from_bytes(suite.hash(), &[seed; 48][..suite.hash().output_len()])
+                    .expect("traffic secret"),
+            )
+            .expect("record layer")
+        };
+        let mut client_records = layer(0x11);
+        let mut server_records = layer(0x12);
+        let mut peer_write = layer(0x11);
+        let mut peer_read = layer(0x12);
+        client_records
+            .update_traffic_secret()
+            .expect("pre-transfer client update");
+        peer_write
+            .update_traffic_secret()
+            .expect("peer client update");
+        let mut wire = Vec::new();
+        peer_write
+            .seal_into(ContentType::ApplicationData, b"boundary", 0, &mut wire)
+            .expect("boundary record");
+        client_records
+            .open_in_place(&mut wire)
+            .expect("boundary authentication");
+        server_records
+            .seal_into(ContentType::ApplicationData, b"", 0, &mut wire)
+            .expect("cover-shaped record");
+        peer_read
+            .open_in_place(&mut wire)
+            .expect("cover-shaped authentication");
+        peer_write
+            .seal_into(ContentType::ApplicationData, b"read ahead", 0, &mut wire)
+            .expect("read-ahead record");
+        let (_, client_secret, client_sequence) = client_records
+            .into_exported_state()
+            .expect("client export")
+            .into_parts();
+        let (_, server_secret, server_sequence) = server_records
+            .into_exported_state()
+            .expect("server export")
+            .into_parts();
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443);
+        let state = ContinuationState::new(
+            suite,
+            client_secret,
+            client_sequence,
+            server_secret,
+            server_sequence,
+            true,
+            SessionKind::Tcp,
+            *USER.as_bytes(),
+            "public-reality",
+            destination.clone(),
+            std::mem::take(&mut wire),
+            b"prefetched Vision bytes".to_vec(),
+            HandoffPolicySnapshot::tcp_placeholder(destination),
+        )
+        .expect("continuation");
+        let mut message = Vec::new();
+        let timestamp = unix_seconds().expect("clock");
+        seal_transfer(
+            &state,
+            &HandoffPsk::new(PSK),
+            &StaticX25519Key::new(&LANDING_SECRET).public_key(),
+            [0x44; 32],
+            timestamp,
+            &mut message,
+        )
+        .expect("sealed v3 transfer");
+        drop(state);
+        let handler = test_landing_handler();
+        let state = open_transfer(&message, &handler.keys, &handler.replay, timestamp, 30)
+            .expect("authenticated v3 transfer")
+            .into_state();
+        let (exported, user, destination, pending, prefetched, response_pending, kind, tag, policy) =
+            state.into_parts().expect("move transferred state");
+        assert_eq!(user, *USER.as_bytes());
+        assert_eq!(destination.port(), 443);
+        assert_eq!(prefetched, b"prefetched Vision bytes");
+        assert!(response_pending);
+        assert_eq!(kind, SessionKind::Tcp);
+        assert_eq!(tag, "public-reality");
+        assert_eq!(policy.initial_destination().port(), 443);
+        assert!(!policy.allow_destination_rewrites());
+        let tls = resume_tls(exported).expect("resume generations");
+        let (mut peer, transport) = tokio::io::duplex(4096);
+        let (read, write) = tokio::io::split(transport);
+        let (mut reader, mut writer) =
+            resume_application_halves(read, pending, write, tls, response_pending);
+        assert_eq!(
+            reader
+                .read_application(TEST_TIMEOUT)
+                .await
+                .expect("pending ciphertext")
+                .plaintext(),
+            b"read ahead"
+        );
+        writer
+            .write_application(b"after transfer", TEST_TIMEOUT)
+            .await
+            .expect("resumed write");
+        let mut response = read_tls_record(&mut peer, TEST_TIMEOUT)
+            .await
+            .expect("owed response")
+            .into_wire();
+        let opened = peer_read
+            .open_in_place(&mut response)
+            .expect("old-generation response");
+        assert_eq!(opened.content_type(), ContentType::Handshake);
+        assert_eq!(opened.plaintext(), [24, 0, 0, 1, 0]);
+        peer_read
+            .update_traffic_secret()
+            .expect("response updates peer read");
+        let mut application = read_tls_record(&mut peer, TEST_TIMEOUT)
+            .await
+            .expect("post-response application")
+            .into_wire();
+        assert_eq!(
+            peer_read
+                .open_in_place(&mut application)
+                .expect("new-generation application")
+                .plaintext(),
+            b"after transfer"
+        );
+        peer_write
+            .seal_into(ContentType::Handshake, &[24, 0, 0, 1, 1], 0, &mut wire)
+            .expect("future requested update");
+        peer_write
+            .update_traffic_secret()
+            .expect("future peer write generation");
+        peer.write_all(&wire).await.expect("future update write");
+        peer_write
+            .seal_into(
+                ContentType::ApplicationData,
+                b"future client data",
+                0,
+                &mut wire,
+            )
+            .expect("future client record");
+        peer.write_all(&wire).await.expect("future data write");
+        assert!(
+            reader
+                .read_application(TEST_TIMEOUT)
+                .await
+                .expect("future update")
+                .is_empty()
+        );
+        assert_eq!(
+            reader
+                .read_application(TEST_TIMEOUT)
+                .await
+                .expect("future client data")
+                .plaintext(),
+            b"future client data"
+        );
+        writer
+            .write_application(b"future server data", TEST_TIMEOUT)
+            .await
+            .expect("future requested response");
+        let mut response = read_tls_record(&mut peer, TEST_TIMEOUT)
+            .await
+            .expect("future response")
+            .into_wire();
+        assert_eq!(
+            peer_read
+                .open_in_place(&mut response)
+                .expect("current-generation response")
+                .plaintext(),
+            [24, 0, 0, 1, 0]
+        );
+        peer_read
+            .update_traffic_secret()
+            .expect("future peer read generation");
+        let mut application = read_tls_record(&mut peer, TEST_TIMEOUT)
+            .await
+            .expect("future server application")
+            .into_wire();
+        assert_eq!(
+            peer_read
+                .open_in_place(&mut application)
+                .expect("future server data")
+                .plaintext(),
+            b"future server data"
+        );
+    }
+}
+
+fn tls_states() -> (EstablishedTls, Tls13RecordLayer, Tls13RecordLayer) {
+    let suite = CipherSuite::Aes128GcmSha256;
+    let layer = || {
+        let secret = TrafficSecret::from_bytes(suite.hash(), &[0x31; 32])
+            .expect("client secret must import");
+        Tls13RecordLayer::from_traffic_secret(suite, secret)
+            .expect("client record layer must initialize")
+    };
+    let server_layer = || {
+        let secret = TrafficSecret::from_bytes(suite.hash(), &[0x32; 32])
+            .expect("server secret must import");
+        Tls13RecordLayer::from_traffic_secret(suite, secret)
+            .expect("server record layer must initialize")
+    };
+    (
+        EstablishedTls::from_test_records(suite, layer(), server_layer()),
+        layer(),
+        server_layer(),
+    )
+}
+
+fn tls_states_after_cover_shaped_fake_ticket()
+-> (EstablishedTls, Tls13RecordLayer, Tls13RecordLayer) {
+    let (mut established, client_write_records, mut client_read_records) = tls_states();
+    assert_eq!(established.server_records_mut().records_used(), 0);
+    assert_eq!(client_read_records.records_used(), 0);
+
+    // The cover-shaped fake NewSessionTicket is an empty application-data
+    // record under the server application key. It consumes sequence zero
+    // before authenticated Vision traffic begins, exactly as production
+    // `build_server_flight_with_shape` does.
+    let mut fake_ticket = Vec::new();
+    established
+        .server_records_mut()
+        .seal_into(ContentType::ApplicationData, b"", 117, &mut fake_ticket)
+        .expect("cover-shaped fake ticket must seal at sequence zero");
+    // 5-byte record header + 1-byte inner type + 117-byte padding + 16-byte tag.
+    assert_eq!(fake_ticket.len(), 139);
+    let opened = client_read_records
+        .open_in_place(&mut fake_ticket)
+        .expect("client must authenticate the cover-shaped fake ticket");
+    assert_eq!(opened.content_type(), ContentType::ApplicationData);
+    assert!(opened.plaintext().is_empty());
+    assert_eq!(established.server_records_mut().records_used(), 1);
+    assert_eq!(client_read_records.records_used(), 1);
+
+    (established, client_write_records, client_read_records)
+}
+
+fn vision_request(destination_port: u16, payload: &[u8]) -> Vec<u8> {
+    let mut addons = vec![0x0a, 0x10];
+    addons.extend_from_slice(VISION_FLOW.as_bytes());
+    let mut request = Vec::new();
+    request.push(VERSION);
+    request.extend_from_slice(USER.as_bytes());
+    request.push(u8::try_from(addons.len()).unwrap_or(u8::MAX));
+    request.extend_from_slice(&addons);
+    request.push(Command::Tcp.as_byte());
+    request.extend_from_slice(&destination_port.to_be_bytes());
+    request.push(1);
+    request.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());
+    let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+    let mut frame = Vec::new();
+    encoder
+        .encode(payload, VisionCommand::End, false, &mut frame)
+        .expect("Vision payload must encode");
+    request.extend_from_slice(&frame);
+    request
+}
+
+async fn tcp_pair() -> (TcpStream, TcpStream) {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("listener must bind");
+    let client = TcpStream::connect(listener.local_addr().expect("address must exist"))
+        .await
+        .expect("client must connect");
+    let (server, _) = listener.accept().await.expect("server must accept");
+    (client, server)
+}
+
+fn handoff_vision_handler(landing_address: std::net::SocketAddr) -> VisionHandler {
+    handoff_vision_handler_with_warm(landing_address, false, FdBudget::new(4_096))
+}
+
+fn handoff_vision_handler_with_warm(
+    landing_address: std::net::SocketAddr,
+    warm: bool,
+    budget: FdBudget,
+) -> VisionHandler {
+    let policy = WarmConnectionPolicy {
+        min_ready: 1,
+        max_ready: 1,
+        max_connecting: 1,
+        refill_batch: 1,
+        ..WarmConnectionPolicy::default()
+    };
+    let barrier = DirectBarrierPolicy {
+        max_concurrent: 8,
+        max_per_second: 8,
+    };
+    let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
+    let outbounds = OutboundRegistry::with_warm_pools(
+        &std::collections::BTreeMap::from([(
+            "handoff".to_owned(),
+            OutboundConfig::Handoff(HandoffOutboundConfig {
+                address: landing_address.ip().to_string(),
+                port: landing_address.port(),
+                psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+                landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
+                connect_timeout_ms: Some(if warm { 200 } else { 1_000 }),
+                first_byte_timeout_ms: Some(if warm { 400 } else { 2_000 }),
+                warm_tcp: Some(warm),
+            }),
+        )]),
+        crate::runtime::DirectBarrier::new(&barrier),
+        Duration::from_secs(1),
+        budget,
+        &crate::config::node::network::NetworkConfig::default(),
+        crate::network::NetworkEnvironment::detect(),
+        1,
+        WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+        &policy,
+    );
+    let routing = RoutingTable::compile(
+        &RoutingConfig {
+            default: "handoff".to_owned(),
+            strategy: None,
+            rules: None,
+            policies: None,
+        },
+        &[UserConfig {
+            id: "33333333-3333-3333-3333-333333333333".to_owned(),
+            short_ids: vec!["0123456789abcdef".to_owned()],
+            label: None,
+            policy: None,
+        }],
+        Arc::new(EmptyAssetMatcher),
+        crate::runtime::ResourceGovernor::new(&ResourceGovernorPolicy::default()),
+    )
+    .expect("test routing must compile");
+    let governor = ResourceGovernorPolicy {
+        connect_timeout_ms: 1_000,
+        handshake_timeout_ms: 1_000,
+        fallback_timeout_ms: 1_000,
+        ..ResourceGovernorPolicy::default()
+    };
+    VisionHandler::new(outbounds, routing, test_relay(), &governor)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn landing_rejects_an_unauthenticated_datagram_silently() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let address = listener.local_addr().expect("landing address must exist");
+    let handler = test_landing_handler();
+
+    let exchange = async {
+        let landing = async {
+            let (stream, _) = listener.accept().await?;
+            handler.handle(stream).await.map_err(io::Error::other)
+        };
+        let peer = async {
+            let mut stream = TcpStream::connect(address).await?;
+            stream.write_all(b"not a handoff transfer at all").await?;
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await?;
+            Ok::<_, io::Error>(response)
+        };
+        tokio::join!(landing, peer)
+    };
+    let (landing, peer) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("rejection must not stall");
+    landing.expect_err("garbage must fail closed");
+    assert_eq!(
+        peer.expect("peer exchange must succeed"),
+        b"",
+        "a rejected transfer must receive zero response bytes"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn landing_rejects_a_replayed_transfer_on_preestablished_sockets() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let address = listener.local_addr().expect("landing address must exist");
+    let handler = test_landing_handler();
+    let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
+    // Port 9 is the discard sink: nothing listens, so an authenticated
+    // transfer fails at the destination dial — proving it passed every
+    // authentication step.
+    let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9));
+    let mut message = Vec::new();
+    seal_transfer(
+        &state,
+        &HandoffPsk::new(PSK),
+        &landing_public,
+        [0x44; 32],
+        unix_seconds().expect("test clock must be valid"),
+        &mut message,
+    )
+    .expect("test state must seal");
+
+    let exchange = async {
+        let landing = async {
+            let (first, _) = listener.accept().await?;
+            let (second, _) = listener.accept().await?;
+            let first_handler = handler.clone();
+            let (first, second) = tokio::join!(first_handler.handle(first), handler.handle(second));
+            Ok::<_, io::Error>([first, second])
+        };
+        let peer = async {
+            let mut streams = [
+                TcpStream::connect(address).await?,
+                TcpStream::connect(address).await?,
+            ];
+            tokio::task::yield_now().await;
+            for stream in &mut streams {
+                stream.write_all(&message).await?;
+                let mut response = Vec::new();
+                stream.read_to_end(&mut response).await?;
+                assert_eq!(response, b"", "failures must stay silent");
+            }
+            Ok::<_, io::Error>(())
+        };
+        tokio::join!(landing, peer)
+    };
+    let (landing, peer) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("replay rejection must not stall");
+    peer.expect("peer exchange must succeed");
+    let outcomes = landing.expect("landing task must succeed");
+    assert!(
+        matches!(outcomes[0], Err(HandoffLandingError::Destination(_))),
+        "the first delivery must authenticate and fail only at the dial"
+    );
+    assert!(
+        matches!(
+            outcomes[1],
+            Err(HandoffLandingError::Protocol(
+                crate::protocol::handoff::HandoffError::Replay
+            ))
+        ),
+        "the replayed delivery must be rejected by the nonce cache"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_to_landing_moves_a_full_vision_session_byte_exactly() {
+    run_line_to_landing_full_vision_session(false).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_to_landing_resumes_after_cover_shaped_server_sequence_one() {
+    run_line_to_landing_full_vision_session(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_landing_serves_eight_independent_lines_concurrently() {
+    let listener = Arc::new(
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("shared landing"),
+    );
+    let handler = test_landing_handler();
+    let budget = handler.relay.fd_budget().clone();
+    let mut sessions = tokio::task::JoinSet::new();
+    for index in 0..8 {
+        sessions.spawn(run_shared_landing_session(
+            index % 2 != 0,
+            Arc::clone(&listener),
+            handler.clone(),
+        ));
+    }
+    timeout(Duration::from_secs(10), async {
+        while let Some(result) = sessions.join_next().await {
+            result.expect("every independent LINE must finish byte-exactly");
+        }
+    })
+    .await
+    .expect("shared LANDING fan-in must remain bounded");
+    assert_eq!(
+        handler
+            .governor
+            .in_flight(crate::runtime::AdmissionKind::Handshake),
+        0
+    );
+    assert_eq!(
+        handler
+            .governor
+            .in_flight(crate::runtime::AdmissionKind::PreAuthIdle),
+        0
+    );
+    drop(handler);
+    assert_eq!(
+        budget.in_use(),
+        0,
+        "all session and retained relay resources are released"
+    );
+    assert_eq!(budget.underflows(), 0);
+}
+
+async fn run_line_to_landing_full_vision_session(consume_cover_shaped_fake_ticket: bool) {
+    let listener = Arc::new(
+        TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("landing must bind"),
+    );
+    run_shared_landing_session(
+        consume_cover_shaped_fake_ticket,
+        listener,
+        test_landing_handler(),
+    )
+    .await;
+}
+
+async fn run_shared_landing_session(
+    consume_cover_shaped_fake_ticket: bool,
+    landing_listener: Arc<TcpListener>,
+    landing_handler: HandoffLandingHandler,
+) {
+    let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("destination must bind");
+    let destination_address = destination_listener
+        .local_addr()
+        .expect("destination address must exist");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    let line_handler = handoff_vision_handler(landing_address);
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, mut client_read_records) =
+        if consume_cover_shaped_fake_ticket {
+            tls_states_after_cover_shaped_fake_ticket()
+        } else {
+            tls_states()
+        };
+    let expected_first_visible_server_sequence = if consume_cover_shaped_fake_ticket {
+        1
+    } else {
+        0
+    };
+    assert_eq!(
+        client_read_records.records_used(),
+        expected_first_visible_server_sequence
+    );
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    let request = vision_request(destination_address.port(), b"ping");
+
+    let exchange = async {
+        let line = line_handler.handle(established);
+        let landing = async {
+            let (stream, _) = landing_listener.accept().await?;
+            landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            // One burst: the request record and a post-request raw-mode
+            // record travel together, so LINE's reader may hold the second
+            // record as read-ahead ciphertext at the boundary; the
+            // continuation must carry it and LANDING must open it in order.
+            let mut burst = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut burst)
+                .map_err(io::Error::other)?;
+            let mut more = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, b"-more", 0, &mut more)
+                .map_err(io::Error::other)?;
+            burst.extend_from_slice(&more);
+            let mut close_record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                .map_err(io::Error::other)?;
+            burst.extend_from_slice(&close_record);
+            client.write_all(&burst).await?;
+
+            let mut decoder = VisionDecoder::new(USER);
+            let mut decoded = Vec::new();
+            let mut response = Vec::new();
+            let mut response_header = true;
+            loop {
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read_records
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                match opened.content_type() {
+                    ContentType::ApplicationData => {
+                        let plaintext = opened.plaintext();
+                        let vision = if response_header {
+                            assert_eq!(
+                                client_read_records.records_used(),
+                                expected_first_visible_server_sequence + 1,
+                                "the first visible response must decrypt at the exported server sequence",
+                            );
+                            response_header = false;
+                            if plaintext.get(..2) != Some([VERSION, 0].as_slice()) {
+                                return Err(io::Error::other("invalid VLESS response header"));
+                            }
+                            &plaintext[2..]
+                        } else {
+                            plaintext
+                        };
+                        let _ = decoder
+                            .decode(vision, &mut decoded)
+                            .map_err(io::Error::other)?;
+                        response.extend_from_slice(&decoded);
+                    }
+                    ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                    _ => return Err(io::Error::other("unexpected outer TLS content")),
+                }
+            }
+            // A real client closes the socket after close_notify; the raw
+            // splice on LINE terminates only on TCP-level EOF.
+            client.shutdown().await?;
+            Ok::<_, io::Error>(response)
+        };
+        let destination_io = async {
+            let (mut destination, _) = destination_listener.accept().await?;
+            let mut received = Vec::new();
+            destination.read_to_end(&mut received).await?;
+            destination.write_all(b"pong").await?;
+            destination.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        tokio::join!(line, landing, client_io, destination_io)
+    };
+    let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("handoff exchange must not time out");
+    let line_stats = line.expect("LINE handler must succeed");
+    let landing_stats = landing.expect("LANDING handler must succeed");
+
+    assert_eq!(
+        destination_result.expect("destination I/O must succeed"),
+        b"ping-more",
+        "prefetched and post-boundary records must arrive byte-exactly, in order"
+    );
+    assert_eq!(
+        client_result.expect("client I/O must succeed"),
+        b"pong",
+        "the resumed downlink must decrypt byte-exactly at the client"
+    );
+    assert_eq!(landing_stats.inbound_to_outbound_bytes(), 9);
+    assert_eq!(landing_stats.outbound_to_inbound_bytes(), 4);
+    assert!(
+        line_stats.downlink_bytes() > 0,
+        "LINE must report the raw downlink ciphertext it spliced: up={} down={}",
+        line_stats.uplink_bytes(),
+        line_stats.downlink_bytes()
+    );
+    // The whole client burst fit LINE's reader buffer, so it traveled
+    // inside the sealed continuation and the uplink splice legitimately
+    // moved zero bytes.
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_splices_post_transfer_uplink_records_to_landing() {
+    let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("destination must bind");
+    let destination_address = destination_listener
+        .local_addr()
+        .expect("destination address must exist");
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    let landing_handler = test_landing_handler();
+    let line_handler = handoff_vision_handler(landing_address);
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    let request = vision_request(destination_address.port(), b"ping");
+
+    let exchange = async {
+        let line = line_handler.handle(established);
+        let landing = async {
+            let (stream, _) = landing_listener.accept().await?;
+            landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                .map_err(io::Error::other)?;
+            client.write_all(&record).await?;
+
+            // The first downlink record (response header + opening frame)
+            // proves the transfer landed; everything sent afterwards must
+            // travel the raw splice, never LINE's TLS state.
+            let mut first = read_tls_record(&mut client, TEST_TIMEOUT)
+                .await
+                .map_err(io::Error::other)?
+                .into_wire();
+            let opened = client_read_records
+                .open_in_place(&mut first)
+                .map_err(io::Error::other)?;
+            let mut decoder = VisionDecoder::new(USER);
+            let mut decoded = Vec::new();
+            let mut response = Vec::new();
+            {
+                let plaintext = opened.plaintext();
+                if opened.content_type() != ContentType::ApplicationData
+                    || plaintext.get(..2) != Some([VERSION, 0].as_slice())
+                {
+                    return Err(io::Error::other("missing resumed response header"));
+                }
+                let _ = decoder
+                    .decode(&plaintext[2..], &mut decoded)
+                    .map_err(io::Error::other)?;
+                response.extend_from_slice(&decoded);
+            }
+            let mut more = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, b"-more", 0, &mut more)
+                .map_err(io::Error::other)?;
+            client.write_all(&more).await?;
+            let mut close_record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                .map_err(io::Error::other)?;
+            client.write_all(&close_record).await?;
+
+            loop {
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read_records
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                match opened.content_type() {
+                    ContentType::ApplicationData => {
+                        let _ = decoder
+                            .decode(opened.plaintext(), &mut decoded)
+                            .map_err(io::Error::other)?;
+                        response.extend_from_slice(&decoded);
+                    }
+                    ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                    _ => return Err(io::Error::other("unexpected outer TLS content")),
+                }
+            }
+            client.shutdown().await?;
+            Ok::<_, io::Error>(response)
+        };
+        let destination_io = async {
+            let (mut destination, _) = destination_listener.accept().await?;
+            let mut received = Vec::new();
+            destination.read_to_end(&mut received).await?;
+            destination.write_all(b"pong").await?;
+            destination.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        tokio::join!(line, landing, client_io, destination_io)
+    };
+    let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("spliced uplink exchange must not time out");
+    let line_stats = line.expect("LINE handler must succeed");
+    landing.expect("LANDING handler must succeed");
+
+    assert_eq!(
+        destination_result.expect("destination I/O must succeed"),
+        b"ping-more"
+    );
+    assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+    assert!(
+        line_stats.uplink_bytes() > 0,
+        "post-transfer records must move through the raw splice"
+    );
+}
+
+fn egress_registry(name: &str, outbound: OutboundConfig) -> OutboundRegistry {
+    OutboundRegistry::new(
+        &std::collections::BTreeMap::from([(name.to_owned(), outbound)]),
+        &DirectBarrierPolicy::default(),
+        Duration::from_secs(1),
+        FdBudget::new(4_096),
+    )
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn landing_serves_a_transferred_session_through_a_socks5_egress() {
+    let socks_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("SOCKS stub must bind");
+    let socks_address = socks_listener
+        .local_addr()
+        .expect("SOCKS stub address must exist");
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    // Reserve a destination port and drop its listener: nothing accepts a
+    // direct dial, so the session can only succeed through the egress hop.
+    let destination_port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("probe listener must bind")
+        .local_addr()
+        .expect("probe address must exist")
+        .port();
+    let landing_handler = test_landing_handler().with_egress(
+        egress_registry(
+            "socks",
+            OutboundConfig::Socks5(Socks5Config {
+                address: socks_address.ip().to_string(),
+                port: socks_address.port(),
+                username: None,
+                password: None,
+                warm_tcp: Some(false),
+            }),
+        ),
+        "socks",
+    );
+    let line_handler = handoff_vision_handler(landing_address);
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    let request = vision_request(destination_port, b"ping");
+
+    let exchange = async {
+        let line = line_handler.handle(established);
+        let landing = async {
+            let (stream, _) = landing_listener.accept().await?;
+            landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut burst = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut burst)
+                .map_err(io::Error::other)?;
+            let mut more = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, b"-more", 0, &mut more)
+                .map_err(io::Error::other)?;
+            burst.extend_from_slice(&more);
+            let mut close_record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                .map_err(io::Error::other)?;
+            burst.extend_from_slice(&close_record);
+            client.write_all(&burst).await?;
+
+            let mut decoder = VisionDecoder::new(USER);
+            let mut decoded = Vec::new();
+            let mut response = Vec::new();
+            let mut response_header = true;
+            loop {
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read_records
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                match opened.content_type() {
+                    ContentType::ApplicationData => {
+                        let plaintext = opened.plaintext();
+                        let vision = if response_header {
+                            response_header = false;
+                            if plaintext.get(..2) != Some([VERSION, 0].as_slice()) {
+                                return Err(io::Error::other("invalid VLESS response header"));
+                            }
+                            &plaintext[2..]
+                        } else {
+                            plaintext
+                        };
+                        let _ = decoder
+                            .decode(vision, &mut decoded)
+                            .map_err(io::Error::other)?;
+                        response.extend_from_slice(&decoded);
+                    }
+                    ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                    _ => return Err(io::Error::other("unexpected outer TLS content")),
+                }
+            }
+            client.shutdown().await?;
+            Ok::<_, io::Error>(response)
+        };
+        // A minimal no-auth SOCKS5 peer: negotiate, verify the CONNECT
+        // carries the transferred destination byte-exactly, then serve as
+        // the destination without ever dialing it.
+        let socks_io = async {
+            let (mut stream, _) = socks_listener.accept().await?;
+            let mut greeting = [0_u8; 3];
+            stream.read_exact(&mut greeting).await?;
+            if greeting != [5, 1, 0] {
+                return Err(io::Error::other("unexpected SOCKS greeting"));
+            }
+            stream.write_all(&[5, 0]).await?;
+            let mut header = [0_u8; 4];
+            stream.read_exact(&mut header).await?;
+            let mut address = [0_u8; 4];
+            stream.read_exact(&mut address).await?;
+            let mut port = [0_u8; 2];
+            stream.read_exact(&mut port).await?;
+            if header != [5, 1, 0, 1]
+                || address != Ipv4Addr::LOCALHOST.octets()
+                || u16::from_be_bytes(port) != destination_port
+            {
+                return Err(io::Error::other(
+                    "the CONNECT request must carry the transferred destination",
+                ));
+            }
+            stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).await?;
+            stream.write_all(b"pong").await?;
+            stream.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        tokio::join!(line, landing, client_io, socks_io)
+    };
+    let (line, landing, client_result, socks_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("egress exchange must not time out");
+    line.expect("LINE handler must succeed");
+    let landing_stats = landing.expect("LANDING handler must succeed");
+
+    assert_eq!(
+        socks_result.expect("SOCKS stub I/O must succeed"),
+        b"ping-more",
+        "the session payload must reach the egress hop byte-exactly"
+    );
+    assert_eq!(
+        client_result.expect("client I/O must succeed"),
+        b"pong",
+        "the egress hop's downlink must decrypt byte-exactly at the client"
+    );
+    assert_eq!(landing_stats.inbound_to_outbound_bytes(), 9);
+    assert_eq!(landing_stats.outbound_to_inbound_bytes(), 4);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn landing_ends_a_transferred_session_silently_when_the_egress_blackholes() {
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    // `block` is a built-in outbound, so an empty declaration set already
+    // resolves it.
+    let landing_handler = test_landing_handler().with_egress(
+        OutboundRegistry::new(
+            &std::collections::BTreeMap::new(),
+            &DirectBarrierPolicy::default(),
+            Duration::from_secs(1),
+            FdBudget::new(4_096),
+        ),
+        "block",
+    );
+    let line_handler = handoff_vision_handler(landing_address);
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, _client_read_records) = tls_states();
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    // Port 9 is the discard sink: if the landing dialed despite the
+    // blackhole, the session would fail with a destination error instead
+    // of ending cleanly.
+    let request = vision_request(9, b"ping");
+
+    let exchange = async {
+        let line = line_handler.handle(established);
+        let landing = async {
+            let (stream, _) = landing_listener.accept().await?;
+            landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                .map_err(io::Error::other)?;
+            client.write_all(&record).await?;
+            // The blackholed session never produces downlink, so LINE's
+            // first-byte deadline classifies the silent close as a
+            // rejection and resets the client socket.
+            let mut byte = [0_u8; 1];
+            let error = client
+                .read(&mut byte)
+                .await
+                .expect_err("a blackholed transfer must reset the client, never FIN it");
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::ConnectionReset,
+                "the rejection abort must reach the client as RST"
+            );
+            Ok::<_, io::Error>(())
+        };
+        tokio::join!(line, landing, client_io)
+    };
+    let (line, landing, client_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("blackhole exchange must not time out");
+    let landing_stats = landing.expect("a blackholed egress must end the session without an error");
+    assert_eq!(landing_stats.inbound_to_outbound_bytes(), 0);
+    assert_eq!(landing_stats.outbound_to_inbound_bytes(), 0);
+    client_result.expect("client I/O must succeed");
+    let error = line.expect_err("LINE must fail the session, never serve it locally");
+    assert!(
+        matches!(
+            error,
+            VisionSessionError::HandoffLine(HandoffLineError::LandingRejected)
+        ),
+        "a blackholed landing close must read as a rejection: {error}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_aborts_the_client_when_landing_rejects_the_transfer() {
+    // A landing node with the WRONG psk: every transfer fails
+    // authentication and closes silently.
+    let wrong_psk_handler = {
+        let replay = HandoffReplayCache::new(1_024, Duration::from_secs(120))
+            .expect("test replay cache must compile");
+        HandoffLandingHandler::new(
+            HandoffLandingKeys::single(
+                HandoffPsk::new([0x66; 32]),
+                StaticX25519Key::new(&LANDING_SECRET),
+            ),
+            replay,
+            30,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            test_relay(),
+            Duration::from_secs(1),
+        )
+    };
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    let line_handler = handoff_vision_handler(landing_address);
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, _client_read_records) = tls_states();
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    let request = vision_request(9, b"ping");
+
+    let exchange = async {
+        let line = line_handler.handle(established);
+        let landing = async {
+            let (stream, _) = landing_listener.accept().await?;
+            wrong_psk_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                .map_err(io::Error::other)?;
+            client.write_all(&record).await?;
+            // The client stays open like any patient client: LINE must
+            // detect the silent rejection at its own first-byte deadline —
+            // far inside TEST_TIMEOUT — and reset this socket. A clean
+            // FIN (Ok(0)) or any read byte is a failure of the spec's
+            // failure semantics, not a race to tolerate.
+            let mut byte = [0_u8; 1];
+            let error = client
+                .read(&mut byte)
+                .await
+                .expect_err("a rejected transfer must reset the client, never FIN it");
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::ConnectionReset,
+                "the rejection abort must reach the client as RST"
+            );
+            Ok::<_, io::Error>(())
+        };
+        tokio::join!(line, landing, client_io)
+    };
+    let (line, landing, client_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("rejection exchange must not time out");
+    assert!(landing.is_err(), "the wrong psk must fail authentication");
+    client_result.expect("client I/O must succeed");
+    let error = line.expect_err("LINE must fail the session, never serve it locally");
+    assert!(
+        matches!(
+            error,
+            VisionSessionError::HandoffLine(HandoffLineError::LandingRejected)
+        ),
+        "a landing close without downlink must read as a rejection: {error}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_transfer_failure_on_unreachable_landing_fails_the_session() {
+    // Reserve a port and drop the listener so connects are refused fast.
+    let refused_port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("probe listener must bind")
+        .local_addr()
+        .expect("probe address must exist")
+        .port();
+    let landing_address = std::net::SocketAddr::new(Ipv4Addr::LOCALHOST.into(), refused_port);
+    let line_handler = handoff_vision_handler(landing_address);
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, _client_read_records) = tls_states();
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    let request = vision_request(9, b"ping");
+
+    let exchange = async {
+        let line = line_handler.handle(established);
+        let client_io = async {
+            let mut record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                .map_err(io::Error::other)?;
+            client.write_all(&record).await
+        };
+        tokio::join!(line, client_io)
+    };
+    let (line, client_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("dial failure must not stall");
+    client_result.expect("the request write must succeed");
+    let error = line.expect_err("an unreachable landing must fail the session");
+    assert!(
+        matches!(
+            error,
+            VisionSessionError::HandoffLine(HandoffLineError::Connect(_))
+        ),
+        "a refused landing dial must surface as a connect failure: {error}"
+    );
+}
+
+#[test]
+fn handoff_line_rejects_undecodable_settings() {
+    assert!(
+        HandoffLine::from_settings(&HandoffOutboundConfig {
+            address: "127.0.0.1".to_owned(),
+            port: 443,
+            psk: SecretString::new("not-base64!"),
+            landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 32]),
+            connect_timeout_ms: Some(1_000),
+            first_byte_timeout_ms: Some(1_000),
+            warm_tcp: Some(false),
+        })
+        .is_none()
+    );
+    assert!(
+        HandoffLine::from_settings(&HandoffOutboundConfig {
+            address: "127.0.0.1".to_owned(),
+            port: 443,
+            psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+            landing_public_key: BASE64_URL_SAFE_NO_PAD.encode([0x77; 16]),
+            connect_timeout_ms: Some(1_000),
+            first_byte_timeout_ms: Some(1_000),
+            warm_tcp: Some(false),
+        })
+        .is_none()
+    );
+}
+
+#[test]
+fn debug_output_never_reveals_key_material() {
+    let line = handoff_line(std::net::SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 443));
+    let rendered = format!("{line:?}");
+    assert!(rendered.contains("[REDACTED]"));
+    assert!(!rendered.contains("VVVV"), "the base64 PSK must not appear");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn first_downlink_byte_classification() {
+    // Session downlink begins with a sealed application-data record and
+    // the probe must not consume it.
+    let (mut peer, mut stream) = tcp_pair().await;
+    peer.write_all(&[0x17, 0x03, 0x03, 0x00, 0x01, 0xaa])
+        .await
+        .expect("peer write must succeed");
+    assert!(
+        super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+        "a TLS application-data first byte must classify as landed"
+    );
+    drop(peer);
+    let mut rest = Vec::new();
+    stream
+        .read_to_end(&mut rest)
+        .await
+        .expect("the peeked bytes must remain for the raw relay");
+    assert_eq!(rest, [0x17, 0x03, 0x03, 0x00, 0x01, 0xaa]);
+
+    // A silent close and a mid-flight reset both read as rejection.
+    let (peer, stream) = tcp_pair().await;
+    drop(peer);
+    assert!(
+        !super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+        "a silent close must classify as rejected"
+    );
+    let (peer, stream) = tcp_pair().await;
+    rr_linux::socket::abort_linger(&peer).expect("abort linger must apply");
+    drop(peer);
+    assert!(
+        !super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+        "a reset must classify as rejected"
+    );
+
+    // A REALITY cover target mirroring the transfer would answer with a
+    // handshake or alert record, never session application data.
+    let (mut peer, stream) = tcp_pair().await;
+    peer.write_all(&[0x16, 0x03, 0x01])
+        .await
+        .expect("peer write must succeed");
+    assert!(
+        !super::first_downlink_landed(&stream, TEST_TIMEOUT).await,
+        "non-application-data bytes must classify as rejected"
+    );
+    drop(peer);
+
+    // A landing that holds the connection without answering trips the
+    // deadline, not the session idle timeout.
+    let (_peer, stream) = tcp_pair().await;
+    let started = std::time::Instant::now();
+    assert!(
+        !super::first_downlink_landed(&stream, Duration::from_millis(50)).await,
+        "a stalled landing must classify as rejected at the deadline"
+    );
+    assert!(
+        started.elapsed() < TEST_TIMEOUT,
+        "the deadline must bound the wait, not the idle timeout"
+    );
+}
+
+/// Reads resumed downlink records until the decoded payload equals
+/// `expected`, returning the collected payload. The Vision decoder and
+/// the decoded prefix come from [`read_response_header_record`], keeping
+/// the decoder state continuous across the opening frame.
+async fn read_resumed_payload(
+    client: &mut TcpStream,
+    records: &mut Tls13RecordLayer,
+    expected: &[u8],
+    decoder: &mut VisionDecoder,
+    response: &mut Vec<u8>,
+) -> io::Result<Vec<u8>> {
+    let mut decoded = Vec::new();
+    while response != expected {
+        let mut record = read_tls_record(client, TEST_TIMEOUT)
+            .await
+            .map_err(io::Error::other)?
+            .into_wire();
+        let opened = records
+            .open_in_place(&mut record)
+            .map_err(io::Error::other)?;
+        if opened.content_type() != ContentType::ApplicationData {
+            return Err(io::Error::other(
+                "unexpected non-application downlink record",
+            ));
+        }
+        let _ = decoder
+            .decode(opened.plaintext(), &mut decoded)
+            .map_err(io::Error::other)?;
+        response.extend_from_slice(&decoded);
+    }
+    Ok(std::mem::take(response))
+}
+
+/// Reads and validates the first resumed downlink record — the VLESS
+/// response header plus the opening Vision frame — and returns the
+/// decoder primed with that frame and the payload decoded so far.
+async fn read_response_header_record(
+    client: &mut TcpStream,
+    records: &mut Tls13RecordLayer,
+) -> io::Result<(VisionDecoder, Vec<u8>)> {
+    let mut first = read_tls_record(client, TEST_TIMEOUT)
+        .await
+        .map_err(io::Error::other)?
+        .into_wire();
+    let opened = records
+        .open_in_place(&mut first)
+        .map_err(io::Error::other)?;
+    let plaintext = opened.plaintext();
+    if opened.content_type() != ContentType::ApplicationData
+        || plaintext.get(..2) != Some([VERSION, 0].as_slice())
+    {
+        return Err(io::Error::other("missing resumed response header"));
+    }
+    let mut decoder = VisionDecoder::new(USER);
+    let mut decoded = Vec::new();
+    let _ = decoder
+        .decode(&plaintext[2..], &mut decoded)
+        .map_err(io::Error::other)?;
+    Ok((decoder, decoded))
+}
+
+/// Seals `payload` into as many application records as its size requires.
+fn seal_application_records(records: &mut Tls13RecordLayer, payload: &[u8]) -> io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    for chunk in payload.chunks(16_000) {
+        // `seal_into` replaces its output, so each record is staged apart.
+        let mut record = Vec::new();
+        records
+            .seal_into(ContentType::ApplicationData, chunk, 0, &mut record)
+            .map_err(io::Error::other)?;
+        output.extend_from_slice(&record);
+    }
+    Ok(output)
+}
+
+/// Closes the client the way a real TLS client commonly does: the final
+/// server close_notify is left unread, so the kernel resets the
+/// connection. Waits briefly first so LINE has spliced every downlink
+/// byte into the client's receive queue.
+async fn reset_client_unread(client: TcpStream) {
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    rr_linux::socket::abort_linger(&client).expect("abort linger must apply");
+    drop(client);
+}
+
+struct HandoffRig {
+    destination_listener: TcpListener,
+    landing_listener: TcpListener,
+    landing_handler: HandoffLandingHandler,
+    line_handler: VisionHandler,
+    client: TcpStream,
+    established: RealityEstablished,
+    client_write_records: Tls13RecordLayer,
+    client_read_records: Tls13RecordLayer,
+}
+
+async fn handoff_rig() -> HandoffRig {
+    let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("destination must bind");
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    let (client, server) = tcp_pair().await;
+    let (established_tls, client_write_records, client_read_records) = tls_states();
+    HandoffRig {
+        destination_listener,
+        landing_listener,
+        landing_handler: test_landing_handler(),
+        line_handler: handoff_vision_handler(landing_address),
+        client,
+        established: RealityEstablished::from_test_parts(
+            TlsApplicationIo::new(server, established_tls),
+            USER,
+        ),
+        client_write_records,
+        client_read_records,
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_completes_a_clean_session_when_the_client_resets_at_teardown() {
+    let rig = handoff_rig().await;
+    let destination_port = rig
+        .destination_listener
+        .local_addr()
+        .expect("destination address must exist")
+        .port();
+    let request = vision_request(destination_port, b"ping");
+
+    let exchange = async {
+        let line = rig.line_handler.handle(rig.established);
+        let landing = async {
+            let (stream, _) = rig.landing_listener.accept().await?;
+            rig.landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut client = rig.client;
+            let mut write_records = rig.client_write_records;
+            let mut read_records = rig.client_read_records;
+            let mut record = Vec::new();
+            write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                .map_err(io::Error::other)?;
+            client.write_all(&record).await?;
+            let mut close_record = Vec::new();
+            write_records
+                .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                .map_err(io::Error::other)?;
+            client.write_all(&close_record).await?;
+            let (mut decoder, mut response) =
+                read_response_header_record(&mut client, &mut read_records).await?;
+            let response = read_resumed_payload(
+                &mut client,
+                &mut read_records,
+                b"pong",
+                &mut decoder,
+                &mut response,
+            )
+            .await?;
+            // The payload is complete; the client closes without reading
+            // the server's close_notify, so LINE's raw splice observes a
+            // reset instead of a FIN. The session was clean and must be
+            // accounted as completed, not rejected.
+            reset_client_unread(client).await;
+            Ok::<_, io::Error>(response)
+        };
+        let destination_io = async {
+            let (mut destination, _) = rig.destination_listener.accept().await?;
+            let mut received = Vec::new();
+            destination.read_to_end(&mut received).await?;
+            destination.write_all(b"pong").await?;
+            destination.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        tokio::join!(line, landing, client_io, destination_io)
+    };
+    let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("handoff exchange must not time out");
+
+    assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+    assert_eq!(
+        destination_result.expect("destination I/O must succeed"),
+        b"ping"
+    );
+    landing.expect("LANDING handler must succeed");
+    let line_stats =
+        line.expect("a teardown reset must not fail a session that already completed byte-exactly");
+    assert!(
+        line_stats.downlink_bytes() > 0,
+        "LINE must report the spliced downlink ciphertext it moved"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_completes_an_upload_dominated_session_when_the_client_resets_at_teardown() {
+    let rig = handoff_rig().await;
+    let destination_port = rig
+        .destination_listener
+        .local_addr()
+        .expect("destination address must exist")
+        .port();
+    let request = vision_request(destination_port, b"ping");
+    let upload = vec![0x55_u8; 200 * 1024];
+
+    let exchange = async {
+        let line = rig.line_handler.handle(rig.established);
+        let landing = async {
+            let (stream, _) = rig.landing_listener.accept().await?;
+            rig.landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut client = rig.client;
+            let mut write_records = rig.client_write_records;
+            let mut read_records = rig.client_read_records;
+            let mut record = Vec::new();
+            write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                .map_err(io::Error::other)?;
+            client.write_all(&record).await?;
+            // Wait for the first downlink record so the upload provably
+            // travels the raw splice rather than the sealed continuation.
+            let (mut decoder, mut response) =
+                read_response_header_record(&mut client, &mut read_records).await?;
+            client
+                .write_all(&seal_application_records(&mut write_records, &upload)?)
+                .await?;
+            let mut close_record = Vec::new();
+            write_records
+                .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                .map_err(io::Error::other)?;
+            client.write_all(&close_record).await?;
+            let response = read_resumed_payload(
+                &mut client,
+                &mut read_records,
+                b"pong",
+                &mut decoder,
+                &mut response,
+            )
+            .await?;
+            reset_client_unread(client).await;
+            Ok::<_, io::Error>(response)
+        };
+        let destination_io = async {
+            let (mut destination, _) = rig.destination_listener.accept().await?;
+            let mut received = Vec::new();
+            destination.read_to_end(&mut received).await?;
+            destination.write_all(b"pong").await?;
+            destination.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        tokio::join!(line, landing, client_io, destination_io)
+    };
+    let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("upload exchange must not time out");
+
+    assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+    let mut expected_upload = b"ping".to_vec();
+    expected_upload.extend_from_slice(&upload);
+    assert_eq!(
+        destination_result.expect("destination I/O must succeed"),
+        expected_upload,
+        "the spliced upload must arrive byte-exactly"
+    );
+    landing.expect("LANDING handler must succeed");
+    let line_stats = line.expect("a teardown reset must not fail a completed upload session");
+    assert!(
+        line_stats.uplink_bytes() > 0,
+        "the post-transfer upload must move through the raw splice"
+    );
+    assert!(line_stats.downlink_bytes() > 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn line_completes_when_the_client_half_closes_before_the_downlink() {
+    let rig = handoff_rig().await;
+    let destination_port = rig
+        .destination_listener
+        .local_addr()
+        .expect("destination address must exist")
+        .port();
+    let request = vision_request(destination_port, b"ping");
+
+    let exchange = async {
+        let line = rig.line_handler.handle(rig.established);
+        let landing = async {
+            let (stream, _) = rig.landing_listener.accept().await?;
+            rig.landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut client = rig.client;
+            let mut write_records = rig.client_write_records;
+            let mut read_records = rig.client_read_records;
+            let mut burst = Vec::new();
+            write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut burst)
+                .map_err(io::Error::other)?;
+            let mut close_record = Vec::new();
+            write_records
+                .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                .map_err(io::Error::other)?;
+            burst.extend_from_slice(&close_record);
+            client.write_all(&burst).await?;
+            // The client half-closes its write side before a single
+            // downlink byte arrives; the response must still flow.
+            client.shutdown().await?;
+            let (mut decoder, mut response) =
+                read_response_header_record(&mut client, &mut read_records).await?;
+            let response = read_resumed_payload(
+                &mut client,
+                &mut read_records,
+                b"pong",
+                &mut decoder,
+                &mut response,
+            )
+            .await?;
+            Ok::<_, io::Error>(response)
+        };
+        let destination_io = async {
+            let (mut destination, _) = rig.destination_listener.accept().await?;
+            let mut received = Vec::new();
+            destination.read_to_end(&mut received).await?;
+            destination.write_all(b"pong").await?;
+            destination.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        tokio::join!(line, landing, client_io, destination_io)
+    };
+    let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("half-close exchange must not time out");
+
+    assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+    assert_eq!(
+        destination_result.expect("destination I/O must succeed"),
+        b"ping"
+    );
+    landing.expect("LANDING handler must succeed");
+    let line_stats = line.expect("a client half-close first must still complete the session");
+    assert!(line_stats.downlink_bytes() > 0);
+}
