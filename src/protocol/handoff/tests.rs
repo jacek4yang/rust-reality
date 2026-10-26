@@ -147,7 +147,7 @@ fn cloned_landing_handlers_share_keys_across_concurrent_transfers() {
     let (secret, public) = landing_key_pair(0x77);
     let psk = HandoffPsk::new([0x55; 32]);
     let keys = HandoffLandingKeys::single(psk.clone(), StaticX25519Key::new(&secret));
-    let lifetime = std::sync::Arc::downgrade(&keys.active_secret);
+    let lifetime = std::sync::Arc::downgrade(keys.active_secret_arc());
     let cache = test_cache();
     std::thread::scope(|scope| {
         for index in 0..8 {
