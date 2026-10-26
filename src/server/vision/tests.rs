@@ -44,7 +44,7 @@ async fn successful_handoff_reunite_preserves_graceful_carrier_close() {
     let (client, _client_peer) = tcp_pair().await;
     let (landing, mut landing_peer) = tcp_pair().await;
     let (reader, writer) = client.into_split();
-    let _client = super::reunite_handoff_client(reader, writer, &landing)
+    let _client = super::handoff_resume::reunite_handoff_client(reader, writer, &landing)
         .expect("matching client halves must reunite");
     drop(landing);
     let mut byte = [0_u8; 1];
@@ -62,7 +62,7 @@ async fn failed_handoff_reunite_still_aborts_carrier() {
     let (landing, mut landing_peer) = tcp_pair().await;
     let (reader, _first_writer) = first.into_split();
     let (_second_reader, writer) = second.into_split();
-    let error = super::reunite_handoff_client(reader, writer, &landing)
+    let error = super::handoff_resume::reunite_handoff_client(reader, writer, &landing)
         .expect_err("unrelated client halves must fail closed");
     assert!(matches!(
         error,
