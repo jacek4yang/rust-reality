@@ -8,6 +8,7 @@
 mod error;
 mod keys;
 mod layout;
+mod open;
 mod wire;
 
 pub use error::NxrUdpError;
@@ -17,10 +18,12 @@ pub use layout::{
     FRAME_TYPE_CLOSE, FRAME_TYPE_DATAGRAM, MAX_FRAME_BODY_LEN, MAX_FRAME_WIRE_LEN,
     MAX_UDP_OPEN_LEN, NXR_UDP_MAX_PAYLOAD, SESSION_TAG_LEN,
 };
-pub use wire::{
-    NxrUdpFrame, NxrUdpSeq, UdpAuthenticatedOpen, classify_open, decode_frame, decode_udp_open,
-    drain_frames, encode_frame, encode_udp_open, frame_wire_len_from_prefix,
+pub use open::{
+    UdpAuthenticatedOpen, classify_open, decode_udp_open, encode_udp_open,
     open_authenticated_prefix, udp_open_len_from_header,
+};
+pub use wire::{
+    NxrUdpFrame, NxrUdpSeq, decode_frame, drain_frames, encode_frame, frame_wire_len_from_prefix,
 };
 
 #[cfg(any(test, feature = "fuzzing"))]
