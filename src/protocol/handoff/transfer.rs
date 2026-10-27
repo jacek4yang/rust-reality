@@ -246,4 +246,3 @@ pub(crate) fn derive_aead(
     nonce.copy_from_slice(&okm[32..]);
     Ok((key, nonce))
 }
-

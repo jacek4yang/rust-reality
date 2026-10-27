@@ -39,7 +39,6 @@ mod transfer;
 mod wire;
 
 #[cfg(feature = "fuzzing")]
-#[cfg(feature = "fuzzing")]
 pub use blob::fuzz_decode_blob;
 pub use error::HandoffError;
 pub use keys::{HandoffLandingKeys, HandoffPsk, MAX_PREVIOUS_KEYS};
@@ -50,10 +49,7 @@ pub use policy::{
 };
 pub use replay::HandoffReplayCache;
 pub use state::{ContinuationParts, ContinuationState, OpenedTransfer};
-
 pub use transfer::{open_transfer, seal_transfer};
-pub(crate) use transfer::derive_aead;
-pub(crate) use blob::{decode_blob, encode_blob};
 pub use wire::message_len_from_header;
 
 /// Handoff wire protocol version carried in the fixed header.

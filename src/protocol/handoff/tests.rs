@@ -7,13 +7,14 @@ use chacha20poly1305::{
 
 use x25519_dalek::{PublicKey, StaticSecret};
 
+use super::blob::{decode_blob, encode_blob};
 use super::{
     CONTINUATION_STATE_VERSION, ContinuationState, HANDOFF_PROTOCOL_VERSION, HEADER_LEN,
     HandoffError, HandoffLandingKeys, HandoffPolicySnapshot, HandoffPsk, HandoffReplayCache,
     MAX_BLOB_LEN, MAX_MESSAGE_LEN, MAX_PENDING_CIPHERTEXT_LEN, MAX_PREFETCHED_PLAINTEXT_LEN,
     MAX_PREVIOUS_KEYS, MonotonicInstant, NONCE_LEN, STATE_VERSION_OFFSET, SealedDomainMatcher,
-    SealedHandoffRouteRule, SealedIpNetwork, SealedPortRange, SessionKind, decode_blob,
-    encode_blob, message_len_from_header, open_transfer, seal_transfer,
+    SealedHandoffRouteRule, SealedIpNetwork, SealedPortRange, SessionKind, message_len_from_header,
+    open_transfer, seal_transfer,
 };
 use crate::crypto::StaticX25519Key;
 use crate::protocol::reality::tls13::{CipherSuite, HashAlgorithm, TrafficSecret};
@@ -341,7 +342,7 @@ fn authenticated_v1_inner_blob_is_rejected_as_invalid_state() {
     let shared = StaticX25519Key::new(&landing_secret)
         .agree(&ephemeral)
         .expect("shared key");
-    let (key, nonce) = super::derive_aead(&header, &shared, &psk, &landing_public)
+    let (key, nonce) = super::transfer::derive_aead(&header, &shared, &psk, &landing_public)
         .expect("transfer AEAD material");
     let cipher = ChaCha20Poly1305::new_from_slice(key.as_slice()).expect("transfer cipher");
     let body_end = message.len() - 16;
