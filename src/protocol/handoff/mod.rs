@@ -48,6 +48,7 @@ mod error;
 mod keys;
 mod policy;
 mod replay;
+mod wire;
 
 #[cfg(feature = "fuzzing")]
 #[cfg(feature = "fuzzing")]
@@ -62,6 +63,9 @@ pub use policy::{
 pub use replay::HandoffReplayCache;
 
 use blob::{decode_blob, encode_blob};
+use wire::{encode_header, parse_header};
+
+pub use wire::message_len_from_header;
 
 /// Handoff wire protocol version carried in the fixed header.
 pub const HANDOFF_PROTOCOL_VERSION: u8 = 1;
@@ -78,7 +82,7 @@ pub const CONTINUATION_STATE_VERSION: u8 = 3;
 /// Maximum inbound tag bytes sealed into a continuation (operator tag length).
 pub const MAX_INBOUND_TAG_LEN: usize = 64;
 
-const MAGIC: [u8; 4] = *b"HND1";
+pub(crate) const MAGIC: [u8; 4] = *b"HND1";
 
 /// Fixed header length in bytes.
 pub const HEADER_LEN: usize = 114;
@@ -89,19 +93,19 @@ pub const MAX_BLOB_LEN: usize = 96 * 1024;
 /// Largest valid transfer message: header, capped blob, and AEAD tag.
 pub const MAX_MESSAGE_LEN: usize = HEADER_LEN + MAX_BLOB_LEN + TAG_LEN;
 
-const VERSION_OFFSET: usize = 4;
-const STATE_VERSION_OFFSET: usize = 5;
-const TIMESTAMP_OFFSET: usize = 6;
-const NONCE_OFFSET: usize = 14;
-const EPHEMERAL_OFFSET: usize = 30;
-const CLIENT_RANDOM_OFFSET: usize = 62;
-const USER_ID_OFFSET: usize = 94;
-const BLOB_LEN_OFFSET: usize = 110;
+pub(crate) const VERSION_OFFSET: usize = 4;
+pub(crate) const STATE_VERSION_OFFSET: usize = 5;
+pub(crate) const TIMESTAMP_OFFSET: usize = 6;
+pub(crate) const NONCE_OFFSET: usize = 14;
+pub(crate) const EPHEMERAL_OFFSET: usize = 30;
+pub(crate) const CLIENT_RANDOM_OFFSET: usize = 62;
+pub(crate) const USER_ID_OFFSET: usize = 94;
+pub(crate) const BLOB_LEN_OFFSET: usize = 110;
 
-const NONCE_LEN: usize = 16;
-const X25519_PUBLIC_LEN: usize = 32;
-const USER_ID_LEN: usize = 16;
-const TAG_LEN: usize = 16;
+pub(crate) const NONCE_LEN: usize = 16;
+pub(crate) const X25519_PUBLIC_LEN: usize = 32;
+pub(crate) const USER_ID_LEN: usize = 16;
+pub(crate) const TAG_LEN: usize = 16;
 const AEAD_NONCE_LEN: usize = 12;
 const MAX_DOMAIN_LEN: usize = 253;
 
@@ -426,24 +430,6 @@ impl fmt::Debug for OpenedTransfer {
     }
 }
 
-/// Returns the exact total message size declared by one fixed header.
-///
-/// Performs only the bounded structural checks needed to read exactly one
-/// transfer off a stream: magic, both versions, and the blob-length cap. It
-/// does not authenticate any field and never allocates.
-///
-/// # Errors
-///
-/// Rejects truncated, wrong-version, and oversized headers.
-pub fn message_len_from_header(header: &[u8]) -> Result<usize, HandoffError> {
-    let parsed = parse_header(header)?;
-    HEADER_LEN
-        .checked_add(parsed.blob_len)
-        .and_then(|length| length.checked_add(TAG_LEN))
-        .filter(|length| *length <= MAX_MESSAGE_LEN)
-        .ok_or(HandoffError::Length)
-}
-
 /// Seals one continuation state into a complete LINE→LANDING transfer message.
 ///
 /// A fresh X25519 ephemeral and a fresh 128-bit transfer nonce are drawn for
@@ -605,73 +591,6 @@ pub fn open_transfer(
         client_random: header.client_random,
         state,
     })
-}
-
-struct TransferHeader {
-    raw: [u8; HEADER_LEN],
-    timestamp: u64,
-    nonce: [u8; NONCE_LEN],
-    ephemeral_public: [u8; X25519_PUBLIC_LEN],
-    client_random: [u8; 32],
-    user_id: [u8; USER_ID_LEN],
-    blob_len: usize,
-}
-
-fn parse_header(header: &[u8]) -> Result<TransferHeader, HandoffError> {
-    let raw: [u8; HEADER_LEN] = header.try_into().map_err(|_| HandoffError::Length)?;
-    if raw[..MAGIC.len()] != MAGIC {
-        return Err(HandoffError::Version);
-    }
-    if raw[VERSION_OFFSET] != HANDOFF_PROTOCOL_VERSION
-        || raw[STATE_VERSION_OFFSET] != CONTINUATION_STATE_VERSION
-    {
-        return Err(HandoffError::Version);
-    }
-    let blob_len = u32::from_be_bytes(read_array(&raw, BLOB_LEN_OFFSET)?);
-    let blob_len = usize::try_from(blob_len).map_err(|_| HandoffError::Length)?;
-    if blob_len > MAX_BLOB_LEN {
-        return Err(HandoffError::Length);
-    }
-    Ok(TransferHeader {
-        raw,
-        timestamp: u64::from_be_bytes(read_array(&raw, TIMESTAMP_OFFSET)?),
-        nonce: read_array(&raw, NONCE_OFFSET)?,
-        ephemeral_public: read_array(&raw, EPHEMERAL_OFFSET)?,
-        client_random: read_array(&raw, CLIENT_RANDOM_OFFSET)?,
-        user_id: read_array(&raw, USER_ID_OFFSET)?,
-        blob_len,
-    })
-}
-
-fn read_array<const N: usize>(
-    raw: &[u8; HEADER_LEN],
-    offset: usize,
-) -> Result<[u8; N], HandoffError> {
-    raw.get(offset..offset + N)
-        .ok_or(HandoffError::Length)?
-        .try_into()
-        .map_err(|_| HandoffError::Length)
-}
-
-fn encode_header(
-    timestamp: u64,
-    nonce: [u8; NONCE_LEN],
-    ephemeral_public: &[u8; X25519_PUBLIC_LEN],
-    client_random: &[u8; 32],
-    user_id: &[u8; USER_ID_LEN],
-    blob_len: u32,
-) -> [u8; HEADER_LEN] {
-    let mut header = [0_u8; HEADER_LEN];
-    header[..MAGIC.len()].copy_from_slice(&MAGIC);
-    header[VERSION_OFFSET] = HANDOFF_PROTOCOL_VERSION;
-    header[STATE_VERSION_OFFSET] = CONTINUATION_STATE_VERSION;
-    header[TIMESTAMP_OFFSET..NONCE_OFFSET].copy_from_slice(&timestamp.to_be_bytes());
-    header[NONCE_OFFSET..EPHEMERAL_OFFSET].copy_from_slice(&nonce);
-    header[EPHEMERAL_OFFSET..CLIENT_RANDOM_OFFSET].copy_from_slice(ephemeral_public);
-    header[CLIENT_RANDOM_OFFSET..USER_ID_OFFSET].copy_from_slice(client_random);
-    header[USER_ID_OFFSET..BLOB_LEN_OFFSET].copy_from_slice(user_id);
-    header[BLOB_LEN_OFFSET..].copy_from_slice(&blob_len.to_be_bytes());
-    header
 }
 
 /// The derived per-transfer AEAD key and nonce, both zeroized on drop.
