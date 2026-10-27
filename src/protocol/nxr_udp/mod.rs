@@ -6,8 +6,14 @@
 //! Payload bytes are not encrypted (same hop threat model as TCP NXR).
 
 mod error;
+mod layout;
 
 pub use error::NxrUdpError;
+pub use layout::{
+    DIR_LANDING_TO_LINE, DIR_LINE_TO_LANDING, FRAME_FLAG_DESTINATION, FRAME_LEN_SIZE,
+    FRAME_TYPE_CLOSE, FRAME_TYPE_DATAGRAM, MAX_FRAME_BODY_LEN, MAX_FRAME_WIRE_LEN,
+    MAX_UDP_OPEN_LEN, NXR_UDP_MAX_PAYLOAD, SESSION_TAG_LEN,
+};
 
 use std::{fmt, net::Ipv4Addr, net::Ipv6Addr};
 
@@ -16,66 +22,21 @@ use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::nxr::{FLAG_TCP, FLAG_UDP, FLAGS_OFFSET, NxrKey, REQUEST_HEADER_LEN, peek_open_flags};
-use super::vless::{Address, Destination, XUDP_MAX_PAYLOAD_LEN};
+use super::vless::{Address, Destination};
+
+use layout::{
+    ADDRESS_DOMAIN, ADDRESS_IPV4, ADDRESS_IPV6, ADDRESS_LENGTH_OFFSET, ADDRESS_OFFSET, MAGIC,
+    MAX_DOMAIN_LEN, NONCE_OFFSET, OPEN_TAG_LEN, PORT_OFFSET, TIMESTAMP_OFFSET, UDP_OPEN_TRAILER,
+    USER_ID_LEN,
+};
 
 type SessionHmac = Hmac<Sha256>;
-
-const MAGIC: [u8; 4] = [b'N', b'X', b'R', 1];
-const ADDRESS_IPV4: u8 = 1;
-const ADDRESS_DOMAIN: u8 = 2;
-const ADDRESS_IPV6: u8 = 3;
-const ADDRESS_LENGTH_OFFSET: usize = 6;
-const PORT_OFFSET: usize = 8;
-const TIMESTAMP_OFFSET: usize = 10;
-const NONCE_OFFSET: usize = 18;
-const ADDRESS_OFFSET: usize = 34;
-const OPEN_TAG_LEN: usize = 32;
-const USER_ID_LEN: usize = 16;
-const MAX_DOMAIN_LEN: usize = 253;
-const UDP_OPEN_TRAILER: usize = USER_ID_LEN;
 
 /// Domain separation for UDP session-MAC key derivation.
 const SESSION_MAC_LABEL: &[u8] = b"rust-reality/nxr-udp/v1/session-mac\0";
 
 /// Domain separation for per-frame MACs (direction byte follows the label).
 const FRAME_MAC_LABEL: &[u8] = b"rust-reality/nxr-udp/v1/frame-mac\0";
-
-/// LINE → LANDING (toward the UDP target).
-pub const DIR_LINE_TO_LANDING: u8 = 0;
-
-/// LANDING → LINE (replies toward the client path).
-pub const DIR_LANDING_TO_LINE: u8 = 1;
-
-/// Datagram frame.
-pub const FRAME_TYPE_DATAGRAM: u8 = 1;
-
-/// Association close (empty or ignored payload).
-pub const FRAME_TYPE_CLOSE: u8 = 2;
-
-/// Frame body flag: destination fields are present.
-pub const FRAME_FLAG_DESTINATION: u8 = 1;
-
-/// Session / frame MAC tag length.
-pub const SESSION_TAG_LEN: usize = 32;
-
-/// Maximum UDP payload in one frame (stock XUDP bound).
-pub const NXR_UDP_MAX_PAYLOAD: usize = XUDP_MAX_PAYLOAD_LEN;
-
-/// Outer length-prefix size.
-pub const FRAME_LEN_SIZE: usize = 4;
-
-/// Maximum encoded destination inside a frame.
-const MAX_FRAME_DEST_LEN: usize = 1 + 2 + 2 + MAX_DOMAIN_LEN;
-
-/// Strict maximum frame body length.
-pub const MAX_FRAME_BODY_LEN: usize = 1 + 1 + 4 + MAX_FRAME_DEST_LEN + 2 + NXR_UDP_MAX_PAYLOAD;
-
-/// Strict maximum on-wire frame size.
-pub const MAX_FRAME_WIRE_LEN: usize = FRAME_LEN_SIZE + MAX_FRAME_BODY_LEN + SESSION_TAG_LEN;
-
-/// Maximum UDP open request length (header + max domain + user id + tag).
-pub const MAX_UDP_OPEN_LEN: usize =
-    REQUEST_HEADER_LEN + MAX_DOMAIN_LEN + UDP_OPEN_TRAILER + OPEN_TAG_LEN;
 
 /// One authenticated NXR UDP association open.
 #[derive(Clone, Debug, Eq, PartialEq)]
