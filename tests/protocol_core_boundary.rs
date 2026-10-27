@@ -29,6 +29,7 @@ use std::{fs, path::PathBuf};
 /// empty the suite.
 const PROTOCOL_CORE: &[&str] = &[
     "src/protocol/nxr/mod.rs",
+    "src/protocol/nxr/wire.rs",
     "src/protocol/reality/client_hello.rs",
     "src/protocol/reality/tls13/cover_profile.rs",
     "src/protocol/reality/tls13/keys.rs",
