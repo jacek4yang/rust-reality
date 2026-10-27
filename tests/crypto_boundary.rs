@@ -55,7 +55,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     ("ring", &["src/protocol/reality/tls13/record.rs"]),
     // The RustCrypto AEADs. `record.rs` is the `--no-default-features`
     // provider and the equivalence oracle; `auth.rs` (AES-256-GCM, REALITY
-    // session id) and `handoff/mod.rs` (ChaCha20-Poly1305) use them
+    // session id) and `handoff/transfer.rs` (ChaCha20-Poly1305) use them
     // unconditionally and are not behind the feature switch.
     (
         "aes_gcm",
@@ -67,7 +67,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     (
         "chacha20poly1305",
         &[
-            "src/protocol/handoff/mod.rs",
+            "src/protocol/handoff/transfer.rs",
             "src/protocol/handoff/tests.rs",
             "src/protocol/reality/tls13/record.rs",
         ],
@@ -87,7 +87,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         &[
             "crates/rr-crypto/src/x25519/aarch64.rs",
             "crates/rr-crypto/src/x25519/x86_64.rs",
-            "src/protocol/handoff/mod.rs",
+            "src/protocol/handoff/transfer.rs",
             "src/protocol/nxr.rs",
             // ADR 0060 Option A: NXR UDP open/session MAC digests.
             "src/protocol/nxr_udp.rs",
@@ -114,7 +114,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     (
         "hkdf",
         &[
-            "src/protocol/handoff/mod.rs",
+            "src/protocol/handoff/transfer.rs",
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/tls13/keys.rs",
         ],
