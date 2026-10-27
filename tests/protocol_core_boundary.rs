@@ -28,7 +28,7 @@ use std::{fs, path::PathBuf};
 /// property, and the existence check below means a rename cannot silently
 /// empty the suite.
 const PROTOCOL_CORE: &[&str] = &[
-    "src/protocol/nxr.rs",
+    "src/protocol/nxr/mod.rs",
     "src/protocol/reality/client_hello.rs",
     "src/protocol/reality/tls13/cover_profile.rs",
     "src/protocol/reality/tls13/keys.rs",
