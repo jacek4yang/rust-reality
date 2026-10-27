@@ -1,10 +1,14 @@
-use std::{error::Error, fmt, net::Ipv4Addr, net::Ipv6Addr};
+use std::{fmt, net::Ipv4Addr, net::Ipv6Addr};
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
 use super::vless::{Address, Destination};
+
+mod error;
+
+pub use error::NxrProtocolError;
 
 type NxrHmac = Hmac<Sha256>;
 
@@ -340,38 +344,6 @@ fn read_u64(input: &[u8], offset: usize) -> Result<u64, NxrProtocolError> {
         .map_err(|_| NxrProtocolError::Length)?;
     Ok(u64::from_be_bytes(bytes))
 }
-
-/// NXR request construction or authentication failed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NxrProtocolError {
-    Length,
-    Version,
-    Flags,
-    Address,
-    Port,
-    TimeWindow,
-    Authentication,
-    Allocation,
-}
-
-impl fmt::Display for NxrProtocolError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Length => formatter.write_str("NXR authentication request length is invalid"),
-            Self::Version => formatter.write_str("NXR authentication version is invalid"),
-            Self::Flags => formatter.write_str("NXR authentication flags are unsupported"),
-            Self::Address => formatter.write_str("NXR destination address is invalid"),
-            Self::Port => formatter.write_str("NXR destination port is invalid"),
-            Self::TimeWindow => {
-                formatter.write_str("NXR authentication timestamp is outside policy")
-            }
-            Self::Authentication => formatter.write_str("NXR authentication failed"),
-            Self::Allocation => formatter.write_str("NXR request allocation failed"),
-        }
-    }
-}
-
-impl Error for NxrProtocolError {}
 
 #[cfg(test)]
 mod tests {
