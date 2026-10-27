@@ -5,7 +5,11 @@
 //! are covered by a session MAC derived from the PSK and the open transcript.
 //! Payload bytes are not encrypted (same hop threat model as TCP NXR).
 
-use std::{error::Error, fmt, net::Ipv4Addr, net::Ipv6Addr};
+mod error;
+
+pub use error::NxrUdpError;
+
+use std::{fmt, net::Ipv4Addr, net::Ipv6Addr};
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -645,67 +649,6 @@ fn read_u64(input: &[u8], offset: usize) -> Result<u64, NxrUdpError> {
         .try_into()
         .map_err(|_| NxrUdpError::Length)?;
     Ok(u64::from_be_bytes(bytes))
-}
-
-/// NXR UDP open / framing / session errors.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NxrUdpError {
-    Length,
-    Truncated,
-    Version,
-    Flags,
-    WrongMode,
-    Address,
-    Port,
-    TimeWindow,
-    Authentication,
-    Allocation,
-    Payload,
-    FrameType,
-    Direction,
-    Sequence,
-}
-
-impl fmt::Display for NxrUdpError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Length => formatter.write_str("NXR UDP length is invalid"),
-            Self::Truncated => formatter.write_str("NXR UDP frame is truncated"),
-            Self::Version => formatter.write_str("NXR UDP version is invalid"),
-            Self::Flags => formatter.write_str("NXR UDP flags are unsupported"),
-            Self::WrongMode => formatter.write_str("NXR open mode is not UDP"),
-            Self::Address => formatter.write_str("NXR UDP address is invalid"),
-            Self::Port => formatter.write_str("NXR UDP port is invalid"),
-            Self::TimeWindow => formatter.write_str("NXR UDP timestamp is outside policy"),
-            Self::Authentication => formatter.write_str("NXR UDP authentication failed"),
-            Self::Allocation => formatter.write_str("NXR UDP allocation failed"),
-            Self::Payload => formatter.write_str("NXR UDP payload exceeds bound"),
-            Self::FrameType => formatter.write_str("NXR UDP frame type is invalid"),
-            Self::Direction => formatter.write_str("NXR UDP frame direction is invalid"),
-            Self::Sequence => formatter.write_str("NXR UDP frame sequence is invalid"),
-        }
-    }
-}
-
-impl Error for NxrUdpError {}
-
-impl From<NxrUdpError> for super::nxr::NxrProtocolError {
-    fn from(error: NxrUdpError) -> Self {
-        match error {
-            NxrUdpError::Length | NxrUdpError::Truncated | NxrUdpError::Payload => Self::Length,
-            NxrUdpError::Version => Self::Version,
-            NxrUdpError::Flags
-            | NxrUdpError::WrongMode
-            | NxrUdpError::FrameType
-            | NxrUdpError::Direction
-            | NxrUdpError::Sequence => Self::Flags,
-            NxrUdpError::Address => Self::Address,
-            NxrUdpError::Port => Self::Port,
-            NxrUdpError::TimeWindow => Self::TimeWindow,
-            NxrUdpError::Authentication => Self::Authentication,
-            NxrUdpError::Allocation => Self::Allocation,
-        }
-    }
 }
 
 /// Fuzz entry: decode arbitrary bytes as a UDP frame under a fixed session.
