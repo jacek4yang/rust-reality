@@ -51,7 +51,10 @@ impl std::error::Error for VisionTunnelError {
 
 enum ReadDirection {
     Tls(TlsApplicationReader<tokio::net::tcp::OwnedReadHalf>),
-    Raw(tokio::net::tcp::OwnedReadHalf),
+    Raw {
+        reader: tokio::net::tcp::OwnedReadHalf,
+        scratch: Vec<u8>,
+    },
     Closed,
 }
 
@@ -98,6 +101,7 @@ impl VisionIo {
             read_records,
             write_records,
             false,
+            crate::protocol::vless::VISION_FRAME_SIZE,
         );
         let activity = std::sync::Arc::new(crate::io_activity::SessionActivity::default());
         reader.set_activity(activity.clone());
@@ -156,18 +160,14 @@ impl VisionIo {
                 )?;
                 self.finish_read_transition()?;
             }
-            ReadDirection::Raw(reader) => {
-                let mut buffer = [0_u8; MAX_PLAINTEXT_LEN];
-                let count = reader
-                    .read(&mut buffer)
-                    .await
-                    .map_err(VisionTunnelError::Io)?;
+            ReadDirection::Raw { reader, scratch } => {
+                let count = reader.read(scratch).await.map_err(VisionTunnelError::Io)?;
                 if count == 0 {
                     self.reader = ReadDirection::Closed;
                     return Err(VisionTunnelError::Closed);
                 }
                 self.activity.progress();
-                self.readable.extend_from_slice(&buffer[..count]);
+                self.readable.extend_from_slice(&scratch[..count]);
             }
             ReadDirection::Closed => return Err(VisionTunnelError::Closed),
         }
@@ -184,7 +184,10 @@ impl VisionIo {
         };
         let (pending, reader) = reader.into_inner_with_pending();
         self.readable.extend_from_slice(&pending);
-        self.reader = ReadDirection::Raw(reader);
+        self.reader = ReadDirection::Raw {
+            reader,
+            scratch: vec![0; MAX_PLAINTEXT_LEN],
+        };
         // Directions transition independently. An authenticated downlink Direct
         // does not authorize removing the uplink's Vision or TLS framing.
         self.activity.enter_raw();
@@ -348,6 +351,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn small_read_window_promotes_for_large_records_without_steady_allocations() {
+        use std::{
+            future::Future,
+            task::{Context, Poll, Waker},
+        };
+        let (mut peer, read) = record_pair();
+        let (write, _) = record_pair();
+        let payload = vec![0x42; MAX_PLAINTEXT_LEN];
+        let mut wire = Vec::new();
+        let mut record = Vec::new();
+        for _ in 0..2 {
+            peer.seal_into(ContentType::ApplicationData, &payload, 0, &mut record)
+                .unwrap();
+            wire.extend_from_slice(&record);
+        }
+        let (mut reader, _) = application_halves(
+            wire.as_slice(),
+            Vec::new(),
+            tokio::io::sink(),
+            read,
+            write,
+            false,
+            crate::protocol::vless::VISION_FRAME_SIZE,
+        );
+        assert_eq!(
+            reader
+                .read_application(Duration::from_secs(1))
+                .await
+                .unwrap()
+                .plaintext(),
+            payload
+        );
+        let next = reader.read_application(Duration::from_secs(1));
+        tokio::pin!(next);
+        let measured = allocation_counter::measure(|| {
+            let Poll::Ready(Ok(record)) =
+                next.as_mut().poll(&mut Context::from_waker(Waker::noop()))
+            else {
+                panic!("second complete record must already be buffered");
+            };
+            assert_eq!(record.plaintext(), payload);
+        });
+        assert_eq!(measured.count_total, 0);
+    }
+
+    #[tokio::test]
     async fn cancelled_partial_record_and_direct_read_ahead_preserve_direction_ownership() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let connect = TcpStream::connect(listener.local_addr().unwrap());
@@ -356,7 +405,15 @@ mod tests {
         let (reader, writer) = client.unwrap().into_split();
         let (mut downlink, read) = record_pair();
         let (write, mut uplink) = record_pair();
-        let (reader, writer) = application_halves(reader, Vec::new(), writer, read, write, false);
+        let (reader, writer) = application_halves(
+            reader,
+            Vec::new(),
+            writer,
+            read,
+            write,
+            false,
+            crate::protocol::vless::VISION_FRAME_SIZE,
+        );
         let user = UserId::new([0x11; 16]);
         let mut io = VisionIo {
             reader: ReadDirection::Tls(reader),
@@ -369,6 +426,12 @@ mod tests {
             activity: Arc::new(crate::io_activity::SessionActivity::default()),
         };
         let mut encoder = VisionEncoder::new(user).unwrap();
+        let future_bytes = std::mem::size_of_val(&io.read_and_open_record());
+        eprintln!("client record-read future bytes: {future_bytes}");
+        assert!(
+            future_bytes < MAX_PLAINTEXT_LEN,
+            "raw scratch must not live in every framed read future"
+        );
         let mut plaintext = Vec::new();
         encoder
             .encode(b"boundary", VisionCommand::Direct, false, &mut plaintext)
@@ -389,7 +452,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(matches!(io.reader, ReadDirection::Raw(_)));
+        assert!(matches!(io.reader, ReadDirection::Raw { .. }));
         let mut received = io.readable.clone();
         io.readable_at = io.readable.len();
         if received.len() < b"boundarypipelined raw bytes".len() {
