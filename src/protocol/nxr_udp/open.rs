@@ -183,7 +183,7 @@ pub fn decode_udp_open(
     })
 }
 
-/// Authenticated open prefix (without tag) for [`NxrUdpSessionKey::derive`].
+/// Authenticated open prefix (without tag) for [`super::NxrUdpSessionKey::derive`].
 #[must_use]
 pub fn open_authenticated_prefix(open_wire: &[u8]) -> Option<&[u8]> {
     (open_wire.len() > OPEN_TAG_LEN).then(|| &open_wire[..open_wire.len() - OPEN_TAG_LEN])
