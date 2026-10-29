@@ -90,7 +90,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             "src/protocol/handoff/transfer.rs",
             "src/protocol/nxr/keys.rs",
             // ADR 0060 Option A: NXR UDP open/session MAC digests.
-            "src/protocol/nxr_udp/mod.rs",
+            "src/protocol/nxr_udp/keys.rs",
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/client_hello.rs",
             "src/protocol/reality/client_verify.rs",
@@ -105,7 +105,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         &[
             "src/protocol/nxr/keys.rs",
             // ADR 0060 Option A: NXR UDP open HMAC + frame session MAC.
-            "src/protocol/nxr_udp/mod.rs",
+            "src/protocol/nxr_udp/keys.rs",
             "src/protocol/reality/client_verify.rs",
             "src/protocol/reality/tls13/keys.rs",
             "src/protocol/reality/tls13/messages.rs",
@@ -165,7 +165,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             "src/protocol/reality/client_verify.rs",
             "src/protocol/reality/tls13/handshake.rs",
             // ADR 0060 Option A: NXR UDP MAC verify (test helpers + ct_eq).
-            "src/protocol/nxr_udp/mod.rs",
+            "src/protocol/nxr_udp/keys.rs",
         ],
     ),
 ];

@@ -6,20 +6,18 @@
 //! Payload bytes are not encrypted (same hop threat model as TCP NXR).
 
 mod error;
+mod keys;
 mod layout;
 
 pub use error::NxrUdpError;
+pub use keys::NxrUdpSessionKey;
 pub use layout::{
     DIR_LANDING_TO_LINE, DIR_LINE_TO_LANDING, FRAME_FLAG_DESTINATION, FRAME_LEN_SIZE,
     FRAME_TYPE_CLOSE, FRAME_TYPE_DATAGRAM, MAX_FRAME_BODY_LEN, MAX_FRAME_WIRE_LEN,
     MAX_UDP_OPEN_LEN, NXR_UDP_MAX_PAYLOAD, SESSION_TAG_LEN,
 };
 
-use std::{fmt, net::Ipv4Addr, net::Ipv6Addr};
-
-use hmac::{Hmac, KeyInit, Mac};
-use sha2::Sha256;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use std::{net::Ipv4Addr, net::Ipv6Addr};
 
 use super::nxr::{FLAG_TCP, FLAG_UDP, FLAGS_OFFSET, NxrKey, REQUEST_HEADER_LEN, peek_open_flags};
 use super::vless::{Address, Destination};
@@ -30,13 +28,7 @@ use layout::{
     USER_ID_LEN,
 };
 
-type SessionHmac = Hmac<Sha256>;
-
-/// Domain separation for UDP session-MAC key derivation.
-const SESSION_MAC_LABEL: &[u8] = b"rust-reality/nxr-udp/v1/session-mac\0";
-
-/// Domain separation for per-frame MACs (direction byte follows the label).
-const FRAME_MAC_LABEL: &[u8] = b"rust-reality/nxr-udp/v1/frame-mac\0";
+use keys::{open_tag, verify_open_tag};
 
 /// One authenticated NXR UDP association open.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -215,63 +207,6 @@ pub fn open_authenticated_prefix(open_wire: &[u8]) -> Option<&[u8]> {
 #[must_use]
 pub fn classify_open(header: &[u8]) -> Option<u8> {
     peek_open_flags(header).filter(|&flags| flags == FLAG_TCP || flags == FLAG_UDP)
-}
-
-/// Session MAC key for one NXR UDP association.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
-pub struct NxrUdpSessionKey(Zeroizing<[u8; SESSION_TAG_LEN]>);
-
-impl fmt::Debug for NxrUdpSessionKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("NxrUdpSessionKey([REDACTED])")
-    }
-}
-
-impl PartialEq for NxrUdpSessionKey {
-    fn eq(&self, other: &Self) -> bool {
-        // Equality only for tests; not used on hot paths.
-        self.0.as_slice() == other.0.as_slice()
-    }
-}
-
-impl Eq for NxrUdpSessionKey {}
-
-impl NxrUdpSessionKey {
-    /// Derives the session MAC key from the PSK and authenticated open prefix.
-    #[must_use]
-    pub fn derive(key: &NxrKey, open_authenticated_prefix: &[u8]) -> Self {
-        Self(Zeroizing::new(
-            key.derive(SESSION_MAC_LABEL, open_authenticated_prefix),
-        ))
-    }
-
-    fn mac(&self) -> SessionHmac {
-        SessionHmac::new_from_slice(self.0.as_slice()).expect("HMAC-SHA256 accepts 32-byte key")
-    }
-
-    /// Computes the frame MAC for `direction` over `body`.
-    #[must_use]
-    pub fn frame_tag(&self, direction: u8, body: &[u8]) -> [u8; SESSION_TAG_LEN] {
-        let mut mac = self.mac();
-        mac.update(FRAME_MAC_LABEL);
-        mac.update(&[direction]);
-        mac.update(body);
-        mac.finalize().into_bytes().into()
-    }
-
-    /// Verifies a frame MAC in constant time.
-    ///
-    /// # Errors
-    ///
-    /// [`NxrUdpError::Authentication`] on mismatch.
-    pub fn verify_frame(&self, direction: u8, body: &[u8], tag: &[u8]) -> Result<(), NxrUdpError> {
-        let mut mac = self.mac();
-        mac.update(FRAME_MAC_LABEL);
-        mac.update(&[direction]);
-        mac.update(body);
-        mac.verify_slice(tag)
-            .map_err(|_| NxrUdpError::Authentication)
-    }
 }
 
 /// One decoded datagram/close frame (MAC already verified).
@@ -571,22 +506,6 @@ fn parse_address(address_type: u8, address: &[u8]) -> Result<Address, NxrUdpErro
             Ok(Address::Ipv6(Ipv6Addr::from(bytes)))
         }
         _ => Err(NxrUdpError::Address),
-    }
-}
-
-fn open_tag(key: &NxrKey, authenticated: &[u8]) -> [u8; OPEN_TAG_LEN] {
-    // Same construction as TCP NXR open tags: HMAC(psk, authenticated_bytes).
-    // Mode separation is the FLAG_UDP byte inside `authenticated`.
-    key.tag(authenticated)
-}
-
-fn verify_open_tag(key: &NxrKey, authenticated: &[u8], tag: &[u8]) -> Result<(), NxrUdpError> {
-    let expected = open_tag(key, authenticated);
-    use subtle::ConstantTimeEq;
-    if bool::from(expected.as_slice().ct_eq(tag)) {
-        Ok(())
-    } else {
-        Err(NxrUdpError::Authentication)
     }
 }
 
