@@ -6,6 +6,28 @@ the validation layers themselves.
 
 ## Production test layers
 
+Native browser evidence is collected by `.github/workflows/browser-capture.yml`
+using the independent `tools/rr-fingerprint` executable on Windows. Its discovery
+captures record pinned signed browser and driver identities, raw TLS
+records, and a verified HTTPS transaction from each fresh WebDriver session.
+These observations are not approved release fixtures or a production parity
+verdict. Decode a saved record with `cargo run --manifest-path tools/Cargo.toml
+-p rr-fingerprint -- CAPTURE.tls`. The `fingerprint_capture` fuzz target covers
+the bounded independent decoder; see ADR 0061 for the evidence boundary.
+
+The collector pins signed Chrome Stable 156.0.8078.74 with ChromeDriver
+156.0.8078.73 and Firefox 159.0 (en-US win64) with GeckoDriver 0.37.1. Archive
+SHA-256 values are checked before execution, and the browser executable must
+have a valid publisher signature and the expected version. The executable hash
+must remain unchanged throughout collection. Chrome uses Google's official
+enterprise MSI. Its download URL is mutable: a future replacement fails the
+pinned digest check rather than silently changing the browser. Preserve the
+verified input package locally when reproducing this capture after an update.
+Version selection used Google's [Stable release announcement](https://chromereleases.googleblog.com/2026/10/)
+and Mozilla's
+[159.0 release notes](https://www.firefox.com/en-US/firefox/159.0/releasenotes/).
+The workflow pins these inputs rather than following future channel updates.
+
 - **Unit/module tests** live beside the code they validate
   (`src/**`, `crates/**`). They encode the protocol, state-machine, and
   allocation invariants — including the allocation gates in

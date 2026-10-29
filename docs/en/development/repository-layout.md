@@ -22,6 +22,7 @@ for the original packaging decision.
 | `crates/rr-crypto/` | The cryptographic implementation boundary: architecture-specific assembly behind a safe API. `#![no_std]`, `core` only; the one place in the production graph where `unsafe` is permitted, with every block documented and every CPU-feature-dependent call behind a runtime probe. Isolated so the main crate can stay `#![deny(unsafe_code)]`. See [ADR 0023](../../adr/0023-rr-crypto-is-the-unsafe-crypto-boundary.md) and the [provenance record](crypto-provenance.md). |
 | `tools/rr-dev/` | The repository development control plane (`cargo dev`): quality gates, documentation checks, repository-layout policy, performance evaluation, release packaging, fuzz manifest, benchmark lifecycle, deployment engineering. |
 | `tools/reference/` | Deliberately independent reference mechanisms (e.g. the OpenSSL TLS-shape reference program) kept outside production and outside rr-dev so cross-implementation comparisons stay honest. |
+| `tools/rr-fingerprint/` | Independent native-browser TLS capture and bounded evidence decoder; cross-platform tooling only (ADR 0061). |
 | `tools/fixtures/` | Tooling and test fixtures shared by repository tooling (e.g. active-probe cases). |
 | `docs/` | Human-maintained canonical documentation. English under `docs/en/`, Chinese under `docs/zh-CN/`, architecture decisions under `docs/adr/`. |
 | `docs/adr/` | Architecture decision records. Indexed in [docs/adr/README.md](../../adr/README.md). |

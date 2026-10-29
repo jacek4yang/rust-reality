@@ -30,6 +30,9 @@ sharded smoke passes over all targets on every PR. The current set covers:
 
 - Strict stability evidence, required-check child execution, native interoperability/mechanism/descriptor-pressure, package execution/tier metadata, CI/full-gate/libtest and VM clock/kernel/startup/terminal/fault-action receipts, netem observations/state, product logs, origin upload receipts, fixed IPv4 SOCKS echo replies and offline ownership evaluation (`stability_evidence`); the target compiles the maintained tooling parser and evaluator directly, without linking tooling into the production binary.
 
+The independent browser capture decoder is covered by `fingerprint_capture`. It
+rejects malformed framing and lengths while preserving all observable wire bytes.
+
 ## Commands
 
 ```shell
