@@ -62,7 +62,12 @@ uses independent keys. Every offered real key share has retained private state.
 The TLS implementation supports TLS 1.3 only and rejects HelloRetryRequest;
 advertised TLS 1.2 cover capabilities do not enable a TLS 1.2 session.
 REALITY's authenticated session ID and certificate identity remain protocol
-specific. ClientHello equivalence does not reproduce browser HTTP, QUIC, OS,
+specific. In particular, REALITY authenticates its HMAC-bound Ed25519 identity
+and verifies Ed25519 CertificateVerify and Finished, even though the native
+browser signature lists do not advertise Ed25519. This existing REALITY
+certificate policy is not the browser's PKI or signature-negotiation policy;
+the measured equivalence claim covers the ClientHello, not a generic browser
+TLS state machine. ClientHello equivalence does not reproduce browser HTTP, QUIC, OS,
 packet timing or complete traffic behavior.
 
 See [testing](../development/testing.md) for native capture provenance and the

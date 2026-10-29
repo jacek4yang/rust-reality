@@ -322,8 +322,9 @@ fn run_socks5(fingerprint: &str) {
         .env_remove("HTTPS_PROXY")
         .env_remove("ALL_PROXY")
         .env_remove("all_proxy")
-        .env("NO_PROXY", "*")
-        .env("no_proxy", "*");
+        .args(["--noproxy", ""])
+        .env("NO_PROXY", "")
+        .env("no_proxy", "");
     let status = curl_cmd.status().expect("curl");
     if !status.success() {
         let entry_log = fs::read_to_string(root.join("entry.log")).unwrap_or_default();

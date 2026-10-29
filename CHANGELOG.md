@@ -14,7 +14,9 @@ All notable user-facing changes to this project are documented in this file.
 
 - Fix client TCP half-close handling in both directions and oversized Vision
   frames. Client TCP and XUDP now reuse the canonical cancellation-safe TLS
-  record I/O, including authenticated alerts and KeyUpdate handling.
+  record I/O, including authenticated alerts and KeyUpdate handling. Share
+  Vision framing between TCP and XUDP, preserve Direct-boundary read-ahead,
+  and keep each direction's framing independent.
 
 ## [2.2.0] - 2026-10-22
 

@@ -16,7 +16,7 @@ sharded smoke passes over all targets on every PR. The current set covers:
 
 - VLESS request decode/client encode round trips and response decode, REALITY
   ClientHello record/message parse and extension walk, NXR header/decode round trips and NXR UDP frames (`wire_parsers`, `nxr_round_trip`, `nxr_udp_frames`);
-- Vision decoder single-shot and fragmented transitions
+- Vision decoder single-shot, bounded client VLESS response reassembly, and fragmented transitions
   (`vision_decoder`, `vision_transitions`);
 - Handoff header, blob, authenticated transfer open, and round trip
   (`handoff_header`, `handoff_blob`, `handoff_open_transfer`, `handoff_round_trip`);

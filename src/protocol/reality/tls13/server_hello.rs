@@ -5,6 +5,11 @@ use crate::protocol::reality::{ClientHello, P256_GROUP, X25519_GROUP, X25519_MLK
 use super::CipherSuite;
 
 const HANDSHAKE_SERVER_HELLO: u8 = 2;
+// RFC 8446 section 4.1.3: HRR is distinguished by this fixed Random value.
+const HELLO_RETRY_REQUEST_RANDOM: [u8; 32] = [
+    0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
+    0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
+];
 const LEGACY_TLS12_VERSION: u16 = 0x0303;
 const TLS13_VERSION: u16 = 0x0304;
 const EXTENSION_PRE_SHARED_KEY: u16 = 0x0029;
@@ -29,6 +34,8 @@ pub enum ServerHelloError {
     TooLarge,
     /// The message is not a structurally exact TLS ServerHello.
     Malformed,
+    /// HelloRetryRequest requires a second transcript flight this implementation does not support.
+    HelloRetryRequest,
     /// The target did not negotiate TLS 1.3.
     UnsupportedVersion,
     /// The selected cipher is unsupported or was not offered by the client.
@@ -100,7 +107,9 @@ impl ServerHelloTemplate {
         if reader.read_u16()? != LEGACY_TLS12_VERSION {
             return Err(ServerHelloError::Malformed);
         }
-        reader.read_bytes(32)?;
+        if reader.read_bytes(32)? == HELLO_RETRY_REQUEST_RANDOM {
+            return Err(ServerHelloError::HelloRetryRequest);
+        }
         let session_id_len = usize::from(reader.read_u8()?);
         if session_id_len > 32 {
             return Err(ServerHelloError::Malformed);
@@ -469,6 +478,24 @@ mod tests {
     use crate::protocol::reality::{
         ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello::fixtures,
     };
+
+    #[test]
+    fn rejects_retry_random_even_with_an_ordinary_server_key_share() {
+        let client = client(X25519_GROUP, &[0x22; 32]);
+        let mut message = server_hello(
+            &[0x11; SESSION_ID_LEN],
+            0x1301,
+            X25519_GROUP,
+            &[0x55; 32],
+            &[],
+        );
+        message[super::SERVER_RANDOM_START..super::SERVER_RANDOM_END]
+            .copy_from_slice(&super::HELLO_RETRY_REQUEST_RANDOM);
+        assert!(matches!(
+            ServerHelloTemplate::parse(&message, &client),
+            Err(ServerHelloError::HelloRetryRequest)
+        ));
+    }
 
     #[test]
     fn parses_target_and_replaces_only_x25519_key_exchange() {

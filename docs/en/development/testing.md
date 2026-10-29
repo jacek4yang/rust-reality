@@ -429,6 +429,19 @@ and partial results remain retained; missing coverage or an in-flight transfer
 finishing outside the required interval still fails. Requests started after
 restoration are never silently labelled as fault-period work.
 
+## Client relay ownership regressions
+
+The client process tests force curl through the configured proxy with
+`--noproxy ""`; ambient bypass lists must not turn them into direct-origin tests.
+Chrome and Firefox HTTP CONNECT cases verify the temporary HTTPS origin's CA
+and transfer a payload larger than a TLS record. NXR and Handoff TCP cases
+exercise 128 KiB transfers with either peer closing its write direction first.
+`client::vision_io` tests cancellation during a partial encrypted record,
+Direct-boundary read-ahead, independent uplink framing, and fragmented VLESS
+response headers. TCP and XUDP share this connection-owned decoder and the
+canonical TLS application reader/writer. Native-only ignored cases still require
+their separate Native qualification; ordinary process tests do not qualify them.
+
 ## Frozen browser ClientHello comparisons
 
 The nonce-bound corpus under

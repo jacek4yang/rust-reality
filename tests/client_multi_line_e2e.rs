@@ -300,8 +300,9 @@ fn failover_from_dead_primary_to_live_alternate_before_socks5_reply() {
         .env_remove("HTTPS_PROXY")
         .env_remove("ALL_PROXY")
         .env_remove("all_proxy")
-        .env("NO_PROXY", "*")
-        .env("no_proxy", "*")
+        .args(["--noproxy", ""])
+        .env("NO_PROXY", "")
+        .env("no_proxy", "")
         .status()
         .unwrap();
     if !status.success() {

@@ -50,6 +50,9 @@ Firefox 混合组复用独立 X25519 公钥，Chrome 使用独立密钥。所有
 该配置复现无恢复、无真实 ECH 的首次 TCP ClientHello，保留每次握手的随机性、
 Chrome 扩展洗牌、GREASE 和 ECH GREASE。生产运行时仅支持 TLS 1.3，并拒绝
 HelloRetryRequest；声明的 TLS 1.2 掩护能力不启用 TLS 1.2 会话。
-REALITY 的认证 session ID 和证书身份仍遵循协议自身约定。ClientHello 等价不代表
+REALITY 的认证 session ID 和证书身份仍遵循协议自身约定。它验证 HMAC 绑定的
+Ed25519 身份、Ed25519 CertificateVerify 和 Finished，即使原生浏览器的签名列表
+不声明 Ed25519。这是现有 REALITY 证书策略，不是浏览器的 PKI 或签名协商策略；
+测量等价范围限于 ClientHello，不代表通用浏览器 TLS 状态机。ClientHello 等价不代表
 HTTP、QUIC、操作系统、时序或完整流量行为等价。浏览器与抓包依赖不进入生产二进制。
 复现命令和证据见[测试文档](../development/testing.md)。

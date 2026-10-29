@@ -12,6 +12,7 @@ mod selection;
 mod serve;
 mod session;
 mod socks5_inbound;
+mod vision_io;
 mod xudp;
 
 pub use line::{AuthenticatedLine, Line, LineError};
@@ -19,3 +20,7 @@ pub use selection::{LineGroup, LinePool, SelectionPolicy};
 pub use serve::{ClientRuntimeError, run_client};
 pub use session::VisionTunnel;
 pub use xudp::XudpTunnel;
+
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub use vision_io::fuzz_vision_response;

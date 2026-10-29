@@ -346,3 +346,13 @@ Chrome 中间扩展允许洗牌，首尾 GREASE 约束保留；Firefox 扩展顺
 而 Xray 对照为 239 字节。旧 26.7.28 规范化摘要保存在
 `benchmarks/evidence/browser-clienthello/xray-26.7.28-normalized/`，仅为历史证据，
 不增加支持名称，也不允许省略 Firefox 的 P-256 私钥协商。
+
+
+## 客户端转发所有权回归
+
+进程测试通过 `--noproxy ""` 强制 curl 使用配置的代理，防止环境绕过列表让测试
+直接访问源站。Chrome 和 Firefox 的 HTTP CONNECT 用例验证临时 HTTPS 源站 CA，
+传输超过单条 TLS 记录的内容。NXR 和 Handoff TCP 用例分别验证双方先关闭写方向时
+的 128 KiB 传输。`client::vision_io` 覆盖部分加密记录读取取消、Direct 边界预读、
+独立的上行分帧以及分片 VLESS 响应头。TCP 和 XUDP 共用连接拥有的解码状态及
+规范 TLS 应用读写器。标记为 ignored 的 Native 专用用例仍须独立资格验证。

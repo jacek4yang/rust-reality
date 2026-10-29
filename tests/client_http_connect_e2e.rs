@@ -143,6 +143,15 @@ fn make_tls_material(openssl: &Path, root: &Path, name: &str) -> (PathBuf, PathB
 
 #[test]
 fn curl_through_single_line_http_connect_to_isolated_origin() {
+    run_https_transfer("chrome");
+}
+
+#[test]
+fn firefox_http_connect_to_isolated_origin() {
+    run_https_transfer("firefox");
+}
+
+fn run_https_transfer(fingerprint: &str) {
     let openssl = which("openssl").expect("openssl required");
     let curl = which("curl").expect("curl required");
 
@@ -184,7 +193,8 @@ fn curl_through_single_line_http_connect_to_isolated_origin() {
 
     // Isolated HTTPS origin: openssl -WWW serves files after TLS.
     let payload = root.join("payload.txt");
-    fs::write(&payload, MARKER).expect("payload");
+    let expected = MARKER.repeat(32 * 1024);
+    fs::write(&payload, &expected).expect("payload");
     let (origin_key, origin_crt) = make_tls_material(&openssl, &root, "origin");
     let _origin = spawn_logged(
         "https-origin",
@@ -255,7 +265,8 @@ fn curl_through_single_line_http_connect_to_isolated_origin() {
     "id": "{user_id}",
     "publicKey": "{public_key}",
     "shortId": "{short_id}",
-    "serverName": "localhost"
+    "serverName": "localhost",
+    "fingerprint": "{fingerprint}"
   }}]
 }}
 "#
@@ -300,7 +311,7 @@ fn curl_through_single_line_http_connect_to_isolated_origin() {
     wait_port(http_port, Duration::from_secs(15));
 
     // HTTPS forces CONNECT through the HTTP proxy.
-    let url = format!("https://127.0.0.1:{origin_port}/payload.txt");
+    let url = format!("https://localhost:{origin_port}/payload.txt");
     let out = root.join("curl.out");
     let mut curl_cmd = Command::new(&curl);
     curl_cmd
@@ -310,7 +321,10 @@ fn curl_through_single_line_http_connect_to_isolated_origin() {
             "--fail",
             "--max-time",
             "20",
-            "-k",
+            "--noproxy",
+            "",
+            "--cacert",
+            origin_crt.to_str().expect("certificate path"),
             "-x",
             &format!("http://127.0.0.1:{http_port}"),
             "--output",
@@ -323,8 +337,8 @@ fn curl_through_single_line_http_connect_to_isolated_origin() {
         .env_remove("HTTPS_PROXY")
         .env_remove("ALL_PROXY")
         .env_remove("all_proxy")
-        .env("NO_PROXY", "*")
-        .env("no_proxy", "*");
+        .env("NO_PROXY", "")
+        .env("no_proxy", "");
     let status = curl_cmd.status().expect("curl");
     if !status.success() {
         let entry_log = fs::read_to_string(root.join("entry.log")).unwrap_or_default();
@@ -334,12 +348,7 @@ fn curl_through_single_line_http_connect_to_isolated_origin() {
         );
     }
     let body = fs::read(&out).expect("read curl out");
-    assert_eq!(
-        body,
-        MARKER,
-        "origin payload mismatch: got {:?}",
-        String::from_utf8_lossy(&body)
-    );
+    assert_eq!(body, expected, "origin payload mismatch");
 }
 
 fn which(name: &str) -> Option<PathBuf> {
