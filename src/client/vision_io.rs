@@ -203,7 +203,7 @@ impl VisionIo {
         // Flush before a socket refill. Complete buffered records can share
         // one local write, without delaying a sparse flow or growing a batch
         // beyond two maximum plaintext records.
-        while self.readable.len() < MAX_PLAINTEXT_LEN
+        while self.readable.len() <= MAX_PLAINTEXT_LEN
             && matches!(&self.reader, ReadDirection::Tls(reader) if reader.has_buffered_record())
         {
             match self.read_and_open_record().await {
@@ -400,6 +400,61 @@ mod tests {
             assert_eq!(output, b"payload");
             assert_eq!(decoder.mode(), VisionMode::Raw);
         }
+    }
+
+    #[tokio::test]
+    async fn two_full_buffered_plaintext_records_share_one_delivery() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (client, accepted) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let (_peer, _) = accepted.unwrap();
+        let (reader, writer) = client.unwrap().into_split();
+        let (mut downlink, read) = record_pair();
+        let (write, _) = record_pair();
+        let user = UserId::new([0x11; 16]);
+        let mut encoder = VisionEncoder::new(user).unwrap();
+        let mut decoder = VisionDecoder::new(user);
+        let mut frame = Vec::new();
+        encoder
+            .encode(&[], VisionCommand::End, false, &mut frame)
+            .unwrap();
+        decoder.decode_append(&frame, &mut Vec::new()).unwrap();
+        let payload = vec![0x42; MAX_PLAINTEXT_LEN];
+        let mut pending = Vec::new();
+        for _ in 0..2 {
+            downlink
+                .seal_into(ContentType::ApplicationData, &payload, 0, &mut frame)
+                .unwrap();
+            pending.extend_from_slice(&frame);
+        }
+        let (reader, writer) = application_halves(
+            reader,
+            pending,
+            writer,
+            read,
+            write,
+            false,
+            crate::protocol::vless::VISION_FRAME_SIZE,
+        );
+        let mut io = VisionIo {
+            reader: ReadDirection::Tls(reader),
+            writer,
+            response: None,
+            encoder: VisionEncoder::new(user).unwrap(),
+            decoder,
+            readable: Vec::with_capacity(MAX_PLAINTEXT_LEN),
+            readable_at: 0,
+            activity: Arc::new(crate::io_activity::SessionActivity::default()),
+        };
+        tokio::time::timeout(Duration::from_secs(1), io.poll_fill_readable())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(io.readable.len(), 2 * MAX_PLAINTEXT_LEN);
+        assert!(io.readable.iter().all(|byte| *byte == 0x42));
+        assert_eq!(io.readable.capacity(), 2 * MAX_PLAINTEXT_LEN);
     }
 
     #[tokio::test]
