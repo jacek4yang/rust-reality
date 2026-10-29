@@ -126,20 +126,7 @@ fn connection(
     tls.sock.recording = false;
     // Collect only the initial handshake records. Subsequent encrypted records
     // may have arrived in the same TCP read and are not ClientHello evidence.
-    let mut end = 0;
-    let raw = &tls.sock.first_flight;
-    while end + 5 <= raw.len() && raw[end] == 22 {
-        let len = usize::from(u16::from_be_bytes([raw[end + 3], raw[end + 4]]));
-        end = end.checked_add(5 + len).ok_or("capture length overflow")?;
-        if end > raw.len() {
-            return Err("truncated captured record".into());
-        }
-        if rr_fingerprint::decode(&raw[..end]).is_ok() {
-            break;
-        }
-    }
-    let hello = rr_fingerprint::decode(raw.get(..end).ok_or("capture length")?)?;
-    let wire = &raw[..end];
+    let (wire, hello) = rr_fingerprint::first_client_hello(&tls.sock.first_flight)?;
     let digest = Sha256::digest(wire)
         .iter()
         .map(|byte| format!("{byte:02x}"))

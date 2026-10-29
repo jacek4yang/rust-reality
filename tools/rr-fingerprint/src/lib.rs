@@ -127,6 +127,50 @@ fn word_extension(body: &[u8], short: bool) -> Result<Vec<u16>> {
     Ok(values)
 }
 
+/// Extract the first ClientHello from a bounded recorded TLS flight.
+///
+/// Later records may contain Finished or application data. They are excluded
+/// only after the declared ClientHello ends at an original record boundary.
+/// A second message sharing that record is rejected, not silently discarded.
+pub fn first_client_hello(wire: &[u8]) -> Result<(&[u8], ClientHello)> {
+    if wire.len() > MAX_CAPTURE_BYTES {
+        return Err(DecodeError("capture too large"));
+    }
+    let mut r = Cursor(wire);
+    let mut header = Vec::with_capacity(4);
+    let mut total = 0;
+    for _ in 0..256 {
+        if r.byte()? != 22 {
+            return Err(DecodeError("expected initial handshake record"));
+        }
+        let version = r.word()?;
+        let payload = r.vector()?;
+        if !(0x0301..=0x0303).contains(&version) || payload.is_empty() || payload.len() > 16_384 {
+            return Err(DecodeError("invalid initial record"));
+        }
+        let needed = 4 - header.len();
+        header.extend_from_slice(&payload[..payload.len().min(needed)]);
+        total += payload.len();
+        if total > MAX_MESSAGE_BYTES {
+            return Err(DecodeError("handshake too large"));
+        }
+        if header.len() == 4 {
+            let declared = 4
+                + (usize::from(header[1]) << 16)
+                + (usize::from(header[2]) << 8)
+                + usize::from(header[3]);
+            if header[0] != 1 || declared > MAX_MESSAGE_BYTES || total > declared {
+                return Err(DecodeError("invalid initial handshake length or type"));
+            }
+            if total == declared {
+                let prefix = &wire[..wire.len() - r.0.len()];
+                return Ok((prefix, decode(prefix)?));
+            }
+        }
+    }
+    Err(DecodeError("too many initial records"))
+}
+
 /// Decode exactly one complete ClientHello from its original TLS records.
 ///
 /// Rejects trailing records/messages, duplicate extension types, invalid vector
@@ -293,6 +337,11 @@ mod tests {
                 m.len()
             );
             assert_eq!(observed.records.len(), 2);
+            let mut flight = wire.clone();
+            flight.extend([23, 3, 3, 0, 1, 0]);
+            let (prefix, extracted) = first_client_hello(&flight).unwrap();
+            assert_eq!(prefix, wire);
+            assert_eq!(extracted, observed);
             observed.records = baseline.records.clone();
             assert_eq!(observed, baseline);
         }
@@ -302,6 +351,7 @@ mod tests {
         let wire = record(&message(&[]));
         for end in 0..wire.len() {
             assert!(decode(&wire[..end]).is_err());
+            assert!(first_client_hello(&wire[..end]).is_err());
         }
         assert!(decode(&record(&message(&[0, 5, 0, 0, 0, 5, 0, 0]))).is_err());
         let mut extra = wire.clone();
