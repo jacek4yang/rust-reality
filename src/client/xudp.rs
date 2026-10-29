@@ -4,17 +4,19 @@
 //! SOCKS5 UDP ASSOCIATE traffic as XUDP frames. The LINE is fixed for the
 //! association lifetime (no mid-session migration).
 
-use std::{io, net::SocketAddr};
+use std::net::SocketAddr;
 
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncReadExt,
     net::{TcpStream, UdpSocket},
 };
 
 use crate::protocol::{
     reality::{
         ClientSession,
-        tls13::{ContentType, MAX_PLAINTEXT_LEN, MAX_TLS_RECORD_WIRE_LEN},
+        tls13::{
+            MAX_PLAINTEXT_LEN, TlsApplicationReader, TlsApplicationWriter, application_halves,
+        },
     },
     socks5::{decode_udp_datagram, encode_udp_datagram},
     vless::{
@@ -28,14 +30,15 @@ use super::session::VisionTunnelError;
 
 /// Client-side XUDP association bound to one authenticated LINE.
 pub struct XudpTunnel {
-    stream: TcpStream,
-    session: ClientSession,
+    reader: TlsApplicationReader<tokio::net::tcp::OwnedReadHalf>,
+    writer: TlsApplicationWriter<tokio::net::tcp::OwnedWriteHalf>,
     encoder: VisionEncoder,
     decoder: VisionDecoder,
     downlink: VisionMode,
     readable: Vec<u8>,
     readable_at: usize,
     encoder_done: bool,
+    activity: std::sync::Arc<crate::io_activity::SessionActivity>,
     /// Destination of the most recent uplink New/Keep frame (for Keep without rewrite).
     last_destination: Option<Destination>,
     association_opened: bool,
@@ -54,8 +57,8 @@ impl XudpTunnel {
     /// response on the first downlink write (`SetFlushNext`); sending XUDP New
     /// first matches stock Xray client parallelism and avoids ASSOCIATE deadlock.
     pub async fn connect(
-        mut stream: TcpStream,
-        mut session: ClientSession,
+        stream: TcpStream,
+        session: ClientSession,
         user_id: UserId,
         allow_udp_443: bool,
     ) -> Result<Self, VisionTunnelError> {
@@ -75,26 +78,34 @@ impl XudpTunnel {
         encoder.assemble(&preamble, &[], &mut frame[request_len..]);
         encoder.commit(&preamble);
 
-        let mut record = Vec::new();
-        session
-            .write_mut()
-            .seal_into(ContentType::ApplicationData, &frame, 0, &mut record)
-            .map_err(|_| VisionTunnelError::Record)?;
-        stream
-            .write_all(&record)
+        let (_, write_records, read_records) = session.into_record_layers();
+        let (reader, writer) = stream.into_split();
+        let (mut reader, mut writer) = application_halves(
+            reader,
+            Vec::new(),
+            writer,
+            read_records,
+            write_records,
+            false,
+        );
+        let activity = std::sync::Arc::new(crate::io_activity::SessionActivity::default());
+        reader.set_activity(activity.clone());
+        writer.set_activity(activity.clone());
+        writer
+            .write_application(&frame, crate::io_activity::WRITE_STALL_TIMEOUT)
             .await
-            .map_err(VisionTunnelError::Io)?;
-        stream.flush().await.map_err(VisionTunnelError::Io)?;
+            .map_err(VisionTunnelError::Tls)?;
 
         Ok(Self {
-            stream,
-            session,
+            reader,
+            writer,
             encoder,
             decoder: VisionDecoder::new(user_id),
             downlink: VisionMode::Framed,
             readable: Vec::with_capacity(MAX_PLAINTEXT_LEN),
             readable_at: 0,
             encoder_done: false,
+            activity,
             last_destination: None,
             association_opened: false,
             allow_udp_443,
@@ -118,8 +129,13 @@ impl XudpTunnel {
         let mut socks_out = Vec::new();
         let mut xudp_out = Vec::new();
 
+        let activity = self.activity.clone();
+        let expired = activity.expired(crate::io_activity::SESSION_IDLE_WINDOW);
+        tokio::pin!(expired);
         loop {
             tokio::select! {
+                () = &mut expired => return Err(VisionTunnelError::Tls(
+                    crate::protocol::reality::tls13::TlsApplicationIoError::Timeout)),
                 result = udp.recv_from(&mut udp_buf) => {
                     let (n, from) = result.map_err(VisionTunnelError::Io)?;
                     match peer {
@@ -253,40 +269,12 @@ impl XudpTunnel {
     }
 
     async fn read_raw_application(&mut self) -> Result<Vec<u8>, VisionTunnelError> {
-        loop {
-            let mut header = [0_u8; 5];
-            self.stream.read_exact(&mut header).await.map_err(|e| {
-                if e.kind() == io::ErrorKind::UnexpectedEof {
-                    VisionTunnelError::ClosedBeforeResponse
-                } else {
-                    VisionTunnelError::Io(e)
-                }
-            })?;
-            let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
-            if body_len + 5 > MAX_TLS_RECORD_WIRE_LEN {
-                return Err(VisionTunnelError::Record);
-            }
-            let mut body = vec![0_u8; body_len];
-            self.stream
-                .read_exact(&mut body)
-                .await
-                .map_err(VisionTunnelError::Io)?;
-            match header[0] {
-                20 => continue,
-                23 => {
-                    let mut record = Vec::with_capacity(5 + body_len);
-                    record.extend_from_slice(&header);
-                    record.extend_from_slice(&body);
-                    let opened = self
-                        .session
-                        .read_mut()
-                        .open_in_place(&mut record)
-                        .map_err(|_| VisionTunnelError::Record)?;
-                    return Ok(opened.plaintext().to_vec());
-                }
-                _ => return Err(VisionTunnelError::Record),
-            }
-        }
+        let record = self
+            .reader
+            .read_application(crate::io_activity::SESSION_IDLE_WINDOW)
+            .await
+            .map_err(VisionTunnelError::Tls)?;
+        Ok(record.plaintext().to_vec())
     }
 
     fn ingest_plaintext(&mut self, plaintext: &[u8]) -> Result<(), VisionTunnelError> {
@@ -336,34 +324,35 @@ impl XudpTunnel {
         }
         let mut offset = 0;
         while offset < payload.len() {
-            let want = (payload.len() - offset).min(8 * 1024);
-            let planned = self.encoder.plan(want, VisionCommand::Continue, false);
-            let Ok(plan) = planned else {
-                self.encoder_done = true;
-                return self.seal_and_send(&payload[offset..]).await;
-            };
+            // The preamble already consumed the UUID; reserve the five-byte frame header.
+            let want = (payload.len() - offset).min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
+            let plan = self
+                .encoder
+                .plan(want, VisionCommand::Continue, false)
+                .map_err(|_| VisionTunnelError::Vision)?;
             let content = &payload[offset..offset + want];
-            let mut frame = vec![0_u8; plan.wire_len()];
-            self.encoder.assemble(&plan, content, &mut frame);
+            self.writer
+                .write_assembled(
+                    plan.wire_len(),
+                    |frame| {
+                        self.encoder.assemble(&plan, content, frame);
+                    },
+                    crate::io_activity::WRITE_STALL_TIMEOUT,
+                )
+                .await
+                .map_err(VisionTunnelError::Tls)?;
             self.encoder.commit(&plan);
-            self.seal_and_send(&frame).await?;
             offset += want;
         }
-        self.stream.flush().await.map_err(VisionTunnelError::Io)?;
         Ok(())
     }
 
     async fn seal_and_send(&mut self, plaintext: &[u8]) -> Result<(), VisionTunnelError> {
-        let mut record = Vec::new();
-        self.session
-            .write_mut()
-            .seal_into(ContentType::ApplicationData, plaintext, 0, &mut record)
-            .map_err(|_| VisionTunnelError::Record)?;
-        self.stream
-            .write_all(&record)
+        self.writer
+            .write_application(plaintext, crate::io_activity::WRITE_STALL_TIMEOUT)
             .await
-            .map_err(VisionTunnelError::Io)?;
-        Ok(())
+            .map(|_| ())
+            .map_err(VisionTunnelError::Tls)
     }
 }
 

@@ -12,6 +12,10 @@ All notable user-facing changes to this project are documented in this file.
   agreement state and consume it at TLS negotiation. Browser tooling remains
   outside the production dependency graph.
 
+- Fix client TCP half-close handling in both directions and oversized Vision
+  frames. Client TCP and XUDP now reuse the canonical cancellation-safe TLS
+  record I/O, including authenticated alerts and KeyUpdate handling.
+
 ## [2.2.0] - 2026-10-22
 
 XUDP over NXR and Handoff. Direct, NXR, and Handoff all carry SOCKS5 UDP

@@ -11,6 +11,9 @@
 //! UDP/443 + genuine HTTP/3 and stock Xray cases are `#[ignore]` and wired
 //! into Exact-head Native like the NXR XUDP gates.
 
+#[path = "support/socks_tcp.rs"]
+mod socks_tcp;
+
 use std::{
     fs,
     io::{ErrorKind, Read, Write},
@@ -816,4 +819,15 @@ fn stock_xray_client_handoff_udp_echo_landing_is_sender() {
     assert_landing_is_udp_sender(&echo, landing_pid, entry_pid);
     eprintln!("stock_xray_client_handoff_udp_echo_landing_is_sender PASS");
     let _ = (landing, entry);
+}
+
+#[test]
+fn browser_profiles_handoff_tcp_preserve_bytes_and_half_close() {
+    for fingerprint in ["chrome", "firefox"] {
+        let root = std::env::temp_dir().join(format!("rr-handoff-tcp-browser-{}", free_port()));
+        let _guard = DirGuard(root.clone());
+        let stack = start_handoff_line_landing(&root, false, fingerprint);
+        socks_tcp::assert_echo(stack.socks_port);
+        socks_tcp::assert_reverse_half_close(stack.socks_port);
+    }
 }

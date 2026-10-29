@@ -7,7 +7,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::protocol::{
     reality::{
         ClientSession,
-        tls13::{ContentType, MAX_PLAINTEXT_LEN, MAX_TLS_RECORD_WIRE_LEN},
+        tls13::{
+            MAX_PLAINTEXT_LEN, TlsApplicationReader, TlsApplicationWriter, application_halves,
+        },
     },
     vless::{
         Destination, ResponseDecodeError, UserId, VisionCommand, VisionDecoder, VisionEncoder,
@@ -28,6 +30,8 @@ pub enum VisionTunnelError {
     ClosedBeforeResponse,
     /// Socket I/O failed.
     Io(io::Error),
+    /// Authenticated TLS application transport failed.
+    Tls(crate::protocol::reality::tls13::TlsApplicationIoError),
 }
 
 impl std::fmt::Display for VisionTunnelError {
@@ -40,6 +44,7 @@ impl std::error::Error for VisionTunnelError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
+            Self::Tls(e) => Some(e),
             _ => None,
         }
     }
@@ -47,21 +52,22 @@ impl std::error::Error for VisionTunnelError {
 
 /// Bidirectional Vision tunnel to a destination through an entry.
 pub struct VisionTunnel {
-    stream: tokio::net::TcpStream,
-    session: ClientSession,
+    reader: TlsApplicationReader<tokio::net::tcp::OwnedReadHalf>,
+    writer: TlsApplicationWriter<tokio::net::tcp::OwnedWriteHalf>,
     encoder: VisionEncoder,
     decoder: VisionDecoder,
     downlink: VisionMode,
     readable: Vec<u8>,
     readable_at: usize,
     encoder_done: bool,
+    activity: std::sync::Arc<crate::io_activity::SessionActivity>,
 }
 
 impl VisionTunnel {
     /// Sends the Vision TCP request preamble and waits for the VLESS response.
     pub async fn connect(
-        mut stream: tokio::net::TcpStream,
-        mut session: ClientSession,
+        stream: tokio::net::TcpStream,
+        session: ClientSession,
         user_id: UserId,
         destination: &Destination,
     ) -> Result<Self, VisionTunnelError> {
@@ -81,26 +87,34 @@ impl VisionTunnel {
         encoder.assemble(&preamble, &[], &mut frame[request_len..]);
         encoder.commit(&preamble);
 
-        let mut record = Vec::new();
-        session
-            .write_mut()
-            .seal_into(ContentType::ApplicationData, &frame, 0, &mut record)
-            .map_err(|_| VisionTunnelError::Record)?;
-        stream
-            .write_all(&record)
+        let (_, write_records, read_records) = session.into_record_layers();
+        let (reader, writer) = stream.into_split();
+        let (mut reader, mut writer) = application_halves(
+            reader,
+            Vec::new(),
+            writer,
+            read_records,
+            write_records,
+            false,
+        );
+        let activity = std::sync::Arc::new(crate::io_activity::SessionActivity::default());
+        reader.set_activity(activity.clone());
+        writer.set_activity(activity.clone());
+        writer
+            .write_application(&frame, crate::io_activity::WRITE_STALL_TIMEOUT)
             .await
-            .map_err(VisionTunnelError::Io)?;
-        stream.flush().await.map_err(VisionTunnelError::Io)?;
+            .map_err(VisionTunnelError::Tls)?;
 
         let mut tunnel = Self {
-            stream,
-            session,
+            reader,
+            writer,
             encoder,
             decoder: VisionDecoder::new(user_id),
             downlink: VisionMode::Framed,
             readable: Vec::with_capacity(MAX_PLAINTEXT_LEN),
             readable_at: 0,
             encoder_done: false,
+            activity,
         };
         tunnel.await_response().await?;
         Ok(tunnel)
@@ -143,40 +157,12 @@ impl VisionTunnel {
     /// Opens one application-data record (or skips ChangeCipherSpec) and returns
     /// the plaintext bytes without Vision framing.
     async fn read_raw_application(&mut self) -> Result<Vec<u8>, VisionTunnelError> {
-        loop {
-            let mut header = [0_u8; 5];
-            self.stream.read_exact(&mut header).await.map_err(|e| {
-                if e.kind() == io::ErrorKind::UnexpectedEof {
-                    VisionTunnelError::ClosedBeforeResponse
-                } else {
-                    VisionTunnelError::Io(e)
-                }
-            })?;
-            let body_len = usize::from(u16::from_be_bytes([header[3], header[4]]));
-            if body_len + 5 > MAX_TLS_RECORD_WIRE_LEN {
-                return Err(VisionTunnelError::Record);
-            }
-            let mut body = vec![0_u8; body_len];
-            self.stream
-                .read_exact(&mut body)
-                .await
-                .map_err(VisionTunnelError::Io)?;
-            match header[0] {
-                20 => continue,
-                23 => {
-                    let mut record = Vec::with_capacity(5 + body_len);
-                    record.extend_from_slice(&header);
-                    record.extend_from_slice(&body);
-                    let opened = self
-                        .session
-                        .read_mut()
-                        .open_in_place(&mut record)
-                        .map_err(|_| VisionTunnelError::Record)?;
-                    return Ok(opened.plaintext().to_vec());
-                }
-                _ => return Err(VisionTunnelError::Record),
-            }
-        }
+        let record = self
+            .reader
+            .read_application(crate::io_activity::SESSION_IDLE_WINDOW)
+            .await
+            .map_err(VisionTunnelError::Tls)?;
+        Ok(record.plaintext().to_vec())
     }
 
     fn ingest_plaintext(&mut self, plaintext: &[u8]) -> Result<(), VisionTunnelError> {
@@ -207,10 +193,25 @@ impl VisionTunnel {
         S: AsyncRead + AsyncWrite + Unpin,
     {
         let mut local_buf = vec![0_u8; 16 * 1024];
+        let mut upload_open = true;
+        let mut download_open = true;
+        let activity = self.activity.clone();
+        let expired = activity.expired(crate::io_activity::SESSION_IDLE_WINDOW);
+        tokio::pin!(expired);
         loop {
             tokio::select! {
-                ready = self.poll_fill_readable() => {
-                    ready?;
+                () = &mut expired => return Err(VisionTunnelError::Tls(
+                    crate::protocol::reality::tls13::TlsApplicationIoError::Timeout)),
+                ready = self.poll_fill_readable(), if download_open => {
+                    match ready {
+                        Err(VisionTunnelError::Tls(crate::protocol::reality::tls13::TlsApplicationIoError::PeerAlert { description: 0, .. })) => {
+                            local.shutdown().await.map_err(VisionTunnelError::Io)?;
+                            download_open = false;
+                            if !upload_open { return Ok(()); }
+                            continue;
+                        }
+                        other => other?,
+                    }
                     if self.readable_at < self.readable.len() {
                         let chunk = &self.readable[self.readable_at..];
                         local.write_all(chunk).await.map_err(VisionTunnelError::Io)?;
@@ -222,10 +223,14 @@ impl VisionTunnel {
                         }
                     }
                 }
-                read = local.read(&mut local_buf) => {
+                read = local.read(&mut local_buf), if upload_open => {
                     let n = read.map_err(VisionTunnelError::Io)?;
                     if n == 0 {
-                        return Ok(());
+                        self.writer.shutdown(crate::io_activity::WRITE_STALL_TIMEOUT)
+                            .await.map_err(VisionTunnelError::Tls)?;
+                        upload_open = false;
+                        if !download_open { return Ok(()); }
+                        continue;
                     }
                     self.write_application(&local_buf[..n]).await?;
                 }
@@ -249,33 +254,34 @@ impl VisionTunnel {
         }
         let mut offset = 0;
         while offset < payload.len() {
-            let want = (payload.len() - offset).min(8 * 1024);
-            let planned = self.encoder.plan(want, VisionCommand::Continue, false);
-            let Ok(plan) = planned else {
-                self.encoder_done = true;
-                return self.seal_and_send(&payload[offset..]).await;
-            };
+            // The preamble already consumed the UUID; reserve the five-byte frame header.
+            let want = (payload.len() - offset).min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
+            let plan = self
+                .encoder
+                .plan(want, VisionCommand::Continue, false)
+                .map_err(|_| VisionTunnelError::Vision)?;
             let content = &payload[offset..offset + want];
-            let mut frame = vec![0_u8; plan.wire_len()];
-            self.encoder.assemble(&plan, content, &mut frame);
+            self.writer
+                .write_assembled(
+                    plan.wire_len(),
+                    |frame| {
+                        self.encoder.assemble(&plan, content, frame);
+                    },
+                    crate::io_activity::WRITE_STALL_TIMEOUT,
+                )
+                .await
+                .map_err(VisionTunnelError::Tls)?;
             self.encoder.commit(&plan);
-            self.seal_and_send(&frame).await?;
             offset += want;
         }
-        self.stream.flush().await.map_err(VisionTunnelError::Io)?;
         Ok(())
     }
 
     async fn seal_and_send(&mut self, plaintext: &[u8]) -> Result<(), VisionTunnelError> {
-        let mut record = Vec::new();
-        self.session
-            .write_mut()
-            .seal_into(ContentType::ApplicationData, plaintext, 0, &mut record)
-            .map_err(|_| VisionTunnelError::Record)?;
-        self.stream
-            .write_all(&record)
+        self.writer
+            .write_application(plaintext, crate::io_activity::WRITE_STALL_TIMEOUT)
             .await
-            .map_err(VisionTunnelError::Io)?;
-        Ok(())
+            .map(|_| ())
+            .map_err(VisionTunnelError::Tls)
     }
 }

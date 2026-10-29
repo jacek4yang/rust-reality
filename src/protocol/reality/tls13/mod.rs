@@ -20,6 +20,7 @@ pub(crate) use application_io::VectoredRead;
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub use application_io::fuzz_key_update_fragments;
+pub(crate) use application_io::application_halves;
 pub use application_io::{
     ApplicationRecord, ApplicationWriteStats, TlsApplicationIo, TlsApplicationIoError,
     TlsApplicationReader, TlsApplicationWriter, resume_application_halves,

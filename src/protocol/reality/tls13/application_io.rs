@@ -458,6 +458,25 @@ pub fn resume_application_halves<R, W>(
     key_update_response_pending: bool,
 ) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
     let (client_records, server_records) = tls.into_record_layers();
+    application_halves(
+        reader,
+        pending_ciphertext,
+        writer,
+        client_records,
+        server_records,
+        key_update_response_pending,
+    )
+}
+
+/// Attaches owned traffic directions without assuming which peer is the server.
+pub(crate) fn application_halves<R, W>(
+    reader: R,
+    pending_ciphertext: Vec<u8>,
+    writer: W,
+    read_records: super::Tls13RecordLayer,
+    write_records: super::Tls13RecordLayer,
+    key_update_response_pending: bool,
+) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
     let buffered_end = pending_ciphertext.len();
     let mut socket_buffer = pending_ciphertext;
     // Best-effort headroom for the first refill; the grow-on-demand refill
@@ -467,7 +486,7 @@ pub fn resume_application_halves<R, W>(
     (
         TlsApplicationReader {
             io: reader,
-            records: client_records,
+            records: read_records,
             socket_buffer,
             buffered_start: 0,
             buffered_end,
@@ -477,7 +496,7 @@ pub fn resume_application_halves<R, W>(
         },
         TlsApplicationWriter {
             io: writer,
-            records: server_records,
+            records: write_records,
             write_record: Vec::new(),
             idle: IdleDeadline::new(),
             key_update_coordination,
