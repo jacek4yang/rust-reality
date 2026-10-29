@@ -6,6 +6,15 @@ the validation layers themselves.
 
 ## Production test layers
 
+Native browser evidence is collected by `.github/workflows/browser-capture.yml`
+using the independent `tools/rr-fingerprint` executable on Windows. Its discovery
+captures record the installed signed browser and driver identities, raw TLS
+records, and a verified HTTPS transaction from each fresh WebDriver session.
+These observations are not approved release fixtures or a production parity
+verdict. Decode a saved record with `cargo run --manifest-path tools/Cargo.toml
+-p rr-fingerprint -- CAPTURE.tls`. The `fingerprint_capture` fuzz target covers
+the bounded independent decoder; see ADR 0061 for the evidence boundary.
+
 - **Unit/module tests** live beside the code they validate
   (`src/**`, `crates/**`). They encode the protocol, state-machine, and
   allocation invariants — including the allocation gates in

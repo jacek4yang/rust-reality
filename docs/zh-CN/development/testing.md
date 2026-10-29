@@ -5,6 +5,13 @@
 
 ## 生产测试层
 
+原生浏览器证据由 `.github/workflows/browser-capture.yml` 在 Windows 上运行独立的
+`tools/rr-fingerprint` 工具采集。探索性采集记录已安装且签名有效的浏览器与驱动身份、
+原始 TLS 记录，以及每个全新 WebDriver 会话中通过证书验证的 HTTPS 事务。
+这些观察结果不等于获准用于发布的固定样本，也不代表生产指纹已通过一致性验证。
+使用 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- CAPTURE.tls`
+解码保存的记录。`fingerprint_capture` 模糊测试覆盖有界独立解码器；证据边界见 ADR 0061。
+
 - **单元及模块测试**与源代码放在一起（`src/**`、`crates/**`），验证协议、状态机
   和分配不变量。`src/protocol/reality/tls13/allocation_gate.rs` 验证稳定记录路径
   不分配内存；`crates/rr-session` 验证状态转换。
