@@ -122,34 +122,19 @@ impl LineGroup {
         let primary_idx = self.pick_primary();
         let primary = Arc::clone(&self.lines[primary_idx]);
 
-        if self.lines.len() == 1 {
-            return match primary.handshake().await {
-                Ok(auth) => {
-                    self.note_success(primary_idx);
-                    Ok(auth)
-                }
-                Err(error) => {
-                    self.note_fault(primary_idx);
-                    Err(error)
-                }
-            };
-        }
-
-        let alternate_idx = self.pick_alternate(primary_idx);
-        let alternate = Arc::clone(&self.lines[alternate_idx]);
-
-        let primary_fut = {
-            let line = Arc::clone(&primary);
-            async move { line.handshake().await }
-        };
-        let alternate_fut = {
-            let line = Arc::clone(&alternate);
-            async move { line.handshake().await }
-        };
+        let alternate_idx = (self.lines.len() > 1).then(|| self.pick_alternate(primary_idx));
+        // Agreement state belongs to the authentication attempt, not to the
+        // enclosing connection task for the entire lifetime of its relay.
+        let primary_fut = Box::pin(async move { primary.handshake().await });
+        let alternate_fut = alternate_idx.map(|idx| {
+            let line = Arc::clone(&self.lines[idx]);
+            // An alternate that is never polled allocates no agreement frame.
+            async move { Box::pin(line.handshake()).await }
+        });
 
         match select_client_transport(
             primary_fut,
-            Some(alternate_fut),
+            alternate_fut,
             self.policy.hedge,
             self.policy.timeout,
         )
@@ -160,7 +145,7 @@ impl LineGroup {
                     ClientCandidate::Primary => primary_idx,
                     ClientCandidate::Alternate => {
                         self.note_fault(primary_idx);
-                        alternate_idx
+                        alternate_idx.ok_or(LineError::Selection("missing alternate"))?
                     }
                 };
                 self.note_success(winner);
@@ -168,13 +153,17 @@ impl LineGroup {
             }
             Err(ClientEstablishError::Deadline) => {
                 self.note_fault(primary_idx);
-                self.note_fault(alternate_idx);
+                if let Some(idx) = alternate_idx {
+                    self.note_fault(idx);
+                }
                 Err(LineError::Selection("deadline"))
             }
             Err(ClientEstablishError::Attempts { primary, alternate }) => {
                 self.note_fault(primary_idx);
-                if alternate.is_some() {
-                    self.note_fault(alternate_idx);
+                if alternate.is_some()
+                    && let Some(idx) = alternate_idx
+                {
+                    self.note_fault(idx);
                 }
                 Err(primary)
             }
@@ -289,6 +278,7 @@ impl LinePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
     use crate::config::node::LineConfig;
 
     fn dummy_line(tag: &str, port: u16) -> LineConfig {
@@ -297,7 +287,7 @@ mod tests {
             address: "127.0.0.1".to_owned(),
             port,
             id: "11111111-1111-4111-8111-111111111111".to_owned(),
-            public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+            public_key: BASE64_URL_SAFE_NO_PAD.encode([0x22; 32]),
             short_id: "0102030405060708".to_owned(),
             server_name: "www.example.com".to_owned(),
             fingerprint: Default::default(),
@@ -309,6 +299,79 @@ mod tests {
     fn rejects_empty_group() {
         let err = LineGroup::new("g", vec![], SelectionPolicy::default()).unwrap_err();
         assert!(matches!(err, LineError::Config(_)));
+    }
+
+    #[tokio::test]
+    async fn single_line_deadline_cancels_an_incomplete_tls_handshake() {
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let line = Line::from_config(&dummy_line(
+            "stalled",
+            listener.local_addr().unwrap().port(),
+        ))
+        .unwrap();
+        let group = Arc::new(
+            LineGroup::new(
+                "single",
+                vec![Arc::new(line)],
+                SelectionPolicy {
+                    hedge: Duration::from_millis(10),
+                    timeout: Duration::from_secs(5),
+                },
+            )
+            .unwrap(),
+        );
+        let attempt = {
+            let group = Arc::clone(&group);
+            tokio::spawn(async move { group.authenticate().await })
+        };
+        // Keep real time until loopback I/O proves the production attempt has
+        // written its complete ClientHello. The peer deliberately never replies.
+        let mut peer = tokio::time::timeout(Duration::from_secs(3), async {
+            let (mut peer, _) = listener.accept().await.unwrap();
+            let mut header = [0; 5];
+            peer.read_exact(&mut header).await.unwrap();
+            assert_eq!(header[0], 22);
+            let mut body = vec![0; usize::from(u16::from_be_bytes([header[3], header[4]]))];
+            peer.read_exact(&mut body).await.unwrap();
+            peer
+        })
+        .await
+        .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(5)).await;
+        assert!(matches!(
+            attempt.await.unwrap(),
+            Err(LineError::Selection("deadline"))
+        ));
+        assert_eq!(group.fault_counts(), vec![1]);
+        tokio::time::resume();
+        let mut byte = [0];
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), peer.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0,
+            "deadline must drop the owned socket"
+        );
+    }
+
+    #[test]
+    fn authentication_future_does_not_retain_agreement_storage() {
+        let group = LineGroup::new(
+            "single",
+            vec![Arc::new(Line::from_config(&dummy_line("a", 1)).unwrap())],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        let bytes = std::mem::size_of_val(&group.authenticate());
+        eprintln!("authentication future bytes={bytes}");
+        assert!(
+            bytes < 4096,
+            "ephemeral agreement storage must leave the connection task after authentication"
+        );
     }
 
     #[test]

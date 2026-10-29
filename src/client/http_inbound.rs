@@ -3,7 +3,7 @@
 //! CONNECT-only: non-CONNECT methods get 405 Allow: CONNECT. No absolute-form
 //! GET forwarding, no Proxy-Agent, no body rewriting.
 
-use std::{net::IpAddr, str, time::Duration};
+use std::{net::IpAddr, str};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -14,7 +14,6 @@ use crate::protocol::vless::{Address, Destination};
 use super::{line::LineError, selection::LineGroup};
 
 const MAX_HEAD_LEN: usize = 8 * 1024;
-const HEAD_BUDGET: Duration = Duration::from_secs(15);
 
 const OK: u16 = 200;
 const BAD_REQUEST: u16 = 400;
@@ -80,7 +79,7 @@ pub(super) async fn handle_connection(
     mut local: TcpStream,
     group: &LineGroup,
 ) -> Result<(), HttpError> {
-    let request = match timeout(HEAD_BUDGET, read_request(&mut local)).await {
+    let request = match timeout(super::REQUEST_BUDGET, read_request(&mut local)).await {
         Ok(Ok(request)) => request,
         Ok(Err(error)) => {
             if let HttpError::Protocol { status, .. } = error {

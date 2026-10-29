@@ -192,6 +192,13 @@ authentication faults and affects **new** sessions only.
 
 ## Operator bounds
 
+- SOCKS5 method negotiation plus its command, or an HTTP CONNECT head, must
+  complete within 15 seconds. LINE authentication then uses one overall
+  `selection.timeoutMs` budget, including single-LINE groups and hedged attempts.
+  Expiry closes pending candidate sockets before any destination request.
+- Local and LINE TCP sockets use the shared NODELAY and kernel keepalive policy.
+  Cancelling the client listener cancels its owned connections; completed
+  connection tasks are reaped while the listener remains active.
 - Listeners must bind loopback (`127.0.0.1` / `::1`). Non-loopback binds are
   rejected.
 - A group lists one to eight LINE tags; tags must exist and be unique in the

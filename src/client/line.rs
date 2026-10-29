@@ -126,6 +126,7 @@ impl Line {
             })?
             .map_err(LineError::Dial)?;
 
+        crate::transport::TcpAcceptor::configure_stream(&stream).map_err(LineError::Dial)?;
         let keys = ClientKeyAgreement::for_profile(self.fingerprint).map_err(map_hello)?;
         let now = unix_now();
         let auth = AuthPlaintext {

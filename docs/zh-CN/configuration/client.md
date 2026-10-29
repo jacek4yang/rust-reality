@@ -23,6 +23,12 @@ REALITY 身份，也不得绑到非回环地址。
 - Listener 必须绑定回环；每组 1–8 个 LINE tag；`entry` / `landing` 拒绝
   `protocol` 与 `lineGroup`。
 
+SOCKS5 方法协商及命令、HTTP CONNECT 请求头须在 15 秒内完成。随后 LINE
+认证使用统一的 `selection.timeoutMs` 总期限，包括单 LINE 组和竞速候选；
+期限到达时，在发送目的地请求之前关闭未完成候选的 socket。客户端本地及 LINE
+TCP socket 复用 NODELAY 和内核保活策略。取消监听器会取消其拥有的连接，
+已完成的连接任务在监听器运行期间及时回收。
+
 ## 相关
 
 - [配置如何工作](index.md)
