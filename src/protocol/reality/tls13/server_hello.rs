@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, ops::Range};
 
-use crate::protocol::reality::{ClientHello, X25519_GROUP, X25519_MLKEM768_GROUP};
+use crate::protocol::reality::{ClientHello, P256_GROUP, X25519_GROUP, X25519_MLKEM768_GROUP};
 
 use super::CipherSuite;
 
@@ -360,6 +360,7 @@ fn validate_key_share(
     client: &ClientHello,
 ) -> Result<(), ServerHelloError> {
     let expected_len = match group {
+        P256_GROUP => 65,
         X25519_GROUP => X25519_KEY_EXCHANGE_LEN,
         X25519_MLKEM768_GROUP => X25519_MLKEM768_SERVER_SHARE_LEN,
         _ => return Err(ServerHelloError::UnsupportedKeyShare),

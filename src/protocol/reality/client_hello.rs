@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, ops::Range, sync::Arc};
 
-use crate::crypto::EphemeralX25519Key;
+use crate::crypto::{EphemeralP256Key, EphemeralX25519Key};
 use ml_kem::{
     DecapsulationKey768, Seed,
     array::Array as MlKemArray,
@@ -18,6 +18,8 @@ pub const SESSION_ID_OFFSET: usize = 39;
 pub const SESSION_ID_LEN: usize = 32;
 /// TLS NamedGroup identifier for X25519.
 pub const X25519_GROUP: u16 = 0x001d;
+/// TLS NamedGroup identifier for secp256r1 (NIST P-256).
+pub const P256_GROUP: u16 = 0x0017;
 /// Xray-compatible NamedGroup identifier for X25519MLKEM768.
 pub const X25519_MLKEM768_GROUP: u16 = 0x11ec;
 /// ML-KEM-768 encapsulation key bytes in the hybrid client share.
@@ -147,6 +149,7 @@ pub(crate) struct CoverProbe {
     hello: ClientHello,
     wire_record: Vec<u8>,
     x25519: Option<EphemeralX25519Key>,
+    p256: Option<EphemeralP256Key>,
     hybrid_x25519: Option<EphemeralX25519Key>,
     hybrid_mlkem: Option<DecapsulationKey768>,
 }
@@ -531,6 +534,7 @@ impl CoverProbeTemplate {
         }
 
         let mut x25519 = None;
+        let mut p256 = None;
         let mut hybrid_x25519 = None;
         let mut hybrid_mlkem = None;
         for share in &sanitized.key_shares {
@@ -538,6 +542,12 @@ impl CoverProbeTemplate {
                 .get_mut(share.data.clone())
                 .ok_or(CoverProbeError::Malformed)?;
             match share.group {
+                P256_GROUP if output.len() == 65 && p256.is_none() => {
+                    let secret =
+                        EphemeralP256Key::generate().map_err(|_| CoverProbeError::Random)?;
+                    output.copy_from_slice(&secret.public_key());
+                    p256 = Some(secret);
+                }
                 X25519_GROUP if output.len() == 32 && x25519.is_none() => {
                     let secret = fresh_x25519_secret()?;
                     output.copy_from_slice(secret.public_key());
@@ -591,6 +601,7 @@ impl CoverProbeTemplate {
             hello,
             wire_record,
             x25519,
+            p256,
             hybrid_x25519,
             hybrid_mlkem,
         })
@@ -617,6 +628,14 @@ impl CoverProbe {
     ) -> Result<CoverProbeSharedSecret, CoverProbeError> {
         let mut output = Zeroizing::new([0_u8; 64]);
         let len = match group {
+            P256_GROUP => {
+                let secret = self.p256.take().ok_or(CoverProbeError::Malformed)?;
+                let shared = secret
+                    .agree(server_exchange)
+                    .ok_or(CoverProbeError::NonContributoryKey)?;
+                output[..32].copy_from_slice(shared.as_slice());
+                32
+            }
             X25519_GROUP => {
                 let secret = self.x25519.take().ok_or(CoverProbeError::Malformed)?;
                 let public: [u8; 32] = server_exchange
@@ -1256,6 +1275,7 @@ fn normalize_key_shares(body: &[u8], digest: &mut Sha256) -> Result<(), ClientHe
             return Err(ClientHelloClassError::Malformed);
         }
         match group {
+            P256_GROUP if exchange_len == 65 => {}
             X25519_GROUP if exchange_len == 32 => {}
             X25519_MLKEM768_GROUP if exchange_len == X25519_MLKEM768_SHARE_LEN => {}
             _ if is_grease(group) => {}
@@ -1697,6 +1717,48 @@ mod tests {
     };
 
     #[test]
+    fn p256_cover_probe_retains_class_and_consumes_valid_private_state() {
+        let key = crate::crypto::EphemeralP256Key::generate().unwrap();
+        let hello = ClientHello::parse_message(&client_hello_with_key_share(
+            [7; 32],
+            &[9; 32],
+            "www.example.com",
+            &[b"h2"],
+            super::P256_GROUP,
+            &key.public_key(),
+        ))
+        .unwrap();
+        let class = hello.normalized_profile_class().unwrap();
+        let template = hello.controlled_cover_probe_template().unwrap();
+        let mut probe = template.generate(3).unwrap();
+        assert_eq!(probe.hello().normalized_profile_class().unwrap(), class);
+        let share = probe
+            .hello()
+            .key_shares()
+            .find(|s| s.group() == super::P256_GROUP)
+            .unwrap()
+            .data()
+            .to_vec();
+        assert_ne!(share, key.public_key());
+        let peer = crate::crypto::EphemeralP256Key::generate().unwrap();
+        let public = peer.public_key();
+        let expected = peer.agree(&share).unwrap();
+        let actual = probe.shared_secret(super::P256_GROUP, &public).unwrap();
+        assert_eq!(actual.as_bytes(), expected.as_slice());
+        assert!(probe.shared_secret(super::P256_GROUP, &public).is_err());
+        let malformed = ClientHello::parse_message(&client_hello_with_key_share(
+            [7; 32],
+            &[9; 32],
+            "www.example.com",
+            &[b"h2"],
+            super::P256_GROUP,
+            &[4; 64],
+        ))
+        .unwrap();
+        assert!(malformed.normalized_profile_class().is_err());
+    }
+
+    #[test]
     fn a_controlled_probe_consumes_its_ephemeral_agreement() {
         let hello = ClientHello::parse_message(&client_hello(
             [0x11; 32],
@@ -1859,10 +1921,10 @@ mod tests {
             &[1; 32],
             "www.example.com",
             &[b"h2"],
-            0x0017,
-            &[0x04; 65],
+            0x0018,
+            &[0x04; 97],
         ))
-        .expect("P-256 offer remains a structurally valid ClientHello");
+        .expect("P-384 offer remains a structurally valid ClientHello");
         assert_eq!(
             hello.normalized_profile_class(),
             Err(ClientHelloClassError::UnsupportedKeyShare)
