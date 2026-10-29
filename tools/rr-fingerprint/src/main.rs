@@ -5,6 +5,9 @@ mod xray;
 use std::{fs::File, io::Read};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "compare-corpus") {
+        return compare_corpus(&args[1..]);
+    }
     if args.len() == 3 && args[0] == "capture-xray" {
         return xray::collect(
             std::path::Path::new(&args[1]),
@@ -56,5 +59,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .read_to_end(&mut input)?;
     let hello = rr_fingerprint::decode(&input)?;
     println!("{}", serde_json::to_string_pretty(&hello)?);
+    Ok(())
+}
+
+fn compare_corpus(args: &[std::ffi::OsString]) -> Result<(), Box<dyn std::error::Error>> {
+    if !(18..=258).contains(&args.len()) {
+        return Err("usage: rr-fingerprint compare-corpus chrome|firefox REFERENCE CANDIDATE... (16..=256 candidates)".into());
+    }
+    let chrome = match args[0].to_str() {
+        Some("chrome") => true,
+        Some("firefox") => false,
+        _ => return Err("browser profile".into()),
+    };
+    let mut records = Vec::new();
+    for path in &args[1..] {
+        let mut bytes = Vec::new();
+        File::open(path)?
+            .take((rr_fingerprint::MAX_CAPTURE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        records.push(bytes);
+    }
+    let candidates: Vec<_> = records[1..].iter().map(Vec::as_slice).collect();
+    rr_fingerprint::compare::compare_corpus(&records[0], &candidates, chrome)?;
+    println!(
+        "ClientHello structure and fresh-handshake diversity passed: {} samples",
+        candidates.len()
+    );
     Ok(())
 }

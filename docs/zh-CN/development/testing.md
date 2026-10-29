@@ -323,10 +323,13 @@ ACK 早于普查的形状以 Class B 夹具缺陷 fail-closed。 同一套 Class
 
 设置 `RR_BROWSER_COMPARISON_OUTPUT=/tmp/rr-browser-offers` 后运行
 `cargo test --test browser_line_capture --locked`，
-再通过 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare chrome`
-加上固定参考 `.tls` 路径及生成的 `.tls` 路径逐条对照；Firefox 使用 `firefox`。
+再通过 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare-corpus chrome`
+加上固定参考 `.tls` 路径及生成的 `chrome-*.tls` 路径对照；Firefox 使用 `firefox`。
 CI 对每个配置比较 32 条生成记录。独立解析器不导入生产协议代码，保留能力列表顺序、
 扩展内容、key share 结构和记录边界，只规范化经过验证的临时随机字段。
+语料对照接受 16 至 256 条全新握手，拒绝重复的 client random、session ID、非 GREASE
+key share 或 ECH 内容，并要求 Chrome 扩展顺序和密码套件 GREASE 值具有变化。
+这能发现固定字段或被关闭的洗牌，不能证明密码学随机数生成器的质量。
 Chrome 中间扩展允许洗牌，首尾 GREASE 约束保留；Firefox 扩展顺序严格一致。
 该证据不覆盖恢复、HRR、真实 ECH 或完整浏览器流量行为。
 

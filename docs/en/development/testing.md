@@ -459,11 +459,15 @@ Reproduce candidate comparison outside the source tree:
 ```shell
 RR_BROWSER_COMPARISON_OUTPUT=/tmp/rr-browser-offers cargo test --test browser_line_capture --locked
 cargo test --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
-cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare chrome benchmarks/evidence/browser-clienthello/windows-20261029/chrome/sample-00.tls /tmp/rr-browser-offers/chrome-00.tls
-cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare firefox benchmarks/evidence/browser-clienthello/windows-20261029/firefox/sample-00.tls /tmp/rr-browser-offers/firefox-00.tls
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare-corpus chrome benchmarks/evidence/browser-clienthello/windows-20261029/chrome/sample-00.tls /tmp/rr-browser-offers/chrome-*.tls
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare-corpus firefox benchmarks/evidence/browser-clienthello/windows-20261029/firefox/sample-00.tls /tmp/rr-browser-offers/firefox-*.tls
 ```
 
-CI compares all 32 generated samples per profile. The independent decoder imports
+CI compares all 32 generated samples per profile. Corpus comparison also rejects repeated client randoms,
+session identifiers, non-GREASE key shares or ECH bodies, and requires Chrome
+extension-order and cipher GREASE diversity. This detects constant fields or
+disabled shuffling; it does not establish cryptographic RNG quality. The corpus
+command accepts 16 through 256 fresh captures. The independent decoder imports
 no production protocol code. Comparison preserves record version/boundaries,
 legacy version, session length, compression, ordered cipher/group/signature/
 version lists, ALPN, extension bodies and key-share lengths/order. It checks

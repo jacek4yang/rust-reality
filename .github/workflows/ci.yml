@@ -71,9 +71,7 @@ jobs:
           cargo test --test browser_line_capture --locked
           cargo build --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
           for browser in chrome firefox; do
-            for sample in "$RR_BROWSER_COMPARISON_OUTPUT"/"$browser"-*.tls; do
-              tools/target/debug/rr-fingerprint compare "$browser" "benchmarks/evidence/browser-clienthello/windows-20261029/$browser/sample-00.tls" "$sample"
-            done
+            tools/target/debug/rr-fingerprint compare-corpus "$browser" "benchmarks/evidence/browser-clienthello/windows-20261029/$browser/sample-00.tls" "$RR_BROWSER_COMPARISON_OUTPUT"/"$browser"-*.tls
           done
 
 

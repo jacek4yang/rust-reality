@@ -22,6 +22,55 @@ pub fn compare(reference: &[u8], candidate: &[u8], chrome: bool) -> Result<()> {
     Ok(())
 }
 
+/// Check structural equivalence and observable fresh-handshake diversity.
+/// This detects constant randomness or disabled shuffling, not RNG quality.
+pub fn compare_corpus(reference: &[u8], candidates: &[&[u8]], chrome: bool) -> Result<()> {
+    use std::collections::BTreeSet;
+    if !(16..=256).contains(&candidates.len()) {
+        return Err(DecodeError("corpus must contain 16..=256 fresh handshakes"));
+    }
+    let expected = normalized(crate::decode(reference)?, chrome)?;
+    let mut randoms = BTreeSet::new();
+    let mut sessions = BTreeSet::new();
+    let mut exchanges = BTreeSet::new();
+    let mut ech = BTreeSet::new();
+    let mut orders = BTreeSet::new();
+    let mut grease_suites = BTreeSet::new();
+    for candidate in candidates {
+        let hello = crate::decode(candidate)?;
+        if normalized(hello.clone(), chrome)? != expected {
+            return Err(DecodeError("ClientHello structural mismatch"));
+        }
+        if !randoms.insert(hello.random) || !sessions.insert(hello.session_id) {
+            return Err(DecodeError(
+                "repeated handshake random or session identifier",
+            ));
+        }
+        for share in hello.key_shares.unwrap_or_default() {
+            if !grease(share.group) && !exchanges.insert((share.group, share.exchange)) {
+                return Err(DecodeError("repeated ephemeral key share"));
+            }
+        }
+        for extension in &hello.extensions {
+            if extension.kind == 65037 && !ech.insert(extension.body.clone()) {
+                return Err(DecodeError("repeated ECH GREASE payload"));
+            }
+        }
+        orders.insert(
+            hello
+                .extensions
+                .iter()
+                .map(|e| if grease(e.kind) { 0x0a0a } else { e.kind })
+                .collect::<Vec<_>>(),
+        );
+        grease_suites.extend(hello.cipher_suites.into_iter().filter(|v| grease(*v)));
+    }
+    if chrome && (orders.len() < 2 || grease_suites.len() < 2) {
+        return Err(DecodeError("Chrome extension or GREASE diversity missing"));
+    }
+    Ok(())
+}
+
 fn normalized(mut h: ClientHello, chrome: bool) -> Result<ClientHello> {
     if h.records.len() != 1
         || h.records[0].version != 0x0301
@@ -252,6 +301,7 @@ mod tests {
             let samples = manifest["profiles"][name]["samples"].as_array().unwrap();
             assert_eq!(samples.len(), 20);
             let reference = std::fs::read(root.join(samples[0]["file"].as_str().unwrap())).unwrap();
+            let mut corpus = Vec::new();
             for sample in samples {
                 let wire = std::fs::read(root.join(sample["file"].as_str().unwrap())).unwrap();
                 assert_eq!(
@@ -265,7 +315,14 @@ mod tests {
                 let mut bad = wire.clone();
                 bad[2] ^= 1;
                 assert!(compare(&reference, &bad, name == "chrome").is_err());
+                corpus.push(wire);
             }
+            let candidates: Vec<_> = corpus.iter().map(Vec::as_slice).collect();
+            compare_corpus(&reference, &candidates, name == "chrome").unwrap();
+            assert!(compare_corpus(&reference, &candidates[..15], name == "chrome").is_err());
+            assert!(
+                compare_corpus(&reference, &[reference.as_slice(); 16], name == "chrome").is_err()
+            );
         }
     }
 }

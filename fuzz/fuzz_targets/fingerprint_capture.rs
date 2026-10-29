@@ -4,5 +4,7 @@ fuzz_target!(|input: &[u8]| {
     let _ = rr_fingerprint::decode(input);
     let _ = rr_fingerprint::compare::compare(input, input, true);
     let _ = rr_fingerprint::compare::compare(input, input, false);
+    let _ = rr_fingerprint::compare::compare_corpus(input, &[input; 16], true);
+    let _ = rr_fingerprint::compare::compare_corpus(input, &[input; 16], false);
     let _ = rr_fingerprint::first_client_hello(input);
 });
