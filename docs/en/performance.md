@@ -14,6 +14,45 @@ frozen v1.0.0 release comparison matrix is published in
 sections immediately below and keeps the v1.0.0 tables unchanged as
 historical release measurements.
 
+## Native browser client: measured setup changes
+
+A same-profile implementation comparison uses Chrome 156.0.8078.74 in both
+arms: baseline `d72abc2` and candidate `acbe49c`, with fixed server `c02e488`.
+This measures the socket, buffer and connection-lifetime changes; it is not a
+comparison against the original release or a final release qualification.
+The frozen collector is `7163414`, built with Rust 1.99.1. On an Intel i5-1240P,
+processes share four physical P cores (logical CPUs 0,2,4,6). The CPU governor
+and limits are unchanged. A private loopback network namespace isolates churn
+from the host conntrack table; collector and product processes run as UID 1000.
+
+Twenty balanced ABBA blocks contain 80 slots and 960 samples, each with 128
+connections, with zero failed connections. The table reports candidate/baseline
+medians and 95% block-bootstrap intervals; each concurrency is assessed
+separately. CPU is attributed client scheduler time per connection.
+
+| Concurrency | Setup rate ratio (95% interval) | CPU ratio (95% interval) | p99 ratio (95% interval) |
+| --- | --- | --- | --- |
+| 1 | 95.597 (94.975, 95.947) | 0.1341 (0.1325, 0.1345) | 0.0121 (0.0119, 0.0125) |
+| 8 | 27.280 (27.170, 27.366) | 0.2940 (0.2910, 0.2960) | 0.0548 (0.0542, 0.0555) |
+| 32 | 7.722 (7.606, 7.868) | 0.5119 (0.5031, 0.5158) | 0.1842 (0.1815, 0.1898) |
+| 64 | 4.094 (4.002, 4.115) | 0.7910 (0.7825, 0.7942) | 0.3216 (0.3104, 0.3372) |
+
+At concurrency one, median setup latency falls from about 45.4 ms to 0.466 ms.
+This workload exposes the earlier client's socket policy; the ratio is not a
+claim of faster cryptographic primitives or Internet throughput. At 128 held
+connections, the median anonymous residency increment per connection falls from
+92.59 KiB to 38.13 KiB. All slots recover their initial descriptor count within
+the observed two-second checkpoint. Residency is not an allocation count or
+proof of long-term retention.
+
+[Raw samples, binary identities, commands and checksums](../../benchmarks/evidence/releases/v2.3.0/client-setup-ab-d72-acbe-isolated/archive-manifest.json)
+retain every slot. The preceding isolated A/A control covers 860,160 connections
+without failures; its CPU and rate intervals fit 1%, but two p99 intervals do
+not resolve 2% equivalence. That control remains explicitly unresolved in its
+[retained assessment](../../benchmarks/evidence/releases/v2.3.0/client-setup-isolated-acbe49c/archive-manifest.json).
+These results establish an intermediate setup comparison only. They do not
+establish Firefox cost, data throughput, WAN behavior or final source acceptance.
+
 ## v1.7 development: authenticated cover TCP warming
 
 The first cover-latency phase keeps the real TLS cover authoritative but moves
