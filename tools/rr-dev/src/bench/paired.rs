@@ -178,6 +178,16 @@ pub struct SuiteOutcome {
 ///
 /// Returns the first violated guard.
 pub fn validate(suite: &SetupRateSuite) -> Result<(), String> {
+    if suite.client_data_mib.is_some()
+        && suite
+            .concurrencies
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != suite.concurrencies.len()
+    {
+        return Err("client data concurrency levels must be unique".to_owned());
+    }
     if let Some(mib) = suite.client_data_mib
         && (!suite.peer.is_client_measurement()
             || !matches!(suite.attribution, Attribution::Schedstat)
@@ -1718,6 +1728,9 @@ mod tests {
         context.client_data_mib = Some(0);
         assert!(validate(&context).is_err());
         context.client_data_mib = Some(64);
+        context.concurrencies = vec![1, 1];
+        assert!(validate(&context).unwrap_err().contains("must be unique"));
+        context.concurrencies = vec![1];
         context.peer = SetupPeer::XrayClient(PathBuf::from("xray"));
         assert!(validate(&context).is_err());
     }
