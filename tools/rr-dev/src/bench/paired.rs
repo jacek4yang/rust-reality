@@ -909,6 +909,15 @@ fn measure_slot(
         socks_port,
     )?;
 
+    if suite.peer.is_client_measurement() {
+        super::client_resources::capture(
+            measured_pid,
+            &binary.sha256,
+            socks_port,
+            plain_port,
+            &slot_dir,
+        )?;
+    }
     stop_slot(&mut processes);
 
     if matches!(suite.attribution, Attribution::Strace) {

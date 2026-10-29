@@ -28,6 +28,7 @@ pub mod ab_suites;
 pub mod aggregate;
 pub mod attest;
 pub mod attribution;
+mod client_resources;
 pub mod config;
 pub mod cover;
 pub mod deployment;

@@ -913,3 +913,13 @@ Producer completion remains `NOT_EVALUATED` for performance: preserve the
 existing protected-metric tolerances and assess each cell independently.
 This workload stops after the first HTTP body byte and does not measure bulk
 throughput, long-lived memory or complete transfer integrity.
+
+After each client slot's timing and CPU window ends, the same process undergoes
+an idle connection ladder of 0, 1, 8, 32 and 128 authenticated SOCKS connections.
+Three identity-bound kernel observations per level retain status, smaps, and
+descriptor inventories. Closed or unexpectedly readable idle sockets invalidate
+the ladder. Five further observations at 0, 100, 500, 1000 and 2000 ms after
+closing the sockets record recovery. These post-close samples do not assert
+instantaneous reclamation or classify allocator residency as a leak. Compare
+the raw client resource files across paired slots separately from timed setup
+metrics; the collector does not assign a resource acceptance verdict.
