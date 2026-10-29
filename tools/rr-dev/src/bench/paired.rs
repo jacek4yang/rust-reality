@@ -191,7 +191,7 @@ struct PairedBinaries {
     xray: Binary,
     baseline_build_id: String,
     candidate_build_id: String,
-    xray_build_id: String,
+    xray_build_id: Option<String>,
 }
 
 impl PairedBinaries {
@@ -212,7 +212,7 @@ fn register_binaries(suite: &SetupRateSuite) -> Result<PairedBinaries, String> {
     let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
     let baseline_build_id = attest::build_id(&baseline.path)?;
     let candidate_build_id = attest::build_id(&candidate.path)?;
-    let xray_build_id = attest::build_id(&xray.path)?;
+    let xray_build_id = attest::optional_build_id(&xray.path)?;
     if let Some(sidecar) = &suite.baseline_identity {
         // The sidecar is the only way a prebuilt ELF whose source is no longer
         // checked out stays attributable, so a mismatch is fatal rather than
@@ -1132,11 +1132,12 @@ fn environment_json(
     port_count: usize,
     cover_target: &str,
 ) -> Json {
-    let binary_json = |binary: &Binary, build_id: &str| {
+    let binary_json = |binary: &Binary, build_id: Option<&str>| {
         Json::object([
             ("path", Json::string(binary.path.display().to_string())),
             ("sha256", Json::string(binary.sha256.clone())),
-            ("buildId", Json::string(build_id)),
+            ("identity", Json::string(binary.identity.clone())),
+            ("buildId", build_id.map_or(Json::Null, Json::string)),
         ])
     };
     Json::object([
@@ -1206,13 +1207,16 @@ fn environment_json(
         ),
         (
             "baseline",
-            binary_json(&binaries.baseline, &binaries.baseline_build_id),
+            binary_json(&binaries.baseline, Some(&binaries.baseline_build_id)),
         ),
         (
             "candidate",
-            binary_json(&binaries.candidate, &binaries.candidate_build_id),
+            binary_json(&binaries.candidate, Some(&binaries.candidate_build_id)),
         ),
-        ("xray", binary_json(&binaries.xray, &binaries.xray_build_id)),
+        (
+            "xray",
+            binary_json(&binaries.xray, binaries.xray_build_id.as_deref()),
+        ),
         ("harness", harness_block()),
         ("hostExclusiveLock", lock_json(lock)),
     ])
@@ -1614,7 +1618,7 @@ mod tests {
             xray: binary("xray"),
             baseline_build_id: "b1".to_owned(),
             candidate_build_id: "b2".to_owned(),
-            xray_build_id: "b3".to_owned(),
+            xray_build_id: None,
         };
         let repository = attest::RepositoryState {
             head: "c".repeat(40),
@@ -1647,6 +1651,9 @@ mod tests {
         assert!(rendered.contains("\"model\": \"loopback\""));
         assert!(rendered.contains("\"netemRttMs\": null"));
         assert!(rendered.contains("\"buildId\": \"b1\""));
+        assert!(rendered.contains("\"buildId\": null"));
+        assert!(rendered.contains(&"a".repeat(64)));
+        assert!(rendered.contains("\"identity\": \"{}\""));
         assert!(rendered.contains("\"benchOrigin\""));
         assert!(rendered.contains("\"embedded\": true"));
         assert!(rendered.contains("\"contract\": null"));
