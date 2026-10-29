@@ -914,6 +914,31 @@ existing protected-metric tolerances and assess each cell independently.
 This workload stops after the first HTTP body byte and does not measure bulk
 throughput, long-lived memory or complete transfer integrity.
 
+High connection churn can exhaust the host's Netfilter connection-tracking
+table even after the owned sockets close. Record `nf_conntrack_count`,
+`nf_conntrack_max` and timestamped kernel drop messages when diagnosing setup
+failures. A table-full run remains failed; do not discard failed samples or
+raise product deadlines to make it pass. For an isolated loopback campaign,
+run the same frozen collector and both arms in one fresh network namespace:
+
+```shell
+sudo --preserve-env=HOME,PATH,XDG_RUNTIME_DIR,XDG_CACHE_HOME unshare --net sh -eu -c '
+  ip link set lo up
+  bench_uid=$1; bench_gid=$2; shift 2
+  exec setpriv --reuid="$bench_uid" --regid="$bench_gid" --init-groups "$@"
+' rr-bench "$(id -u)" "$(id -g)" /path/to/frozen/rr-dev --repo /path/to/source bench run --suite client-setup-rate --rust-bin /path/to/candidate --baseline-bin /path/to/baseline --baseline-identity /path/to/identity.json --baseline-commit BASELINE_SHA --setup-server-bin /path/to/frozen-server --client-fingerprint chrome --baseline-client-fingerprint chrome --measure-mode schedstat --blocks 12 --samples 9 --connections 96 --concurrencies '1 8 32' --out-dir /tmp/new-isolated-client-setup --run-id isolated-client-chrome
+```
+
+Only namespace creation and its loopback setup use privilege; the collector and
+product processes run as the original user. Preserve and verify the descriptor
+limits, CPU affinity, toolchain and binary identities. Retain the namespace
+identity and connection-tracking counts before, during and after the run. This
+recipe changes no host firewall or sysctl and provides no external networking;
+freeze every executable and dependency before entering it. It does not qualify
+deployment firewall behavior. Compare A/A and A/B under identical isolation;
+do not combine host-namespace samples with isolated samples. A syscall-traced
+diagnostic changes scheduling and is not performance evidence.
+
 After each client slot's timing and CPU window ends, the same process undergoes
 an idle connection ladder of 0, 1, 8, 32 and 128 authenticated SOCKS connections.
 Three identity-bound kernel observations per level retain status, smaps, and
