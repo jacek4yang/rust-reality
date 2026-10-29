@@ -63,6 +63,7 @@ pub fn collect(browser: &str, binary: &Path, out: &Path) -> Result<()> {
         let cleanup = agent.delete(format!("{base}/session/{id}")).call();
         result?;
         cleanup?;
+        println!("verified {browser} HTTPS sample {}/20", sample + 1);
     }
     Ok(())
 }

@@ -8,12 +8,23 @@ the validation layers themselves.
 
 Native browser evidence is collected by `.github/workflows/browser-capture.yml`
 using the independent `tools/rr-fingerprint` executable on Windows. Its discovery
-captures record the installed signed browser and driver identities, raw TLS
+captures record pinned signed browser and driver identities, raw TLS
 records, and a verified HTTPS transaction from each fresh WebDriver session.
 These observations are not approved release fixtures or a production parity
 verdict. Decode a saved record with `cargo run --manifest-path tools/Cargo.toml
 -p rr-fingerprint -- CAPTURE.tls`. The `fingerprint_capture` fuzz target covers
 the bounded independent decoder; see ADR 0061 for the evidence boundary.
+
+The collector pins Chrome for Testing 156.0.8078.73 with the matching
+ChromeDriver and Firefox 159.0 (en-US win64) with GeckoDriver 0.37.1. Archive
+SHA-256 values are checked before execution, and the browser executable must
+have a valid publisher signature and the expected version. The executable hash
+must remain unchanged throughout collection. Chrome for Testing is Google's
+[official automation distribution](https://developer.chrome.com/docs/automation-and-testing/chrome-for-testing),
+not a Chromium rebuild; its distribution identity remains part of the evidence.
+Version selection used Google's Stable channel metadata and Mozilla's
+[159.0 release notes](https://www.firefox.com/en-US/firefox/159.0/releasenotes/).
+The workflow pins these inputs rather than following future channel updates.
 
 - **Unit/module tests** live beside the code they validate
   (`src/**`, `crates/**`). They encode the protocol, state-machine, and

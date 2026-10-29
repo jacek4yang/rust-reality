@@ -41,17 +41,42 @@ jobs:
           $private = Join-Path $env:RUNNER_TEMP 'browser-private'
           $caPath = Join-Path $env:RUNNER_TEMP 'browser-ca.der'
           $browser = '${{ matrix.browser }}'
+          $inputs = Join-Path $env:RUNNER_TEMP 'browser-inputs'
+          New-Item -ItemType Directory -Path $inputs | Out-Null
+          function Fetch-Pinned($url, $name, $sha256) {
+            $path = Join-Path $inputs $name
+            Invoke-WebRequest -Uri $url -OutFile $path -TimeoutSec 180
+            if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $sha256) { throw "download digest mismatch: $name" }
+            return $path
+          }
           if ($browser -eq 'chrome') {
-            $binary = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
-            $driver = Join-Path $env:CHROMEWEBDRIVER 'chromedriver.exe'
+            $expectedVersion = '156.0.8078.73'
+            $distribution = 'Google Chrome for Testing, official Stable release'
+            $archive = Fetch-Pinned 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chrome-win64.zip' 'chrome.zip' '5db0ad4c070907a791ec895b9de5ed15334b27f79af2556a131c3c11b3913a2b'
+            $driverArchive = Fetch-Pinned 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chromedriver-win64.zip' 'driver.zip' 'f782a94fc2a16e7dc6be48c6a18516dc708de8e86ff4a736ddc3ff62ff207ebf'
+            Expand-Archive $archive -DestinationPath $inputs
+            Expand-Archive $driverArchive -DestinationPath $inputs
+            $binary = Join-Path $inputs 'chrome-win64/chrome.exe'
+            $driver = Join-Path $inputs 'chromedriver-win64/chromedriver.exe'
           } else {
-            $binary = 'C:\Program Files\Mozilla Firefox\firefox.exe'
-            $driver = Join-Path $env:GECKOWEBDRIVER 'geckodriver.exe'
+            $expectedVersion = '159.0'
+            $distribution = 'Mozilla Firefox official Stable en-US win64'
+            $archive = Fetch-Pinned 'https://archive.mozilla.org/pub/firefox/releases/159.0/win64/en-US/Firefox%20Setup%20159.0.exe' 'firefox.exe' '8776887b79925abbdd407fcdfe257d8382b54e24be52a6466426b95a804d6790'
+            $driverArchive = Fetch-Pinned 'https://github.com/mozilla/geckodriver/releases/download/v0.37.1/geckodriver-v0.37.1-win64.zip' 'driver.zip' 'dfed9315abe8d2fbc1b6161a2ee8002452e79cf05ee92fdc653a4e26bc35edd8'
+            & 7z x $archive "-o$inputs/firefox" -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Firefox extraction failed' }
+            Expand-Archive $driverArchive -DestinationPath $inputs
+            $binary = Join-Path $inputs 'firefox/core/firefox.exe'
+            $driver = Join-Path $inputs 'geckodriver.exe'
           }
           $identity = [ordered]@{
             purpose = 'discovery-only; not an approved release fixture'
             source = '${{ github.sha }}'
             browser = $browser
+            distribution = $distribution
+            expectedVersion = $expectedVersion
+            archiveSha256 = (Get-FileHash $archive -Algorithm SHA256).Hash
+            driverArchiveSha256 = (Get-FileHash $driverArchive -Algorithm SHA256).Hash
             browserVersion = (Get-Item $binary).VersionInfo.ProductVersion
             browserSha256 = (Get-FileHash $binary -Algorithm SHA256).Hash
             publisher = (Get-AuthenticodeSignature $binary).Status.ToString()
@@ -66,6 +91,7 @@ jobs:
             samplesRequired = 20
           }
           if ($identity.publisher -ne 'Valid') { throw 'browser publisher signature invalid' }
+          if ($identity.browserVersion -ne $expectedVersion) { throw 'browser version differs from pinned stable version' }
           $identity | ConvertTo-Json -Depth 8 | Set-Content "$evidence/identity.json"
           & $tool prepare $private $caPath
           if ($LASTEXITCODE -ne 0) { throw 'test certificate preparation failed' }
@@ -90,6 +116,7 @@ jobs:
             if (-not $ready) { throw 'capture process startup deadline exceeded' }
             & $tool collect $browser $binary "$evidence/browser"
             if ($LASTEXITCODE -ne 0) { throw 'browser HTTPS capture failed' }
+            if ((Get-FileHash $binary -Algorithm SHA256).Hash -ne $identity.browserSha256) { throw 'browser changed during capture' }
             $samples = Get-ChildItem "$evidence/browser/sample-*.json"
             if ($samples.Count -ne 20) { throw 'missing browser samples' }
             $receipts = @(Get-ChildItem "$evidence/wire/*.receipt.json" | ForEach-Object { Get-Content $_ -Raw | ConvertFrom-Json })
