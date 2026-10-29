@@ -17,7 +17,7 @@ mod socks_tcp;
 use std::{
     fs,
     io::{ErrorKind, Read, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket as StdUdpSocket},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket as StdUdpSocket},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -48,13 +48,9 @@ impl Drop for DirGuard {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind((LINE_IP, 0))
-        .expect("ephemeral")
-        .local_addr()
-        .expect("addr")
-        .port()
-}
+#[path = "support/ports.rs"]
+mod ports;
+use ports::free_port;
 
 fn wait_tcp(ip: Ipv4Addr, port: u16, budget: Duration) {
     let deadline = Instant::now() + budget;

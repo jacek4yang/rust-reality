@@ -26,13 +26,9 @@ impl Drop for KillOnDrop {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
+#[path = "support/ports.rs"]
+mod ports;
+use ports::free_port;
 
 fn wait_port(port: u16, budget: Duration) {
     let deadline = Instant::now() + budget;

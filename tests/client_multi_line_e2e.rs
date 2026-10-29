@@ -5,7 +5,6 @@
 use std::{
     fs,
     io::Write,
-    net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
@@ -22,13 +21,9 @@ impl Drop for KillOnDrop {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind")
-        .local_addr()
-        .expect("addr")
-        .port()
-}
+#[path = "support/ports.rs"]
+mod ports;
+use ports::free_port;
 
 fn wait_port(port: u16, budget: Duration) {
     let deadline = Instant::now() + budget;
