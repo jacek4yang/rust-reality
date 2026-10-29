@@ -1706,7 +1706,7 @@ fn run_integrity(
 }
 
 /// Downloads the integrity payload to a temporary file and compares its digest.
-fn integrity_transfer(
+pub(super) fn integrity_transfer(
     endpoints: Endpoints,
     payload_mib: u64,
     expected_sha: &str,

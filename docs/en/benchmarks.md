@@ -110,6 +110,7 @@ exact diagnostic instead of manufacturing a measurement.
 | `cargo dev bench run --suite matrix` | Full A/B/C loopback matrix (baseline/final/Xray) over direction × payload × concurrency, with per-cell origin-saturation, upload-accounting and tunnel-bypass guards and an end-to-end integrity run. `--cells`/`--skip` trim the plan. |
 | `cargo dev bench run --suite fallback` | Clean fallback A/B between a pinned baseline ELF and the candidate: warn-level logging both sides, direct-to-listener, with the relay splice/pipe-pool/buffer policy pinned identically on both sides and per-slot payload integrity verified before timing. |
 | `cargo dev bench run --suite setup-rate` | Balanced setup-rate A/B (accept → first Vision transition) between a pinned baseline ELF and the candidate. `--cover-netem-rtt-ms` moves only the TLS cover behind a veth/netns and applies a recorded one-leg delay, retaining pool hit/miss summaries. `--measure-mode perf` attributes task-clock/instructions/context switches after warmup; `schedstat` attributes the same server CPU from `/proc/<pid>/task/*/schedstat` on a host with no `perf` binary, carrying no instruction or context-switch counts and bounding what a thread exiting mid-window could hide; `strace` records the bounded read/receive syscall set and gracefully stops the tracee so summaries cannot be silently empty. `--profile` captures the first measured candidate slot under the benchmark's existing lock and exact server identity. |
+| `cargo dev bench run --suite client-setup-rate` | Paired unified-client setup rate, client CPU and per-concurrency p50/p99 latency against one fixed rust-reality server. |
 | `cargo dev bench run --suite vision-direct`, `cargo dev bench run --suite xray` | Focused Vision-Direct and Xray comparisons. Vision-Direct enables the debug-level structured events its tunnel guard consumes and fails if the measured downloads produce no completed Direct server path. `--profile` is available for Vision-Direct and samples the exact Rust server across the post-warmup measured workload. |
 | `cargo dev bench run --suite deployment` | Deployment characterization: routing correctness proof, routing decision cost (incl. DNS strategies), NXR topologies (direct/NXR/SOCKS5/Xray), long-flow relay evidence, and a formal one-leg netem matrix. The RTT section retains production-build ABBA cold/warm samples for Handoff/NXR/SOCKS5 at 1/10/50/100/200 ms, c1/8/32/128/512, plus secret-free pool retirement summaries. `--deployment-plan` selects `full`, `mechanism`, `robustness`, or the non-formal `smoke`. |
 | `cargo dev bench run --suite soak` | Optional long-horizon loopback evidence with standalone mixed traffic plus Handoff, NXR, and TCP-only SOCKS5, midpoint reload, exact per-process RSS identities, aggregate PSS, and hash-bound start/interval/reload/end integrity attempts. `--soak-implementation xray` selects the retained comparator. The default native run is scheduled/non-blocking; an exact 12-hour run with a 5–30 minute distributed interval records whether it meets the strict long-horizon qualification. |
@@ -881,3 +882,102 @@ at recovery. Aggregate and per-process RSS +32 MiB, HWM +64 MiB and thread +8
 envelopes remain enforced; RSS/PSS slopes and FD growth are diagnostics.
 Missing or inconsistent ownership evidence fails qualification. CI preserves
 these secret-free observations and attempted final identities on failure.
+
+
+## Unified-client setup measurements
+
+`client-setup-rate` reuses the setup-rate ABBA collector and SOCKS workload,
+but attributes CPU to the baseline/candidate **client** process. The server
+executable is fixed across every slot and independently hash-verified. This is
+not the stock-Xray ingress/server CPU comparison.
+
+```shell
+cargo dev bench run --suite client-setup-rate --rust-bin /path/to/candidate --baseline-bin /path/to/baseline --baseline-identity /path/to/identity.json --baseline-commit BASELINE_SHA --setup-server-bin /path/to/frozen-server --client-fingerprint firefox --measure-mode schedstat --blocks 12 --samples 9 --connections 96 --concurrencies '1 8 32' --out-dir /tmp/new-client-setup --run-id client-firefox
+```
+
+`--baseline-client-fingerprint` selects an explicit baseline LINE profile;
+omission uses that frozen binary's own default, recorded as null rather than
+mislabelled as a browser version. A same-binary A/A control must use the same
+explicit profile on both sides. The candidate profile must be `chrome` or
+`firefox`. Both binaries must support their requested configuration; there is
+no version-based parser or silent fallback. A historical fixed-profile baseline
+and a native-browser candidate have different intrinsic handshake work, which
+must be distinguished from regressions with matching profiles.
+
+The client suite supports `schedstat` and `wall`; it rejects unsupported PMU,
+strace, cover-mode and shaped-cover combinations before collecting samples.
+`clientCpuPerConnection`, `clientPid`, `measuredRole`, the fixed server identity,
+profile selections and every connection latency are retained. p50/p99 cells
+use the same complete paired blocks and resolution floor as setup rate.
+Producer completion remains `NOT_EVALUATED` for performance: preserve the
+existing protected-metric tolerances and assess each cell independently.
+This workload stops after the first HTTP body byte and does not measure bulk
+throughput, long-lived memory or complete transfer integrity.
+
+High connection churn can exhaust the host's Netfilter connection-tracking
+table even after the owned sockets close. Record `nf_conntrack_count`,
+`nf_conntrack_max` and timestamped kernel drop messages when diagnosing setup
+failures. A table-full run remains failed; do not discard failed samples or
+raise product deadlines to make it pass. For an isolated loopback campaign,
+run the same frozen collector and both arms in one fresh network namespace:
+
+```shell
+sudo --preserve-env=HOME,PATH,XDG_RUNTIME_DIR,XDG_CACHE_HOME unshare --net sh -eu -c '
+  ip link set lo up
+  bench_uid=$1; bench_gid=$2; shift 2
+  exec setpriv --reuid="$bench_uid" --regid="$bench_gid" --init-groups "$@"
+' rr-bench "$(id -u)" "$(id -g)" /path/to/frozen/rr-dev --repo /path/to/source bench run --suite client-setup-rate --rust-bin /path/to/candidate --baseline-bin /path/to/baseline --baseline-identity /path/to/identity.json --baseline-commit BASELINE_SHA --setup-server-bin /path/to/frozen-server --client-fingerprint chrome --baseline-client-fingerprint chrome --measure-mode schedstat --blocks 12 --samples 9 --connections 96 --concurrencies '1 8 32' --out-dir /tmp/new-isolated-client-setup --run-id isolated-client-chrome
+```
+
+Only namespace creation and its loopback setup use privilege; the collector and
+product processes run as the original user. Preserve and verify the descriptor
+limits, CPU affinity, toolchain and binary identities. Retain the namespace
+identity and connection-tracking counts before, during and after the run. This
+recipe changes no host firewall or sysctl and provides no external networking;
+freeze every executable and dependency before entering it. It does not qualify
+deployment firewall behavior. Compare A/A and A/B under identical isolation;
+do not combine host-namespace samples with isolated samples. A syscall-traced
+diagnostic changes scheduling and is not performance evidence.
+
+After each client slot's timing and CPU window ends, the same process undergoes
+an idle connection ladder of 0, 1, 8, 32 and 128 authenticated SOCKS connections.
+Three identity-bound kernel observations per level retain status, smaps, and
+descriptor inventories. Closed or unexpectedly readable idle sockets invalidate
+the ladder. Five further observations at 0, 100, 500, 1000 and 2000 ms after
+closing the sockets record recovery. These post-close samples do not assert
+instantaneous reclamation or classify allocator residency as a leak. Compare
+the raw client resource files across paired slots separately from timed setup
+metrics; the collector does not assign a resource acceptance verdict.
+
+For data-path comparisons, add `--client-data-mib 64` with `schedstat`. Each
+existing paired slot then measures framed download/upload, Direct
+download/upload and simultaneous download/upload connections at each selected
+concurrency. Data measurements have separate CPU windows, after setup and before
+residency observations. The same sample count and ABBA ordering apply. Each
+cell is warmed before measurement; warm-up failures fail the campaign.
+
+The collector reuses the matrix curl driver, clearing proxy environment
+variables. Its self-signed inner TLS origin uses the matrix's existing insecure
+curl option; this does not change REALITY authentication. Each slot verifies a
+Direct download SHA-256 before timing. Timed transfers check byte counts, and
+upload samples require fresh origin byte-count receipts; these receipts do not
+assert upload SHA-256 equivalence. Origin errors invalidate samples. Separate
+JSON files retain every request latency, schedstat delta, origin counters and
+upload receipt. The summary reports block-bootstrap throughput and CPU per GiB
+for every scenario/concurrency. It does not automatically declare performance
+acceptance. This mode requires a same-binary control and the existing protected
+metric evaluation, and does not measure same-socket duplex, NXR or Handoff.
+
+Client setup with `schedstat` also retains separate CPU windows for each
+concurrency. `setup-cN-samples.json` and `setup-cN-schedstat.json` are the
+original cell observations; `samples.json` combines their rows for the existing
+rate/latency evaluator. `clientCpuPerConcurrency` reports CPU per connection
+for each level independently. The aggregate CPU field remains diagnostic and
+cannot substitute for these cells: an improvement at high concurrency must not
+hide a low-concurrency regression. Missing CPU cells fail aggregation.
+
+A failed setup slot now writes its collected successful and failed rows before
+returning failure. Error diagnostics name only the protocol step and OS error
+code; they do not print payloads or credentials. Failed slots still prevent
+publication. Earlier collectors that did not retain failed-slot rows remain
+labelled as incomplete evidence; missing historical samples are not recreated.

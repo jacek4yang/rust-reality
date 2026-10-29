@@ -27,6 +27,41 @@ pub struct RealityIdentity {
     pub target: String,
 }
 
+/// Builds the unified client's canonical per-LINE configuration.
+/// An absent profile deliberately uses the measured baseline binary's default.
+#[must_use]
+pub fn rust_client(
+    identity: &RealityIdentity,
+    server_port: u16,
+    socks_port: u16,
+    public_key: &str,
+    fingerprint: Option<&str>,
+) -> Json {
+    let mut line = vec![
+        ("address", Json::string("127.0.0.1")),
+        ("port", Json::Int(i64::from(server_port))),
+        ("id", Json::string(identity.uuid.clone())),
+        ("publicKey", Json::string(public_key)),
+        ("shortId", Json::string(identity.short_id.clone())),
+        ("serverName", Json::string(identity.server_name.clone())),
+    ];
+    if let Some(fingerprint) = fingerprint {
+        line.push(("fingerprint", Json::string(fingerprint)));
+    }
+    Json::object([
+        ("role", Json::string("client")),
+        (
+            "listeners",
+            Json::Array(vec![Json::object([
+                ("ipv4", Json::string("127.0.0.1")),
+                ("port", Json::Int(i64::from(socks_port))),
+                ("protocol", Json::string("socks5")),
+            ])]),
+        ),
+        ("lines", Json::Array(vec![Json::object(line)])),
+    ])
+}
+
 /// Builds the Xray VLESS + REALITY server config for a tunnel benchmark.
 ///
 /// Mirrors the `jq` server template in `benchmark-xray.sh` and siblings: a single

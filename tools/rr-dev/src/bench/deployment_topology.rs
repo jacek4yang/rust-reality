@@ -220,7 +220,8 @@ fn run_topology_setup(
         block: 0,
         position: 0,
         record_latencies: false,
-    })?;
+    })
+    .map_err(|error| error.to_string())?;
     state.run.write_jsonl(
         &format!("setup-{}.jsonl", topology.label),
         &rows.iter().map(setup_row_json).collect::<Vec<_>>(),

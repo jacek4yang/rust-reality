@@ -25,96 +25,101 @@ pub struct Suite {
     pub id: &'static str,
     /// One-line description of what the suite measures.
     pub summary: &'static str,
-    /// The legacy script this suite supersedes.
-    pub supersedes: &'static str,
+    /// The legacy script this suite supersedes, absent for native-only suites.
+    pub supersedes: Option<&'static str>,
 }
 
 /// The catalogue of benchmark suites, in migration order.
-pub const SUITES: [Suite; 17] = [
+pub const SUITES: [Suite; 18] = [
     Suite {
         id: "real-path",
         summary: "real-network A/B download through rust-reality and Xray tunnels",
-        supersedes: "benchmark-real-path.sh",
+        supersedes: Some("benchmark-real-path.sh"),
     },
     Suite {
         id: "matrix",
         summary: "the protected-metric performance matrix across concurrency and policy",
-        supersedes: "benchmark-matrix.sh",
+        supersedes: Some("benchmark-matrix.sh"),
     },
     Suite {
         id: "setup-rate",
         summary: "connection setup rate and CPU per connection",
-        supersedes: "benchmark-setup-rate.sh",
+        supersedes: Some("benchmark-setup-rate.sh"),
+    },
+    Suite {
+        id: "client-setup-rate",
+        summary: "unified-client ABBA setup CPU and latency against a fixed server",
+        supersedes: None,
     },
     Suite {
         id: "setup-rate-xray",
         summary: "setup rate with Xray serving one leg",
-        supersedes: "benchmark-setup-rate-xray.sh",
+        supersedes: Some("benchmark-setup-rate-xray.sh"),
     },
     Suite {
         id: "tls-shape",
         summary: "TLS record and closure shape versus a pinned Xray ClientHello",
-        supersedes: "benchmark-tls-shape.sh",
+        supersedes: Some("benchmark-tls-shape.sh"),
     },
     Suite {
         id: "dns",
         summary: "DNS cold/warm/burst resolution versus Xray",
-        supersedes: "benchmark-dns-comparison.sh",
+        supersedes: Some("benchmark-dns-comparison.sh"),
     },
     Suite {
         id: "routing",
         summary: "routing-rule scaling versus Xray",
-        supersedes: "benchmark-routing-comparison.sh",
+        supersedes: Some("benchmark-routing-comparison.sh"),
     },
     Suite {
         id: "fallback",
         summary: "fallback A/B behaviour under cover",
-        supersedes: "benchmark-fallback-ab.sh",
+        supersedes: Some("benchmark-fallback-ab.sh"),
     },
     Suite {
         id: "vision-direct",
         summary: "Vision direct-copy datapath",
-        supersedes: "benchmark-vision-direct.sh",
+        supersedes: Some("benchmark-vision-direct.sh"),
     },
     Suite {
         id: "vless-encryption",
         summary: "VLESS encryption datapath",
-        supersedes: "benchmark-vless-encryption.sh",
+        supersedes: Some("benchmark-vless-encryption.sh"),
     },
     Suite {
         id: "xray",
         summary: "Xray comparator baseline",
-        supersedes: "benchmark-xray.sh",
+        supersedes: Some("benchmark-xray.sh"),
     },
     Suite {
         id: "soak",
         summary: "long-duration soak with resource sampling",
-        supersedes: "soak-test.sh",
+        supersedes: Some("soak-test.sh"),
     },
     Suite {
         id: "deployment",
         summary: "deployment characterization: routing proof, cost, topologies, netem, relay",
-        supersedes: "benchmark-deployment.sh",
+        supersedes: Some("benchmark-deployment.sh"),
     },
     Suite {
         id: "xray-interop",
         summary: "unmodified-Xray interoperability and the ML-DSA differential",
-        supersedes: "test-xray-interop.sh",
+        supersedes: Some("test-xray-interop.sh"),
     },
     Suite {
         id: "no-ccs-interop",
         summary: "interoperability with a TLS 1.3 cover that omits the server CCS",
-        supersedes: "test-openssl-no-ccs-interop.sh",
+        supersedes: Some("test-openssl-no-ccs-interop.sh"),
     },
     Suite {
         id: "ipv6",
         summary: "IPv4/IPv6 listener, session, transfer and resilience validation",
-        supersedes: "validate-ipv6-e2e.sh",
+        supersedes: Some("validate-ipv6-e2e.sh"),
     },
     Suite {
         id: "descriptor-pressure",
         summary: "file-descriptor pressure behaviour",
-        supersedes: "test-descriptor-pressure.sh",
+        supersedes: Some("test-descriptor-pressure.sh"),
     },
 ];
 
@@ -255,10 +260,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_suite_names_the_script_it_supersedes() {
+    fn every_suite_identifies_its_legacy_or_native_origin() {
         for suite in &SUITES {
             assert_ne!(suite.id, "");
-            assert!(suite.supersedes.contains(".sh"), "{}", suite.id);
+            if let Some(script) = suite.supersedes {
+                assert!(
+                    std::path::Path::new(script)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("sh")),
+                    "{}",
+                    suite.id
+                );
+            } else {
+                assert_eq!(suite.id, "client-setup-rate");
+            }
         }
         let ids: std::collections::BTreeSet<&str> = SUITES.iter().map(|s| s.id).collect();
         assert_eq!(ids.len(), SUITES.len(), "suite ids must be unique");

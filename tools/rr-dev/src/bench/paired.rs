@@ -61,6 +61,63 @@ pub const PAIRED_LABELS: [&str; 2] = ["baseline", "candidate"];
 /// The `method` string the paired `environment.json` records.
 const ENVIRONMENT_METHOD: &str = "balanced block ABBA";
 
+/// The fixed peer and the role of the rust-reality binaries being compared.
+#[derive(Debug, Clone)]
+pub enum SetupPeer {
+    /// Compare servers behind the same unmodified stock Xray client.
+    XrayClient(PathBuf),
+    /// Compare unified clients against the same frozen rust-reality server.
+    RustServer {
+        /// Fixed server executable, identical in every slot.
+        binary: PathBuf,
+        /// Explicit baseline profile, or the baseline binary's own default.
+        baseline_fingerprint: Option<String>,
+        /// Explicit candidate profile.
+        candidate_fingerprint: String,
+    },
+}
+
+impl SetupPeer {
+    fn is_client_measurement(&self) -> bool {
+        matches!(self, Self::RustServer { .. })
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            Self::XrayClient(path) | Self::RustServer { binary: path, .. } => path,
+        }
+    }
+
+    fn fingerprints_json(&self) -> Json {
+        Json::object([
+            (
+                "baseline",
+                self.fingerprint(Role::Baseline)
+                    .map_or(Json::Null, Json::string),
+            ),
+            (
+                "candidate",
+                self.fingerprint(Role::Candidate)
+                    .map_or(Json::Null, Json::string),
+            ),
+        ])
+    }
+
+    fn fingerprint(&self, role: Role) -> Option<&str> {
+        match self {
+            Self::XrayClient(_) => None,
+            Self::RustServer {
+                baseline_fingerprint,
+                candidate_fingerprint,
+                ..
+            } => match role {
+                Role::Baseline => baseline_fingerprint.as_deref(),
+                Role::Candidate => Some(candidate_fingerprint),
+            },
+        }
+    }
+}
+
 /// Everything the paired setup-rate suite needs.
 #[derive(Debug, Clone)]
 pub struct SetupRateSuite {
@@ -70,8 +127,10 @@ pub struct SetupRateSuite {
     pub baseline_bin: PathBuf,
     /// The candidate ELF under test.
     pub candidate_bin: PathBuf,
-    /// The Xray binary, used only as the SOCKS client for both sides.
-    pub xray_bin: PathBuf,
+    /// The fixed peer used for every baseline and candidate slot.
+    pub peer: SetupPeer,
+    /// Optional data workload size; runs outside setup and residency windows.
+    pub client_data_mib: Option<u64>,
     /// The baseline's identity sidecar, binding its commit and digest.
     pub baseline_identity: Option<PathBuf>,
     /// The commit the sidecar must name, when the caller pins one.
@@ -94,7 +153,7 @@ pub struct SetupRateSuite {
     pub baseline_cover_mode: CoverMode,
     /// Cover mode for the candidate side.
     pub candidate_cover_mode: CoverMode,
-    /// How the server's CPU is attributed.
+    /// How the measured process's CPU is attributed.
     pub attribution: Attribution,
     /// One-leg netem delay in milliseconds, when the cover leg is shaped.
     pub cover_netem_rtt_ms: Option<u32>,
@@ -119,6 +178,49 @@ pub struct SuiteOutcome {
 ///
 /// Returns the first violated guard.
 pub fn validate(suite: &SetupRateSuite) -> Result<(), String> {
+    if suite.peer.is_client_measurement()
+        && suite
+            .concurrencies
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != suite.concurrencies.len()
+    {
+        return Err("client concurrency levels must be unique".to_owned());
+    }
+    if let Some(mib) = suite.client_data_mib
+        && (!suite.peer.is_client_measurement()
+            || !matches!(suite.attribution, Attribution::Schedstat)
+            || !(1..=4096).contains(&mib))
+    {
+        return Err(
+            "client data requires client-setup-rate, schedstat and 1..=4096 MiB".to_owned(),
+        );
+    }
+    if suite.peer.is_client_measurement() {
+        if suite.baseline_identity.is_none() || suite.baseline_commit.is_none() {
+            return Err(
+                "client-setup-rate requires a pinned baseline identity and commit".to_owned(),
+            );
+        }
+        if !matches!(
+            suite.attribution,
+            Attribution::Schedstat | Attribution::Wall
+        ) || suite.profile.is_some()
+            || suite.cover_netem_rtt_ms.is_some()
+            || suite.baseline_cover_mode != CoverMode::Default
+            || suite.candidate_cover_mode != CoverMode::Default
+        {
+            return Err("client-setup-rate requires schedstat or wall, default cover modes, and no profiling/netem override".to_owned());
+        }
+        for role in [Role::Baseline, Role::Candidate] {
+            if let Some(profile) = suite.peer.fingerprint(role)
+                && !matches!(profile, "chrome" | "firefox")
+            {
+                return Err("client setup fingerprint must be chrome or firefox".to_owned());
+            }
+        }
+    }
     if !(3..=20).contains(&suite.blocks) {
         return Err(format!("BLOCKS must be in 3..20, got {}", suite.blocks));
     }
@@ -188,10 +290,10 @@ pub fn check_ephemeral_range(base: u16, count: usize) -> Result<(), String> {
 struct PairedBinaries {
     baseline: Binary,
     candidate: Binary,
-    xray: Binary,
+    peer: Binary,
     baseline_build_id: String,
     candidate_build_id: String,
-    xray_build_id: Option<String>,
+    peer_build_id: Option<String>,
 }
 
 impl PairedBinaries {
@@ -209,10 +311,18 @@ fn register_binaries(suite: &SetupRateSuite) -> Result<PairedBinaries, String> {
     // the build ID, never a commit it reports about itself.
     let baseline = identity::register("baseline", &suite.baseline_bin, "", Kind::Prebuilt)?;
     let candidate = identity::register("candidate", &suite.candidate_bin, "", Kind::Rust)?;
-    let xray = identity::register("xray", &suite.xray_bin, "", Kind::Xray)?;
+    let peer = if suite.peer.is_client_measurement() {
+        identity::register("server", suite.peer.path(), "", Kind::Rust)?
+    } else {
+        identity::register("xray", suite.peer.path(), "", Kind::Xray)?
+    };
     let baseline_build_id = attest::build_id(&baseline.path)?;
     let candidate_build_id = attest::build_id(&candidate.path)?;
-    let xray_build_id = attest::optional_build_id(&xray.path)?;
+    let peer_build_id = if suite.peer.is_client_measurement() {
+        Some(attest::build_id(&peer.path)?)
+    } else {
+        attest::optional_build_id(&peer.path)?
+    };
     if let Some(sidecar) = &suite.baseline_identity {
         // The sidecar is the only way a prebuilt ELF whose source is no longer
         // checked out stays attributable, so a mismatch is fatal rather than
@@ -226,10 +336,10 @@ fn register_binaries(suite: &SetupRateSuite) -> Result<PairedBinaries, String> {
     Ok(PairedBinaries {
         baseline,
         candidate,
-        xray,
+        peer,
         baseline_build_id,
         candidate_build_id,
-        xray_build_id,
+        peer_build_id,
     })
 }
 
@@ -338,19 +448,26 @@ pub fn run_setup_rate(suite: &SetupRateSuite) -> Result<SuiteOutcome, String> {
         return Err("setup-rate profile did not observe a candidate slot".to_owned());
     }
 
-    verify_binaries_unchanged(&[&binaries.baseline, &binaries.candidate, &binaries.xray])?;
+    verify_binaries_unchanged(&[&binaries.baseline, &binaries.candidate, &binaries.peer])?;
 
     let summary = summarise(
         suite,
         &measured,
-        run_kind(&binaries.baseline.sha256, &binaries.candidate.sha256),
+        if suite.peer.fingerprint(Role::Baseline) == suite.peer.fingerprint(Role::Candidate) {
+            run_kind(&binaries.baseline.sha256, &binaries.candidate.sha256)
+        } else {
+            "comparison"
+        },
     )?;
     let summary_json = summary.to_python_json();
     run.write_new("summary.json", &summary_json)?;
     let raw: Vec<String> = measured
         .iter()
         .flat_map(|slot| slot.rows.iter())
-        .map(|row| row.to_json(false).to_compact_json())
+        .map(|row| {
+            row.to_json(suite.peer.is_client_measurement())
+                .to_compact_json()
+        })
         .collect();
     run.write_jsonl("raw-samples.jsonl", &raw)?;
     drop(origins);
@@ -394,12 +511,18 @@ fn publish_complete_setup_rate(
 /// namespace address; the plain origin the workload talks to stays on loopback, so
 /// exactly one leg carries the delay.
 fn start_origins(
-    _suite: &SetupRateSuite,
+    suite: &SetupRateSuite,
     workspace: &Workspace,
     plain_port: u16,
     tls_port: u16,
     leg: Option<&netns::CoverLeg>,
 ) -> Result<(Child, Child), String> {
+    if let Some(mib) = suite.client_data_mib {
+        if !Tool::exists("curl") {
+            return Err("client data requires curl".to_owned());
+        }
+        origin_go::write_pattern_payload(workspace.path(), mib)?;
+    }
     let binary = origin_go::executable()?;
     origin_go::write_setup_payload(workspace.path())?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
@@ -444,6 +567,8 @@ struct MeasuredSlot {
     rows: Vec<SampleRow>,
     pool: Option<PoolSummary>,
     profile: Option<ProfileSummary>,
+    data: Vec<super::client_data::Row>,
+    client_cpu_cells: Vec<(usize, f64)>,
 }
 
 /// The role a slot's implementation label denotes.
@@ -499,26 +624,35 @@ fn write_slot_configs(
         server_name: "localhost".to_owned(),
         target: cover_target.to_owned(),
     };
-    let client_config =
+    let client_config = if suite.peer.is_client_measurement() {
+        config::rust_client(
+            &reality,
+            server_port,
+            socks_port,
+            &rust_identity.public_key,
+            suite.peer.fingerprint(role),
+        )
+    } else {
         config::xray_client(&reality, server_port, socks_port, &rust_identity.public_key)
-            .to_python_json();
+    }
+    .to_python_json();
     let client_path = workspace.join(&format!("{name}.client.json"));
     std::fs::write(&client_path, &client_config)
         .map_err(|error| format!("could not write {}: {error}", client_path.display()))
 }
 
-/// A slot's launched processes and the pid that is actually the server.
+/// A slot's owned processes and the PID of the measured role.
 ///
 /// Under `strace` the spawned child is the tracer, not the server, so the pid the
 /// run measures, verifies and signals is a different one.
 struct SlotProcesses {
     server: Child,
     client: Child,
-    server_pid: u32,
+    measured_pid: u32,
     traced: bool,
 }
 
-/// Launches a slot's rust server and its Xray SOCKS client, waiting for both.
+/// Launches the measured role and its fixed peer, waiting for both listeners.
 fn launch_slot(
     suite: &SetupRateSuite,
     workspace: &Workspace,
@@ -540,7 +674,16 @@ fn launch_slot(
     let (program, args) = if traced {
         slot::strace_command(&slot_dir.join("strace.txt"), &binary.path, &server_args)
     } else {
-        (binary.path.display().to_string(), server_args)
+        (
+            if suite.peer.is_client_measurement() {
+                suite.peer.path()
+            } else {
+                &binary.path
+            }
+            .display()
+            .to_string(),
+            server_args,
+        )
     };
     let mut server = Child::spawn(
         format!("{name}-server"),
@@ -558,10 +701,19 @@ fn launch_slot(
     };
     let mut client = Child::spawn(
         format!("{name}-client"),
-        &suite.xray_bin,
+        if suite.peer.is_client_measurement() {
+            &binary.path
+        } else {
+            suite.peer.path()
+        },
         &[
             "run".to_owned(),
-            "-config".to_owned(),
+            if suite.peer.is_client_measurement() {
+                "--config"
+            } else {
+                "-config"
+            }
+            .to_owned(),
             workspace
                 .join(&format!("{name}.client.json"))
                 .display()
@@ -578,10 +730,15 @@ fn launch_slot(
     client
         .wait_for_port(socks_port, READY_TIMEOUT)
         .map_err(|error| error.to_string())?;
+    let measured_pid = if suite.peer.is_client_measurement() {
+        client.pid()
+    } else {
+        server_pid
+    };
     Ok(SlotProcesses {
         server,
         client,
-        server_pid,
+        measured_pid,
         traced,
     })
 }
@@ -597,7 +754,7 @@ fn stop_slot(processes: &mut SlotProcesses) {
     if processes.traced {
         let _ = std::process::Command::new("kill")
             .arg("-TERM")
-            .arg(processes.server_pid.to_string())
+            .arg(processes.measured_pid.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -660,8 +817,14 @@ fn measure_slot(
         server_port,
         socks_port,
     )?;
-    let server_pid = processes.server_pid;
-    slot::verify_running_image(server_pid, &binary.sha256, &entry.implementation)?;
+    let measured_pid = processes.measured_pid;
+    let peer_pid = if suite.peer.is_client_measurement() {
+        processes.server.pid()
+    } else {
+        processes.client.pid()
+    };
+    slot::verify_running_image(peer_pid, &binaries.peer.sha256, &binaries.peer.label)?;
+    slot::verify_running_image(measured_pid, &binary.sha256, &entry.implementation)?;
 
     let workload = SetupRatePlan {
         socks_port,
@@ -674,7 +837,7 @@ fn measure_slot(
         position: entry.position,
         // benchmark-setup-rate.sh works from the per-row percentiles, so the raw
         // latency vectors are not carried into its evidence.
-        record_latencies: false,
+        record_latencies: suite.peer.is_client_measurement(),
     };
     warm_up_slot(suite, &workload, &slot_dir, workspace)?;
 
@@ -685,7 +848,7 @@ fn measure_slot(
             lock,
             binary,
             build_id,
-            server_pid,
+            measured_pid,
             "setup-rate",
             &suite.run_id,
             out_dir,
@@ -701,21 +864,29 @@ fn measure_slot(
     // one `perf stat -p <pid> -- <workload>` bounds.
     let schedstat_before = match suite.attribution {
         Attribution::Schedstat => Some((
-            schedstat::CpuSnapshot::capture(server_pid)?,
+            schedstat::CpuSnapshot::capture(measured_pid)?,
             std::time::Instant::now(),
         )),
         _ => None,
     };
-    let workload_result = slot::drive(
-        &workload,
-        &samples_path,
-        suite.attribution,
-        server_pid,
-        &perf_csv,
-        workspace.path(),
-    );
+    let mut client_cpu_cells = Vec::new();
+    let workload_result = if suite.peer.is_client_measurement()
+        && matches!(suite.attribution, Attribution::Schedstat)
+    {
+        drive_client_setup(&workload, &slot_dir, measured_pid, workspace.path())
+            .map(|cells| client_cpu_cells = cells)
+    } else {
+        slot::drive(
+            &workload,
+            &samples_path,
+            suite.attribution,
+            measured_pid,
+            &perf_csv,
+            workspace.path(),
+        )
+    };
     let schedstat_after = match (&workload_result, &schedstat_before) {
-        (Ok(()), Some(_)) => Some(schedstat::CpuSnapshot::capture(server_pid)?),
+        (Ok(()), Some(_)) => Some(schedstat::CpuSnapshot::capture(measured_pid)?),
         _ => None,
     };
     match workload_result {
@@ -769,11 +940,40 @@ fn measure_slot(
         &binary.path,
         &binary.sha256,
         build_id,
-        server_pid,
+        measured_pid,
+        suite.peer.is_client_measurement(),
         server_port,
         socks_port,
     )?;
 
+    let data = if let Some(mib) = suite.client_data_mib {
+        super::client_data::capture(&super::client_data::Plan {
+            payload_mib: mib,
+            samples: suite.samples,
+            concurrencies: &suite.concurrencies,
+            endpoints: super::matrix::Endpoints {
+                socks: socks_port,
+                fallback: server_port,
+                http: plain_port,
+                https: plain_port + 1,
+            },
+            pid: measured_pid,
+            workspace: workspace.path(),
+            output: &slot_dir,
+        })?
+    } else {
+        Vec::new()
+    };
+
+    if suite.peer.is_client_measurement() {
+        super::client_resources::capture(
+            measured_pid,
+            &binary.sha256,
+            socks_port,
+            plain_port,
+            &slot_dir,
+        )?;
+    }
     stop_slot(&mut processes);
 
     if matches!(suite.attribution, Attribution::Strace) {
@@ -793,10 +993,51 @@ fn measure_slot(
     Ok(MeasuredSlot {
         slot: entry.clone(),
         task_clock_ms,
+        client_cpu_cells,
+        data,
         rows,
         pool,
         profile,
     })
+}
+
+/// Attribute setup CPU separately to each concurrency, retaining original rows.
+fn drive_client_setup(
+    workload: &SetupRatePlan,
+    directory: &Path,
+    pid: u32,
+    cwd: &Path,
+) -> Result<Vec<(usize, f64)>, String> {
+    let mut cells = Vec::new();
+    let mut rows = Vec::new();
+    for &concurrency in &workload.concurrencies {
+        let mut cell = workload.clone();
+        cell.concurrencies = vec![concurrency];
+        let samples = directory.join(format!("setup-c{concurrency}-samples.json"));
+        let before = schedstat::CpuSnapshot::capture(pid)?;
+        let started = std::time::Instant::now();
+        slot::drive(
+            &cell,
+            &samples,
+            Attribution::Schedstat,
+            pid,
+            &directory.join("unused-perf.csv"),
+            cwd,
+        )?;
+        let after = schedstat::CpuSnapshot::capture(pid)?;
+        let cpu = schedstat::delta(&before, &after, started.elapsed().as_nanos())?;
+        std::fs::write(
+            directory.join(format!("setup-c{concurrency}-schedstat.json")),
+            cpu.to_json().to_python_json(),
+        )
+        .map_err(|error| format!("could not retain client CPU cell: {error}"))?;
+        cells.push((concurrency, cpu.milliseconds()));
+        rows.extend(crate::bench::ab_suites::read_rows(&samples)?);
+    }
+    let combined = Json::Array(rows.iter().map(|row| row.to_json(true)).collect());
+    std::fs::write(directory.join("samples.json"), combined.to_python_json())
+        .map_err(|error| format!("could not retain combined setup samples: {error}"))?;
+    Ok(cells)
 }
 
 fn absolute_profile_dir(out_dir: &Path) -> Result<PathBuf, String> {
@@ -931,7 +1172,8 @@ fn write_slot_identity(
     binary: &Path,
     sha256: &str,
     build_id: &str,
-    server_pid: u32,
+    measured_pid: u32,
+    client_measurement: bool,
     server_port: u16,
     socks_port: u16,
 ) -> Result<(), String> {
@@ -955,7 +1197,14 @@ fn write_slot_identity(
         ),
         (
             "process",
-            Json::object([("serverPid", Json::Int(i64::from(server_pid)))]),
+            Json::object([(
+                if client_measurement {
+                    "clientPid"
+                } else {
+                    "serverPid"
+                },
+                Json::Int(i64::from(measured_pid)),
+            )]),
         ),
         (
             "ports",
@@ -990,6 +1239,80 @@ fn summarise(
     measured: &[MeasuredSlot],
     run_kind: &str,
 ) -> Result<Json, String> {
+    validate_setup_measurements(suite, measured)?;
+    let mut cells: Vec<(String, Json)> = Vec::with_capacity(suite.concurrencies.len());
+    for concurrency in &suite.concurrencies {
+        let blocks = collect_blocks(suite, measured, |slot| {
+            slot.rows
+                .iter()
+                .filter(|row| row.concurrency == *concurrency)
+                .filter_map(SampleRow::connections_per_second)
+                .collect()
+        });
+        let seed = aggregate::SETUP_RATE_CELL_SEED_BASE + u64::try_from(*concurrency).unwrap_or(0);
+        let label = format!("setup-rate:c{concurrency}");
+        // Two slots per side per block, each contributing `samples` rows.
+        let cell = aggregate::paired_cell(&blocks, 2 * suite.samples, seed, &label)?;
+        cells.push((
+            concurrency.to_string(),
+            aggregate::paired_cell_json(&cell, None),
+        ));
+    }
+
+    let cpu = cpu_summary(suite, measured)?;
+    let pools: Vec<PoolSummary> = measured.iter().filter_map(|s| s.pool.clone()).collect();
+    let profiles: Vec<ProfileSummary> = measured.iter().filter_map(|s| s.profile.clone()).collect();
+    let rows: usize = measured.iter().map(|slot| slot.rows.len()).sum();
+
+    let mut details = vec![
+        ("runKind".to_owned(), Json::string(run_kind)),
+        ("cells".to_owned(), Json::object(cells)),
+        (
+            if suite.peer.is_client_measurement() {
+                "clientCpuPerConnection"
+            } else {
+                "serverCpuPerConnection"
+            }
+            .to_owned(),
+            cpu,
+        ),
+        ("coverPool".to_owned(), cover::aggregate_pool(&pools)),
+        (
+            "coverProfile".to_owned(),
+            cover::aggregate_profile(&profiles),
+        ),
+    ];
+    if suite.peer.is_client_measurement() {
+        details.push((
+            "latency".to_owned(),
+            client_latency_summary(suite, measured)?,
+        ));
+        if matches!(suite.attribution, Attribution::Schedstat) {
+            details.push((
+                "clientCpuPerConcurrency".to_owned(),
+                client_cpu_summary(suite, measured)?,
+            ));
+        }
+    }
+    if suite.client_data_mib.is_some() {
+        details.push((
+            "clientData".to_owned(),
+            client_data_summary(suite, measured)?,
+        ));
+    }
+    Ok(aggregate::summary_document(
+        3,
+        aggregate::PAIRED_METHOD,
+        measured.len(),
+        rows,
+        details,
+    ))
+}
+
+fn validate_setup_measurements(
+    suite: &SetupRateSuite,
+    measured: &[MeasuredSlot],
+) -> Result<(), String> {
     let expected_slots = suite.blocks * 4;
     if measured.len() != expected_slots {
         return Err(format!(
@@ -1018,46 +1341,126 @@ fn summarise(
         }
     }
 
-    let mut cells: Vec<(String, Json)> = Vec::with_capacity(suite.concurrencies.len());
+    if suite.peer.is_client_measurement()
+        && measured.iter().flat_map(|slot| &slot.rows).any(|row| {
+            row.latencies_seconds.len() != row.connections
+                || row
+                    .latencies_seconds
+                    .iter()
+                    .any(|v| !v.is_finite() || *v <= 0.0)
+        })
+    {
+        return Err(
+            "client setup requires every successful connection's positive finite latency"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[expect(clippy::cast_precision_loss, reason = "bounded benchmark work counts")]
+fn client_cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
+    let connections = (suite.samples as f64) * (suite.connections as f64);
+    let mut cells = Vec::new();
     for concurrency in &suite.concurrencies {
         let blocks = collect_blocks(suite, measured, |slot| {
-            slot.rows
+            slot.client_cpu_cells
                 .iter()
-                .filter(|row| row.concurrency == *concurrency)
-                .filter_map(SampleRow::connections_per_second)
+                .filter(|(level, _)| level == concurrency)
+                .map(|(_, milliseconds)| milliseconds * 1000.0 / connections)
                 .collect()
         });
-        let seed = aggregate::SETUP_RATE_CELL_SEED_BASE + u64::try_from(*concurrency).unwrap_or(0);
-        let label = format!("setup-rate:c{concurrency}");
-        // Two slots per side per block, each contributing `samples` rows.
-        let cell = aggregate::paired_cell(&blocks, 2 * suite.samples, seed, &label)?;
+        let cell = aggregate::paired_cell(
+            &blocks,
+            2,
+            0xC100 + u64::try_from(*concurrency).unwrap_or(0),
+            "client setup CPU cell",
+        )?;
         cells.push((
             concurrency.to_string(),
-            aggregate::paired_cell_json(&cell, None),
+            aggregate::paired_cell_json(&cell, Some("microsecondsPerConnection")),
         ));
     }
+    Ok(Json::object(cells))
+}
 
-    let cpu = cpu_summary(suite, measured)?;
-    let pools: Vec<PoolSummary> = measured.iter().filter_map(|s| s.pool.clone()).collect();
-    let profiles: Vec<ProfileSummary> = measured.iter().filter_map(|s| s.profile.clone()).collect();
-    let rows: usize = measured.iter().map(|slot| slot.rows.len()).sum();
+fn client_data_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
+    let expected = super::client_data::SCENARIOS.len() * suite.concurrencies.len() * suite.samples;
+    if measured.iter().any(|slot| slot.data.len() != expected) {
+        return Err("missing client data samples".to_owned());
+    }
+    let mut cells = Vec::new();
+    for scenario in super::client_data::SCENARIOS {
+        for concurrency in &suite.concurrencies {
+            let mut metrics = Vec::new();
+            for cpu in [false, true] {
+                let name = if cpu {
+                    "cpuSecondsPerGiB"
+                } else {
+                    "mibPerSecond"
+                };
+                let blocks = collect_blocks(suite, measured, |slot| {
+                    slot.data
+                        .iter()
+                        .filter(|row| row.scenario == scenario && row.concurrency == *concurrency)
+                        .map(|row| {
+                            if cpu {
+                                row.cpu_seconds_per_gib
+                            } else {
+                                row.mib_per_second
+                            }
+                        })
+                        .collect()
+                });
+                let cell = aggregate::paired_cell(
+                    &blocks,
+                    2 * suite.samples,
+                    0xDA7A + u64::try_from(*concurrency).unwrap_or(0),
+                    name,
+                )?;
+                metrics.push((name, aggregate::paired_cell_json(&cell, Some(name))));
+            }
+            cells.push((
+                format!("{}:c{concurrency}", scenario.as_str()),
+                Json::object(metrics),
+            ));
+        }
+    }
+    Ok(Json::object(cells))
+}
 
-    Ok(aggregate::summary_document(
-        3,
-        aggregate::PAIRED_METHOD,
-        measured.len(),
-        rows,
-        [
-            ("runKind".to_owned(), Json::string(run_kind)),
-            ("cells".to_owned(), Json::object(cells)),
-            ("serverCpuPerConnection".to_owned(), cpu),
-            ("coverPool".to_owned(), cover::aggregate_pool(&pools)),
-            (
-                "coverProfile".to_owned(),
-                cover::aggregate_profile(&profiles),
-            ),
-        ],
-    ))
+fn client_latency_summary(
+    suite: &SetupRateSuite,
+    measured: &[MeasuredSlot],
+) -> Result<Json, String> {
+    let mut latencies = Vec::new();
+    for concurrency in &suite.concurrencies {
+        let mut quantiles = Vec::new();
+        for (name, fraction, seed) in [
+            ("p50Seconds", 0.5, 0x6500_u64),
+            ("p99Seconds", 0.99, 0x9900),
+        ] {
+            let blocks = collect_blocks(suite, measured, |slot| {
+                slot.rows
+                    .iter()
+                    .filter(|row| row.concurrency == *concurrency)
+                    .map(|row| {
+                        aggregate::floor_percentile(&row.latencies_seconds, fraction)
+                            .expect("nonempty finite client latency vectors were validated")
+                    })
+                    .collect()
+            });
+            let cell = aggregate::paired_cell(
+                &blocks,
+                2 * suite.samples,
+                seed + u64::try_from(*concurrency).unwrap_or(0),
+                &format!("client-setup:c{concurrency}:{name}"),
+            )?;
+            quantiles.push((name, aggregate::paired_cell_json(&cell, Some("seconds"))));
+        }
+        latencies.push((concurrency.to_string(), Json::object(quantiles)));
+    }
+    Ok(Json::object(latencies))
 }
 
 /// Gathers per-block observations for both sides from a per-slot extractor.
@@ -1122,6 +1525,15 @@ fn cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json
     ))
 }
 
+fn registered_binary_json(binary: &Binary, build_id: Option<&str>) -> Json {
+    Json::object([
+        ("path", Json::string(binary.path.display().to_string())),
+        ("sha256", Json::string(binary.sha256.clone())),
+        ("identity", Json::string(binary.identity.clone())),
+        ("buildId", build_id.map_or(Json::Null, Json::string)),
+    ])
+}
+
 /// Builds the paired `environment.json` (schema 2).
 fn environment_json(
     suite: &SetupRateSuite,
@@ -1132,15 +1544,13 @@ fn environment_json(
     port_count: usize,
     cover_target: &str,
 ) -> Json {
-    let binary_json = |binary: &Binary, build_id: Option<&str>| {
-        Json::object([
-            ("path", Json::string(binary.path.display().to_string())),
-            ("sha256", Json::string(binary.sha256.clone())),
-            ("identity", Json::string(binary.identity.clone())),
-            ("buildId", build_id.map_or(Json::Null, Json::string)),
-        ])
-    };
     Json::object([
+        (
+            "clientDataMiB",
+            suite.client_data_mib.map_or(Json::Null, |mib| {
+                Json::Int(i64::try_from(mib).unwrap_or(i64::MAX))
+            }),
+        ),
         ("schemaVersion", Json::Int(2)),
         ("runId", Json::string(suite.run_id.clone())),
         (
@@ -1151,6 +1561,15 @@ fn environment_json(
             ]),
         ),
         ("method", Json::string(ENVIRONMENT_METHOD)),
+        (
+            "measuredRole",
+            Json::string(if suite.peer.is_client_measurement() {
+                "client"
+            } else {
+                "server"
+            }),
+        ),
+        ("fingerprints", suite.peer.fingerprints_json()),
         (
             "blocks",
             Json::Int(i64::try_from(suite.blocks).unwrap_or(i64::MAX)),
@@ -1207,15 +1626,15 @@ fn environment_json(
         ),
         (
             "baseline",
-            binary_json(&binaries.baseline, Some(&binaries.baseline_build_id)),
+            registered_binary_json(&binaries.baseline, Some(&binaries.baseline_build_id)),
         ),
         (
             "candidate",
-            binary_json(&binaries.candidate, Some(&binaries.candidate_build_id)),
+            registered_binary_json(&binaries.candidate, Some(&binaries.candidate_build_id)),
         ),
         (
-            "xray",
-            binary_json(&binaries.xray, binaries.xray_build_id.as_deref()),
+            binaries.peer.label.as_str(),
+            registered_binary_json(&binaries.peer, binaries.peer_build_id.as_deref()),
         ),
         ("harness", harness_block()),
         ("hostExclusiveLock", lock_json(lock)),
@@ -1322,7 +1741,8 @@ mod tests {
             repo: PathBuf::from("/repo"),
             baseline_bin: PathBuf::from("/bin/baseline"),
             candidate_bin: PathBuf::from("/bin/candidate"),
-            xray_bin: PathBuf::from("/bin/xray"),
+            peer: SetupPeer::XrayClient(PathBuf::from("/bin/xray")),
+            client_data_mib: None,
             baseline_identity: None,
             baseline_commit: None,
             out_dir: PathBuf::from("/out/run"),
@@ -1338,6 +1758,153 @@ mod tests {
             cover_netem_rtt_ms: None,
             profile: None,
         }
+    }
+
+    fn client_suite() -> SetupRateSuite {
+        let mut context = small_suite();
+        context.peer = SetupPeer::RustServer {
+            binary: PathBuf::from("/bin/fixed-server"),
+            baseline_fingerprint: None,
+            candidate_fingerprint: "firefox".to_owned(),
+        };
+        context.attribution = Attribution::Schedstat;
+        context.baseline_identity = Some(PathBuf::from("/baseline/identity.json"));
+        context.baseline_commit = Some("a".repeat(40));
+        context
+    }
+
+    #[test]
+    fn client_setup_rejects_unbound_baselines_and_unmeasured_modes() {
+        let mut context = client_suite();
+        validate(&context).unwrap();
+        context.baseline_identity = None;
+        assert!(validate(&context).unwrap_err().contains("pinned baseline"));
+        context = client_suite();
+        context.attribution = Attribution::Perf(&attribution::REQUIRED_EVENTS);
+        assert!(
+            validate(&context)
+                .unwrap_err()
+                .contains("schedstat or wall")
+        );
+        context = client_suite();
+        context.candidate_cover_mode = CoverMode::Cold;
+        assert!(validate(&context).is_err());
+        context = client_suite();
+        if let SetupPeer::RustServer {
+            candidate_fingerprint,
+            ..
+        } = &mut context.peer
+        {
+            *candidate_fingerprint = "invented".to_owned();
+        }
+        assert!(
+            validate(&context)
+                .unwrap_err()
+                .contains("chrome or firefox")
+        );
+    }
+
+    #[test]
+    fn client_data_requires_bounded_payload_and_attributed_client_cpu() {
+        let mut context = client_suite();
+        context.client_data_mib = Some(64);
+        validate(&context).unwrap();
+        context.attribution = Attribution::Wall;
+        assert!(validate(&context).is_err());
+        context.attribution = Attribution::Schedstat;
+        context.client_data_mib = Some(4097);
+        assert!(validate(&context).is_err());
+        context.client_data_mib = Some(0);
+        assert!(validate(&context).is_err());
+        context.client_data_mib = Some(64);
+        context.concurrencies = vec![1, 1];
+        assert!(validate(&context).unwrap_err().contains("must be unique"));
+        context.concurrencies = vec![1];
+        context.peer = SetupPeer::XrayClient(PathBuf::from("xray"));
+        assert!(validate(&context).is_err());
+    }
+
+    #[test]
+    fn data_summary_requires_each_cell_and_preserves_cpu_direction() {
+        let context = small_suite();
+        let mut slots = measured(3, 1, true);
+        assert!(client_data_summary(&context, &slots).is_err());
+        for slot in &mut slots {
+            let candidate = slot.slot.implementation == "candidate";
+            slot.data = super::super::client_data::SCENARIOS
+                .into_iter()
+                .map(|scenario| super::super::client_data::Row {
+                    scenario,
+                    concurrency: 1,
+                    mib_per_second: if candidate { 200.0 } else { 100.0 },
+                    cpu_seconds_per_gib: if candidate { 0.5 } else { 1.0 },
+                })
+                .collect();
+        }
+        let json = client_data_summary(&context, &slots)
+            .unwrap()
+            .to_python_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for scenario in super::super::client_data::SCENARIOS {
+            let cell = &value[format!("{}:c1", scenario.as_str())];
+            assert_eq!(cell["mibPerSecond"]["medianCandidateVsBaseline"], 2.0);
+            assert_eq!(cell["cpuSecondsPerGiB"]["medianCandidateVsBaseline"], 0.5);
+        }
+        // Replacing one cell with a duplicate cannot pass merely by row count.
+        slots[0].data[0].scenario = super::super::matrix::Scenario::Bidi;
+        assert!(client_data_summary(&context, &slots).is_err());
+    }
+
+    #[test]
+    fn client_summary_attributes_client_cpu_and_retains_each_latency() {
+        let context = client_suite();
+        let mut slots = measured(3, 1, true);
+        for slot in &mut slots {
+            if slot.slot.implementation == "candidate" {
+                for row in &mut slot.rows {
+                    for value in &mut row.latencies_seconds {
+                        *value *= 0.5;
+                    }
+                }
+            }
+        }
+        let output = summarise(&context, &slots, "comparison")
+            .unwrap()
+            .to_python_json();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(value.get("serverCpuPerConnection").is_none());
+        assert!(value.get("clientCpuPerConnection").is_some());
+        for quantile in ["p50Seconds", "p99Seconds"] {
+            assert_eq!(
+                value["latency"]["1"][quantile]["medianCandidateVsBaseline"],
+                0.5
+            );
+        }
+        assert_eq!(value["performanceVerdict"], "NOT_EVALUATED");
+        slots[0].rows[0].latencies_seconds.pop();
+        assert!(summarise(&context, &slots, "comparison").is_err());
+    }
+
+    #[test]
+    fn setup_cpu_cells_cannot_hide_a_low_concurrency_regression() {
+        let mut context = client_suite();
+        context.concurrencies = vec![1, 8];
+        let mut slots = measured(3, 1, true);
+        for slot in &mut slots {
+            slot.client_cpu_cells = if slot.slot.implementation == "candidate" {
+                vec![(1, 200.0), (8, 50.0)]
+            } else {
+                vec![(1, 100.0), (8, 100.0)]
+            };
+        }
+        let json = client_cpu_summary(&context, &slots)
+            .unwrap()
+            .to_python_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["1"]["medianCandidateVsBaseline"], 2.0);
+        assert_eq!(value["8"]["medianCandidateVsBaseline"], 0.5);
+        slots[0].client_cpu_cells.pop();
+        assert!(client_cpu_summary(&context, &slots).is_err());
     }
 
     #[test]
@@ -1434,6 +2001,12 @@ mod tests {
                 MeasuredSlot {
                     slot: entry,
                     task_clock_ms: with_perf.then_some(if candidate { 100.0 } else { 200.0 }),
+                    client_cpu_cells: if with_perf {
+                        vec![(1, if candidate { 100.0 } else { 200.0 })]
+                    } else {
+                        Vec::new()
+                    },
+                    data: Vec::new(),
                     rows,
                     pool: None,
                     profile: None,
@@ -1615,10 +2188,10 @@ mod tests {
         let binaries = PairedBinaries {
             baseline: binary("baseline"),
             candidate: binary("candidate"),
-            xray: binary("xray"),
+            peer: binary("xray"),
             baseline_build_id: "b1".to_owned(),
             candidate_build_id: "b2".to_owned(),
-            xray_build_id: None,
+            peer_build_id: None,
         };
         let repository = attest::RepositoryState {
             head: "c".repeat(40),
