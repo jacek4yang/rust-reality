@@ -1221,10 +1221,10 @@ mod tests {
             .expect("temporary geoip must be written");
         fs::write(directory.join("geosite.dat"), geosite_list())
             .expect("temporary geosite must be written");
-        // Unreachable sources, so the loader has to fall back to the
-        // validated cache written above.
+        // Port zero cannot host the source. Fail locally without depending on
+        // external DNS latency, then exercise the validated cache fallback.
         let config = geo_entry(
-            "https://cached.invalid/geosite.dat",
+            "http://127.0.0.1:0/geosite.dat",
             &directory,
             "geosite:test",
             "geoip:private",

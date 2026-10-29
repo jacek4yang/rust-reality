@@ -152,7 +152,8 @@ pub(crate) fn run_cost_section(
                 record_latencies: false,
             },
             &destination,
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
         state.run.write_jsonl(
             &format!("setup-cost-{}.jsonl", variant.label),
             &rows.iter().map(setup_row_json).collect::<Vec<_>>(),

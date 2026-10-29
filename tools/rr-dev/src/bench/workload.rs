@@ -225,30 +225,42 @@ pub fn connect_through(
 ) -> Option<Duration> {
     let started = Instant::now();
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, socks_port));
-    let mut stream = TcpStream::connect_timeout(&address, CONNECTION_TIMEOUT).ok()?;
-    stream.set_read_timeout(Some(CONNECTION_TIMEOUT)).ok()?;
-    stream.set_write_timeout(Some(CONNECTION_TIMEOUT)).ok()?;
+    let mut stream = checked_io(
+        TcpStream::connect_timeout(&address, CONNECTION_TIMEOUT),
+        "SOCKS connect",
+    )?;
+    checked_io(
+        stream.set_read_timeout(Some(CONNECTION_TIMEOUT)),
+        "read timeout",
+    )?;
+    checked_io(
+        stream.set_write_timeout(Some(CONNECTION_TIMEOUT)),
+        "write timeout",
+    )?;
 
-    stream.write_all(&[0x05, 0x01, 0x00]).ok()?;
+    checked_io(
+        stream.write_all(&[0x05, 0x01, 0x00]),
+        "SOCKS greeting write",
+    )?;
     if read_exact(&mut stream, 2)? != [0x05, 0x00] {
-        return None;
+        return rejected("SOCKS greeting mismatch");
     }
 
     let mut request = vec![0x05, 0x01, 0x00];
     request.extend_from_slice(&destination.socks_bytes());
     request.extend_from_slice(&origin_port.to_be_bytes());
-    stream.write_all(&request).ok()?;
+    checked_io(stream.write_all(&request), "SOCKS request write")?;
     // The bound address in the reply is whatever the proxy chose, so its length
     // is read from the reply rather than assumed.
     let head = read_exact(&mut stream, 4)?;
     if head[1] != 0 {
-        return None;
+        return rejected("SOCKS connect rejection");
     }
     let bound = match head[3] {
         0x01 => 4,
         0x04 => 16,
         0x03 => usize::from(read_exact(&mut stream, 1)?[0]),
-        _ => return None,
+        _ => return rejected("SOCKS reply address type"),
     };
     read_exact(&mut stream, bound + 2)?;
 
@@ -256,7 +268,7 @@ pub fn connect_through(
         "GET /payload.bin HTTP/1.0\r\nHost: {}\r\n\r\n",
         destination.host_header(origin_port)
     );
-    stream.write_all(get.as_bytes()).ok()?;
+    checked_io(stream.write_all(get.as_bytes()), "HTTP request write")?;
 
     let mut response = Vec::new();
     let mut chunk = [0_u8; 4096];
@@ -264,9 +276,9 @@ pub fn connect_through(
         if let Some(index) = find_head_end(&response) {
             break index;
         }
-        let read = stream.read(&mut chunk).ok()?;
+        let read = checked_io(stream.read(&mut chunk), "HTTP response read")?;
         if read == 0 || response.len() + read > MAX_HEAD_BYTES {
-            return None;
+            return rejected("HTTP response EOF or oversized head");
         }
         response.extend_from_slice(&chunk[..read]);
     };
@@ -280,22 +292,40 @@ pub fn connect_through(
         .filter(|field| !field.is_empty());
     let _version = status_fields.next()?;
     if status_fields.next()? != b"200" {
-        return None;
+        return rejected("HTTP status");
     }
 
     // Skip the blank line, then wait for the first body byte.
     let mut first = body.get(4..).unwrap_or_default().first().copied();
     while first.is_none() {
         let mut single = [0_u8; 1];
-        if stream.read(&mut single).ok()? == 0 {
-            return None;
+        if checked_io(stream.read(&mut single), "HTTP body read")? == 0 {
+            return rejected("HTTP body EOF");
         }
         first = Some(single[0]);
     }
     if first != Some(b'x') {
-        return None;
+        return rejected("HTTP first body byte");
     }
     Some(started.elapsed())
+}
+
+// Diagnostics contain only fixed stages and OS codes, never payloads or credentials.
+fn checked_io<T>(result: std::io::Result<T>, stage: &str) -> Option<T> {
+    result
+        .inspect_err(|error| {
+            eprintln!(
+                "setup failure at {stage}: kind={:?} os={:?}",
+                error.kind(),
+                error.raw_os_error()
+            );
+        })
+        .ok()
+}
+
+fn rejected<T>(stage: &str) -> Option<T> {
+    eprintln!("setup failure at {stage}");
+    None
 }
 
 /// Index of the `\r\n\r\n` that ends the response head.
@@ -305,7 +335,7 @@ fn find_head_end(buffer: &[u8]) -> Option<usize> {
 
 fn read_exact(stream: &mut TcpStream, count: usize) -> Option<Vec<u8>> {
     let mut buffer = vec![0_u8; count];
-    stream.read_exact(&mut buffer).ok()?;
+    checked_io(stream.read_exact(&mut buffer), "SOCKS reply read")?;
     Some(buffer)
 }
 
@@ -395,13 +425,29 @@ pub fn warm_up(socks_port: u16, origin_port: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// A failed slot retains every collected row, including failed attempts.
+#[derive(Debug)]
+pub struct SlotFailure {
+    /// Original successful and failed samples; never a fabricated replacement.
+    pub rows: Vec<SampleRow>,
+    message: String,
+}
+
+impl std::fmt::Display for SlotFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SlotFailure {}
+
 /// Runs every (concurrency, sample) cell of one slot.
 ///
 /// # Errors
 ///
 /// Returns a message when the row count is short or any connection failed, which
 /// is the drivers' `incomplete setup samples` refusal.
-pub fn run_slot(plan: &SetupRatePlan) -> Result<Vec<SampleRow>, String> {
+pub fn run_slot(plan: &SetupRatePlan) -> Result<Vec<SampleRow>, SlotFailure> {
     run_slot_to(plan, &Destination::Loopback)
 }
 
@@ -413,7 +459,7 @@ pub fn run_slot(plan: &SetupRatePlan) -> Result<Vec<SampleRow>, String> {
 pub fn run_slot_to(
     plan: &SetupRatePlan,
     destination: &Destination,
-) -> Result<Vec<SampleRow>, String> {
+) -> Result<Vec<SampleRow>, SlotFailure> {
     let mut rows = Vec::with_capacity(plan.concurrencies.len() * plan.samples);
     for concurrency in &plan.concurrencies {
         for sample_index in 0..plan.samples {
@@ -422,20 +468,22 @@ pub fn run_slot_to(
     }
     let expected = plan.samples * plan.concurrencies.len();
     if rows.len() != expected {
-        return Err(format!(
+        let message = format!(
             "incomplete setup samples: expected {expected} rows, produced {}",
             rows.len()
-        ));
+        );
+        return Err(SlotFailure { rows, message });
     }
     if let Some(bad) = rows
         .iter()
         .find(|row| row.failed > 0 || row.connections != plan.connections)
     {
-        return Err(format!(
+        let message = format!(
             "incomplete setup samples: concurrency {} sample {} completed {} of {} connections \
              with {} failure(s)",
             bad.concurrency, bad.sample_index, bad.connections, plan.connections, bad.failed
-        ));
+        );
+        return Err(SlotFailure { rows, message });
     }
     Ok(rows)
 }
@@ -687,7 +735,12 @@ mod tests {
             .unwrap()
             .port();
         let error = run_slot(&plan(port, 2)).unwrap_err();
-        assert!(error.starts_with("incomplete setup samples:"), "{error}");
+        assert!(
+            error.to_string().starts_with("incomplete setup samples:"),
+            "{error}"
+        );
+        assert!(!error.rows.is_empty());
+        assert!(error.rows.iter().any(|row| row.failed > 0));
     }
 
     #[test]

@@ -264,7 +264,7 @@ fn read_exact(stream: &mut TcpStream, count: usize) -> Result<Vec<u8>, String> {
     Ok(buffer)
 }
 
-fn open_socks(socks_port: u16, origin_port: u16) -> Result<TcpStream, String> {
+pub(crate) fn open_socks(socks_port: u16, origin_port: u16) -> Result<TcpStream, String> {
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, socks_port));
     let mut stream = TcpStream::connect_timeout(&address, SOCKS_TIMEOUT)
         .map_err(|error| format!("could not connect to SOCKS5 port {socks_port}: {error}"))?;
