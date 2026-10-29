@@ -129,6 +129,8 @@ pub struct SetupRateSuite {
     pub candidate_bin: PathBuf,
     /// The fixed peer used for every baseline and candidate slot.
     pub peer: SetupPeer,
+    /// Optional data workload size; runs outside setup and residency windows.
+    pub client_data_mib: Option<u64>,
     /// The baseline's identity sidecar, binding its commit and digest.
     pub baseline_identity: Option<PathBuf>,
     /// The commit the sidecar must name, when the caller pins one.
@@ -176,6 +178,15 @@ pub struct SuiteOutcome {
 ///
 /// Returns the first violated guard.
 pub fn validate(suite: &SetupRateSuite) -> Result<(), String> {
+    if let Some(mib) = suite.client_data_mib
+        && (!suite.peer.is_client_measurement()
+            || !matches!(suite.attribution, Attribution::Schedstat)
+            || !(1..=4096).contains(&mib))
+    {
+        return Err(
+            "client data requires client-setup-rate, schedstat and 1..=4096 MiB".to_owned(),
+        );
+    }
     if suite.peer.is_client_measurement() {
         if suite.baseline_identity.is_none() || suite.baseline_commit.is_none() {
             return Err(
@@ -490,12 +501,18 @@ fn publish_complete_setup_rate(
 /// namespace address; the plain origin the workload talks to stays on loopback, so
 /// exactly one leg carries the delay.
 fn start_origins(
-    _suite: &SetupRateSuite,
+    suite: &SetupRateSuite,
     workspace: &Workspace,
     plain_port: u16,
     tls_port: u16,
     leg: Option<&netns::CoverLeg>,
 ) -> Result<(Child, Child), String> {
+    if let Some(mib) = suite.client_data_mib {
+        if !Tool::exists("curl") {
+            return Err("client data requires curl".to_owned());
+        }
+        origin_go::write_pattern_payload(workspace.path(), mib)?;
+    }
     let binary = origin_go::executable()?;
     origin_go::write_setup_payload(workspace.path())?;
     let (cert, key) = origin_tls::generate_self_signed(workspace.path())?;
@@ -540,6 +557,7 @@ struct MeasuredSlot {
     rows: Vec<SampleRow>,
     pool: Option<PoolSummary>,
     profile: Option<ProfileSummary>,
+    data: Vec<super::client_data::Row>,
 }
 
 /// The role a slot's implementation label denotes.
@@ -909,6 +927,25 @@ fn measure_slot(
         socks_port,
     )?;
 
+    let data = if let Some(mib) = suite.client_data_mib {
+        super::client_data::capture(&super::client_data::Plan {
+            payload_mib: mib,
+            samples: suite.samples,
+            concurrencies: &suite.concurrencies,
+            endpoints: super::matrix::Endpoints {
+                socks: socks_port,
+                fallback: server_port,
+                http: plain_port,
+                https: plain_port + 1,
+            },
+            pid: measured_pid,
+            workspace: workspace.path(),
+            output: &slot_dir,
+        })?
+    } else {
+        Vec::new()
+    };
+
     if suite.peer.is_client_measurement() {
         super::client_resources::capture(
             measured_pid,
@@ -937,6 +974,7 @@ fn measure_slot(
     Ok(MeasuredSlot {
         slot: entry.clone(),
         task_clock_ms,
+        data,
         rows,
         pool,
         profile,
@@ -1232,6 +1270,12 @@ fn summarise(
             client_latency_summary(suite, measured)?,
         ));
     }
+    if suite.client_data_mib.is_some() {
+        details.push((
+            "clientData".to_owned(),
+            client_data_summary(suite, measured)?,
+        ));
+    }
     Ok(aggregate::summary_document(
         3,
         aggregate::PAIRED_METHOD,
@@ -1239,6 +1283,51 @@ fn summarise(
         rows,
         details,
     ))
+}
+
+fn client_data_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
+    let expected = super::client_data::SCENARIOS.len() * suite.concurrencies.len() * suite.samples;
+    if measured.iter().any(|slot| slot.data.len() != expected) {
+        return Err("missing client data samples".to_owned());
+    }
+    let mut cells = Vec::new();
+    for scenario in super::client_data::SCENARIOS {
+        for concurrency in &suite.concurrencies {
+            let mut metrics = Vec::new();
+            for cpu in [false, true] {
+                let name = if cpu {
+                    "cpuSecondsPerGiB"
+                } else {
+                    "mibPerSecond"
+                };
+                let blocks = collect_blocks(suite, measured, |slot| {
+                    slot.data
+                        .iter()
+                        .filter(|row| row.scenario == scenario && row.concurrency == *concurrency)
+                        .map(|row| {
+                            if cpu {
+                                row.cpu_seconds_per_gib
+                            } else {
+                                row.mib_per_second
+                            }
+                        })
+                        .collect()
+                });
+                let cell = aggregate::paired_cell(
+                    &blocks,
+                    2 * suite.samples,
+                    0xDA7A + u64::try_from(*concurrency).unwrap_or(0),
+                    name,
+                )?;
+                metrics.push((name, aggregate::paired_cell_json(&cell, Some(name))));
+            }
+            cells.push((
+                format!("{}:c{concurrency}", scenario.as_str()),
+                Json::object(metrics),
+            ));
+        }
+    }
+    Ok(Json::object(cells))
 }
 
 fn client_latency_summary(
@@ -1357,6 +1446,12 @@ fn environment_json(
     cover_target: &str,
 ) -> Json {
     Json::object([
+        (
+            "clientDataMiB",
+            suite.client_data_mib.map_or(Json::Null, |mib| {
+                Json::Int(i64::try_from(mib).unwrap_or(i64::MAX))
+            }),
+        ),
         ("schemaVersion", Json::Int(2)),
         ("runId", Json::string(suite.run_id.clone())),
         (
@@ -1548,6 +1643,7 @@ mod tests {
             baseline_bin: PathBuf::from("/bin/baseline"),
             candidate_bin: PathBuf::from("/bin/candidate"),
             peer: SetupPeer::XrayClient(PathBuf::from("/bin/xray")),
+            client_data_mib: None,
             baseline_identity: None,
             baseline_commit: None,
             out_dir: PathBuf::from("/out/run"),
@@ -1607,6 +1703,54 @@ mod tests {
                 .unwrap_err()
                 .contains("chrome or firefox")
         );
+    }
+
+    #[test]
+    fn client_data_requires_bounded_payload_and_attributed_client_cpu() {
+        let mut context = client_suite();
+        context.client_data_mib = Some(64);
+        validate(&context).unwrap();
+        context.attribution = Attribution::Wall;
+        assert!(validate(&context).is_err());
+        context.attribution = Attribution::Schedstat;
+        context.client_data_mib = Some(4097);
+        assert!(validate(&context).is_err());
+        context.client_data_mib = Some(0);
+        assert!(validate(&context).is_err());
+        context.client_data_mib = Some(64);
+        context.peer = SetupPeer::XrayClient(PathBuf::from("xray"));
+        assert!(validate(&context).is_err());
+    }
+
+    #[test]
+    fn data_summary_requires_each_cell_and_preserves_cpu_direction() {
+        let context = small_suite();
+        let mut slots = measured(3, 1, true);
+        assert!(client_data_summary(&context, &slots).is_err());
+        for slot in &mut slots {
+            let candidate = slot.slot.implementation == "candidate";
+            slot.data = super::super::client_data::SCENARIOS
+                .into_iter()
+                .map(|scenario| super::super::client_data::Row {
+                    scenario,
+                    concurrency: 1,
+                    mib_per_second: if candidate { 200.0 } else { 100.0 },
+                    cpu_seconds_per_gib: if candidate { 0.5 } else { 1.0 },
+                })
+                .collect();
+        }
+        let json = client_data_summary(&context, &slots)
+            .unwrap()
+            .to_python_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for scenario in super::super::client_data::SCENARIOS {
+            let cell = &value[format!("{}:c1", scenario.as_str())];
+            assert_eq!(cell["mibPerSecond"]["medianCandidateVsBaseline"], 2.0);
+            assert_eq!(cell["cpuSecondsPerGiB"]["medianCandidateVsBaseline"], 0.5);
+        }
+        // Replacing one cell with a duplicate cannot pass merely by row count.
+        slots[0].data[0].scenario = super::super::matrix::Scenario::Bidi;
+        assert!(client_data_summary(&context, &slots).is_err());
     }
 
     #[test]
@@ -1733,6 +1877,7 @@ mod tests {
                 MeasuredSlot {
                     slot: entry,
                     task_clock_ms: with_perf.then_some(if candidate { 100.0 } else { 200.0 }),
+                    data: Vec::new(),
                     rows,
                     pool: None,
                     profile: None,

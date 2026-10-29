@@ -673,6 +673,9 @@ pub(crate) enum BenchCommand {
         /// Baseline LINE fingerprint; omission measures that binary's default.
         #[arg(long)]
         baseline_client_fingerprint: Option<String>,
+        /// Also measure framed/direct upload, download and bidi per client slot.
+        #[arg(long)]
+        client_data_mib: Option<u64>,
         /// Alternating transfers across both implementations.
         #[arg(long, default_value_t = 20)]
         runs: usize,

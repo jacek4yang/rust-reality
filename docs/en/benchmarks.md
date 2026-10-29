@@ -923,3 +923,22 @@ closing the sockets record recovery. These post-close samples do not assert
 instantaneous reclamation or classify allocator residency as a leak. Compare
 the raw client resource files across paired slots separately from timed setup
 metrics; the collector does not assign a resource acceptance verdict.
+
+For data-path comparisons, add `--client-data-mib 64` with `schedstat`. Each
+existing paired slot then measures framed download/upload, Direct
+download/upload and simultaneous download/upload connections at each selected
+concurrency. Data measurements have separate CPU windows, after setup and before
+residency observations. The same sample count and ABBA ordering apply. Each
+cell is warmed before measurement; warm-up failures fail the campaign.
+
+The collector reuses the matrix curl driver, clearing proxy environment
+variables. Its self-signed inner TLS origin uses the matrix's existing insecure
+curl option; this does not change REALITY authentication. Each slot verifies a
+Direct download SHA-256 before timing. Timed transfers check byte counts, and
+upload samples require fresh origin byte-count receipts; these receipts do not
+assert upload SHA-256 equivalence. Origin errors invalidate samples. Separate
+JSON files retain every request latency, schedstat delta, origin counters and
+upload receipt. The summary reports block-bootstrap throughput and CPU per GiB
+for every scenario/concurrency. It does not automatically declare performance
+acceptance. This mode requires a same-binary control and the existing protected
+metric evaluation, and does not measure same-socket duplex, NXR or Handoff.

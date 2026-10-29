@@ -470,6 +470,7 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             setup_server_bin,
             client_fingerprint,
             baseline_client_fingerprint,
+            client_data_mib,
             runs,
             bytes,
             url,
@@ -541,7 +542,8 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             if suite != "client-setup-rate"
                 && (setup_server_bin.is_some()
                     || client_fingerprint.is_some()
-                    || baseline_client_fingerprint.is_some())
+                    || baseline_client_fingerprint.is_some()
+                    || client_data_mib.is_some())
             {
                 eprintln!("client setup options require --suite client-setup-rate");
                 return ExitCode::from(2);
@@ -805,6 +807,7 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                         baseline_bin: baseline_bin.as_deref(),
                         candidate_bin: rust_bin,
                         peer,
+                        client_data_mib: *client_data_mib,
                         baseline_identity: baseline_identity.as_deref(),
                         baseline_commit: baseline_commit.as_deref(),
                         out_dir: out_dir.as_deref(),
@@ -1770,6 +1773,7 @@ struct SetupRateArgs<'a> {
     baseline_bin: Option<&'a Path>,
     candidate_bin: &'a Path,
     peer: bench::paired::SetupPeer,
+    client_data_mib: Option<u64>,
     baseline_identity: Option<&'a Path>,
     baseline_commit: Option<&'a str>,
     out_dir: Option<&'a Path>,
@@ -1833,6 +1837,7 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
         baseline_bin: baseline_bin.to_path_buf(),
         candidate_bin: args.candidate_bin.to_path_buf(),
         peer: args.peer.clone(),
+        client_data_mib: args.client_data_mib,
         baseline_identity: args.baseline_identity.map(Path::to_path_buf),
         baseline_commit: args.baseline_commit.map(str::to_owned),
         out_dir,
