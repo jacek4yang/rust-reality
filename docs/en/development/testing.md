@@ -469,3 +469,40 @@ Source rules were checked against Chromium 156.0.8078.74's DEPS-pinned BoringSSL
 100-byte `security.tls.ech.grease_size` preference. Unlike older uTLS Chrome
 presets, this native Chrome includes ML-DSA signature schemes and trust-anchor
 identifiers. A different Xray preset is not an equivalent browser capture.
+
+### Stock Xray comparison boundary
+
+The current independent reference is official Xray-core v26.10.29, commit
+`0afec66085a85191e9dd2a4a6646c7c9a94688d1`, Linux x86_64 ELF SHA-256
+`e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa`.
+Its pinned uTLS revision remains
+`aa6edf4b11af82e110eea845bb2983d30138d651`, as in the historical 26.7.28
+reference. Source aliases resolve to Chrome 133 and Firefox 148, not the native
+browser versions this release reproduces. Regenerate 20 loopback captures per
+alias with the unmodified verified ELF:
+
+```shell
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- capture-xray /path/to/xray /tmp/new-xray-captures
+```
+
+The collector rejects a different executable hash, uses only synthetic test
+credentials, closes after the first complete ClientHello, and records source,
+binary and capture-tool identities. This is a fingerprint observation, not an
+authenticated-session test. Separate stock-Xray ingress tests exercise the
+required authenticated direction (ADR 0059).
+
+| Field | Native Chrome 156 / Firefox 159 | Xray 26.10.29 preset |
+| --- | --- | --- |
+| Chrome signatures | GREASE and ML-DSA 44/65/87 precede traditional schemes | No signature GREASE or ML-DSA |
+| Chrome trust anchors | Extension 51764, 186-byte body | Absent |
+| Firefox ciphers | 15 suites | 17, including two older ECDHE-ECDSA CBC suites |
+| Firefox groups | Hybrid, X25519, P-256/P-384/P-521 | Also FFDHE 2048/3072 |
+| Firefox extensions | Includes session ticket and PSK modes | Neither present |
+| Firefox ECH GREASE payload | 240 bytes for the captured SNI | 239 bytes |
+
+The historical normalized summaries from reference repository commit
+`ba4d4014da4f944091c3b403be0cf0eecd67bedb` are preserved under
+`benchmarks/evidence/browser-clienthello/xray-26.7.28-normalized/` with source
+hashes. They are not raw captures, do not qualify additional production names,
+and do not excuse the reference client's documented P-256 omission. This
+implementation retains and successfully negotiates Firefox's real P-256 share.

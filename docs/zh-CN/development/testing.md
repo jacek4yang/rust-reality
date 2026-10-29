@@ -329,3 +329,20 @@ CI 对每个配置比较 32 条生成记录。独立解析器不导入生产协�
 扩展内容、key share 结构和记录边界，只规范化经过验证的临时随机字段。
 Chrome 中间扩展允许洗牌，首尾 GREASE 约束保留；Firefox 扩展顺序严格一致。
 该证据不覆盖恢复、HRR、真实 ECH 或完整浏览器流量行为。
+
+### Stock Xray 对照边界
+
+独立对照版本为 Xray-core v26.10.29，提交
+`0afec66085a85191e9dd2a4a6646c7c9a94688d1`，其 uTLS 固定提交仍为
+`aa6edf4b11af82e110eea845bb2983d30138d651`。`chrome` 和 `firefox` 别名
+分别指向 Chrome 133、Firefox 148，不是本次原生浏览器版本。
+使用 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- capture-xray`
+加上已验证的官方 Linux x86_64 二进制路径和全新输出目录，可复现每个别名 20 条记录。
+工具校验固定二进制 SHA-256，仅使用合成测试凭据，并在取得 ClientHello 后关闭连接；
+该抓包不声称认证成功，认证入口互操作由独立测试验证。
+
+原生 Chrome 增加了签名 GREASE、ML-DSA 和 trust-anchor 扩展；原生 Firefox
+减少了旧密码套件及 FFDHE 组，增加 session ticket/PSK modes，ECH 载荷为 240 字节，
+而 Xray 对照为 239 字节。旧 26.7.28 规范化摘要保存在
+`benchmarks/evidence/browser-clienthello/xray-26.7.28-normalized/`，仅为历史证据，
+不增加支持名称，也不允许省略 Firefox 的 P-256 私钥协商。

@@ -1,0 +1,66 @@
+{
+  "baseline": {
+    "buildId": "59bff3b7b0392163ecd67a4d98942eb0a470394b",
+    "identity": "",
+    "path": "/home/jacek/.cache/rr-v230-baseline-eb91df6/binary/rust-reality",
+    "sha256": "0071eac26e36f6e8eb73bca313db5ec6567affefabbe8352d112dbd1f1bc60a3"
+  },
+  "blocks": 12,
+  "candidate": {
+    "buildId": "59bff3b7b0392163ecd67a4d98942eb0a470394b",
+    "identity": "{\"gitCommit\":\"eb91df613a1664a6e744a625652e84756b665c70\",\"version\":\"2.2.0\"}",
+    "path": "/home/jacek/.cache/rr-v230-baseline-eb91df6/binary/rust-reality",
+    "sha256": "0071eac26e36f6e8eb73bca313db5ec6567affefabbe8352d112dbd1f1bc60a3"
+  },
+  "concurrencies": "1 8 32",
+  "connectionsPerSample": 96,
+  "coverModes": {
+    "baseline": "default",
+    "candidate": "default"
+  },
+  "coverNetwork": {
+    "model": "loopback",
+    "netemRttMs": null,
+    "target": "127.0.0.1:61001"
+  },
+  "harness": {
+    "benchOrigin": {
+      "embedded": true,
+      "path": "/home/jacek/Projects/rust-reality-v230-keys/target/debug/rr-dev",
+      "sha256": "871b3b36da9a55fc21ba17a20614ace5a12b145649daf845b042b266a0df8f86"
+    },
+    "contract": null,
+    "entrypoint": {
+      "path": "/home/jacek/Projects/rust-reality-v230-keys/target/debug/rr-dev",
+      "sha256": "871b3b36da9a55fc21ba17a20614ace5a12b145649daf845b042b266a0df8f86"
+    },
+    "keeperHelper": null
+  },
+  "hostExclusiveLock": {
+    "deviceInode": "49:5704",
+    "mode": "lockDirectory",
+    "path": "/run/user/1000/rust-reality/host-exclusive.lock.d",
+    "protocolVersion": 1,
+    "required": true
+  },
+  "measureMode": "schedstat",
+  "method": "balanced block ABBA",
+  "ports": {
+    "address": "127.0.0.1",
+    "base": 61000,
+    "count": 98
+  },
+  "repository": {
+    "dirty": false,
+    "head": "eb91df613a1664a6e744a625652e84756b665c70"
+  },
+  "runId": "v230-baseline-setup-aa",
+  "samplesPerSlot": 9,
+  "schemaVersion": 2,
+  "xray": {
+    "buildId": null,
+    "identity": "Xray 26.10.29 (Xray, Penetrates Everything.) 0afec66 (go1.27.3 linux/amd64)",
+    "path": "/home/jacek/.cache/rr-v230-xray/extracted/xray",
+    "sha256": "e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa"
+  }
+}
