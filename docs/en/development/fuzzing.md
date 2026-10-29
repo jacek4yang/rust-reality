@@ -32,6 +32,8 @@ sharded smoke passes over all targets on every PR. The current set covers:
 
 The independent browser capture decoder is covered by `fingerprint_capture`. It
 rejects malformed framing and lengths while preserving all observable wire bytes.
+`p256_agreement` exercises the TLS SEC1 share boundary and agreement with a
+fixed fuzz-only scalar, including invalid lengths, infinity and off-curve input.
 
 ## Commands
 

@@ -30,6 +30,7 @@ futures-util = "0.3.33"
 hkdf = "0.13.0"
 hmac = { version = "0.13.0", features = ["zeroize"] }
 ml-kem = { version = "0.3.2", default-features = false, features = ["zeroize"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdh"] }
 regex = { version = "1.12.3", default-features = false, features = ["perf", "std", "unicode"] }
 # The cryptographic implementation boundary (ADR 0023): X25519 from
 # s2n-bignum's assembly, `no_std`, and the repository-owned cryptographic
