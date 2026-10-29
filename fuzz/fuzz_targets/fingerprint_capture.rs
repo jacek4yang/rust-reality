@@ -1,7 +1,9 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 fuzz_target!(|input: &[u8]| {
-    let _ = rr_fingerprint::decode(input);
+    if let Ok(hello) = rr_fingerprint::decode(input) {
+        let _ = rr_fingerprint::hashes::summarize(&hello);
+    }
     let _ = rr_fingerprint::compare::compare(input, input, true);
     let _ = rr_fingerprint::compare::compare(input, input, false);
     let _ = rr_fingerprint::compare::compare_corpus(input, &[input; 16], true);

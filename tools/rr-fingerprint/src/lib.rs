@@ -5,6 +5,7 @@
 //! separate policy: this decoder never turns a wire difference into equality.
 
 pub mod compare;
+pub mod hashes;
 
 use serde::Serialize;
 use std::fmt;
@@ -12,6 +13,10 @@ use std::fmt;
 /// Maximum captured ClientHello wire bytes accepted by the offline decoder.
 pub const MAX_CAPTURE_BYTES: usize = 128 * 1024;
 const MAX_MESSAGE_BYTES: usize = 65_535;
+
+pub(crate) fn grease(value: u16) -> bool {
+    value & 0x0f0f == 0x0a0a && value >> 8 == value & 255
+}
 
 /// Malformed, truncated, or oversized evidence. Offsets refer to the current
 /// framing layer, not a synthesized production diagnostic.

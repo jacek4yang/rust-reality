@@ -333,6 +333,13 @@ key share 或 ECH 内容，并要求 Chrome 扩展顺序和密码套件 GREASE �
 Chrome 中间扩展允许洗牌，首尾 GREASE 约束保留；Firefox 扩展顺序严格一致。
 该证据不覆盖恢复、HRR、真实 ECH 或完整浏览器流量行为。
 
+辅助 JA3 / TCP JA4 可使用
+`cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- hashes CAPTURE.tls`
+输出哈希和未哈希输入。算法固定版本及公开示例向量见英文对应章节；MD5 仅是
+工具侧 JA3 标识，不用于安全判断。Chrome 扩展洗牌会改变 JA3；JA4 排序会隐藏
+该差异。两者均不能替代完整结构比较或认证会话验证。现有抓包 fuzz target
+亦覆盖这些摘要及错误的点格式向量长度。
+
 ### Stock Xray 对照边界
 
 独立对照版本为 Xray-core v26.10.29，提交

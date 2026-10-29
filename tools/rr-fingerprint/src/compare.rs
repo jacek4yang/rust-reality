@@ -1,9 +1,5 @@
 //! Independent, bounded comparison policy for the pinned native browser corpus.
-use crate::{ClientHello, DecodeError, Result};
-
-fn grease(value: u16) -> bool {
-    value & 0x0f0f == 0x0a0a && value >> 8 == value & 255
-}
+use crate::{ClientHello, DecodeError, Result, grease};
 fn normalize_word(value: &mut u16) {
     if grease(*value) {
         *value = 0x0a0a;

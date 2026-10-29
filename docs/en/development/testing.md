@@ -479,6 +479,22 @@ extensions remain constrained. Firefox extension order and ECH length remain
 exact for the captured SNI. This corpus does not qualify alternate capture
 conditions, resumption, HRR, real ECH, or complete browser traffic behavior.
 
+Auxiliary JA3 and TCP JA4 hashes include their unhashed inputs:
+
+```shell
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- hashes benchmarks/evidence/browser-clienthello/windows-20261029/firefox/sample-00.tls
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- hashes /tmp/rr-browser-offers/firefox-00.tls
+```
+
+The algorithms follow the pinned [JA3 specification](https://github.com/salesforce/ja3/blob/502cc6395811c54743b0561419d61900a6df3ff7/README.md)
+and [JA4 specification](https://github.com/FoxIO-LLC/ja4/blob/c6469a7b0dbf8fe963810162429fbfd9d1acc4d5/technical_details/JA4.md).
+Published example vectors are regression tests. MD5 is a tooling-only JA3
+identifier, never a security primitive. Chrome's shuffled extension order
+changes JA3; JA4 sorts extensions and therefore hides that order. Both omit
+important fields, so matching hashes never replace structural comparison or
+authenticated-session qualification. The existing capture fuzz target also
+exercises these summaries, including malformed point-format vectors.
+
 Source rules were checked against Chromium 156.0.8078.74's DEPS-pinned BoringSSL
 `2ea3200c3a3ec176613ab7a0b9a4ffc6db846120` (`ssl/handshake.cc`,
 `ssl/extensions.cc`, `ssl/encrypted_client_hello.cc`) and Firefox's

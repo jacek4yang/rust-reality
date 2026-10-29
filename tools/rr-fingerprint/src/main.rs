@@ -5,6 +5,18 @@ mod xray;
 use std::{fs::File, io::Read};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 2 && args[0] == "hashes" {
+        let mut input = Vec::new();
+        File::open(&args[1])?
+            .take((rr_fingerprint::MAX_CAPTURE_BYTES + 1) as u64)
+            .read_to_end(&mut input)?;
+        let hello = rr_fingerprint::decode(&input)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rr_fingerprint::hashes::summarize(&hello)?)?
+        );
+        return Ok(());
+    }
     if args.first().is_some_and(|arg| arg == "compare-corpus") {
         return compare_corpus(&args[1..]);
     }
@@ -51,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     if args.len() != 1 {
-        return Err("usage: rr-fingerprint CAPTURE.tls | prepare PRIVATE_DIR CA_DER | serve PRIVATE_DIR OUTPUT_DIR | collect chrome|firefox BINARY OUTPUT_DIR | compare chrome|firefox REFERENCE CANDIDATE | capture-xray BINARY NEW_OUTPUT_DIR".into());
+        return Err("usage: rr-fingerprint CAPTURE.tls | hashes CAPTURE.tls | prepare PRIVATE_DIR CA_DER | serve PRIVATE_DIR OUTPUT_DIR | collect chrome|firefox BINARY OUTPUT_DIR | compare chrome|firefox REFERENCE CANDIDATE | compare-corpus chrome|firefox REFERENCE CANDIDATE... | capture-xray BINARY NEW_OUTPUT_DIR".into());
     }
     let mut input = Vec::new();
     File::open(&args[0])?
