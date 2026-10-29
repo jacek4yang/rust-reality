@@ -118,6 +118,20 @@ fn git_diff_quiet(repo: &Path, cached: bool) -> Result<bool, String> {
 ///
 /// Returns a message when `readelf` is unavailable or prints no build ID.
 pub fn build_id(binary: &Path) -> Result<String, String> {
+    optional_build_id(binary)?.ok_or_else(|| {
+        format!(
+            "{} must have exactly one GNU Build ID, found 0",
+            binary.display()
+        )
+    })
+}
+
+/// Observe a GNU Build ID when the executable carries one.
+///
+/// Official stripped Go comparators may omit this note. Absence is metadata,
+/// never a replacement for mandatory SHA-256 registration. Failed inspection,
+/// duplicate notes and malformed IDs remain errors.
+pub fn optional_build_id(binary: &Path) -> Result<Option<String>, String> {
     let outcome = Tool::new("readelf")
         .args(["-n", &binary.display().to_string()])
         .probe()
@@ -129,19 +143,22 @@ pub fn build_id(binary: &Path) -> Result<String, String> {
             outcome.stderr.trim_end()
         ));
     }
-    parse_build_id(outcome.trimmed_stdout(), binary)
+    parse_optional_build_id(outcome.trimmed_stdout(), binary)
 }
 
+#[cfg(test)]
 fn parse_build_id(output: &str, binary: &Path) -> Result<String, String> {
+    parse_optional_build_id(output, binary)?.ok_or_else(|| "missing GNU Build ID".to_owned())
+}
+
+fn parse_optional_build_id(output: &str, binary: &Path) -> Result<Option<String>, String> {
     let ids: Vec<&str> = output
         .lines()
-        .filter_map(|line| {
-            line.trim()
-                .strip_prefix("Build ID:")?
-                .split_whitespace()
-                .next()
-        })
+        .filter_map(|line| line.trim().strip_prefix("Build ID:").map(str::trim))
         .collect();
+    if ids.is_empty() {
+        return Ok(None);
+    }
     let [id] = ids.as_slice() else {
         return Err(format!(
             "{} must have exactly one GNU Build ID, found {}",
@@ -155,7 +172,7 @@ fn parse_build_id(output: &str, binary: &Path) -> Result<String, String> {
             binary.display()
         ));
     }
-    Ok((*id).to_owned())
+    Ok(Some((*id).to_owned()))
 }
 
 /// Whether the binary's bytes contain `commit` literally.
@@ -412,6 +429,7 @@ mod tests {
         );
         for invalid in [
             "",
+            "Build ID: \n",
             "Build ID: ABCDEF\n",
             "Build ID: not-hex\n",
             "Build ID: 01\nBuild ID: 02\n",
@@ -421,5 +439,23 @@ mod tests {
                 "must reject {invalid:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_absent_comparator_note_is_distinct_from_an_invalid_note() {
+        let binary = Path::new("/stock-xray");
+        assert_eq!(parse_optional_build_id("", binary).unwrap(), None);
+        assert_eq!(
+            parse_optional_build_id("Build ID: 0123abcdef", binary).unwrap(),
+            Some("0123abcdef".to_owned())
+        );
+        for invalid in [
+            "Build ID:",
+            "Build ID: invalid",
+            "Build ID: 01\nBuild ID: 02",
+        ] {
+            assert!(parse_optional_build_id(invalid, binary).is_err());
+        }
+        assert!(parse_build_id("", binary).is_err());
     }
 }
