@@ -36,7 +36,9 @@ impl VisionTunnel {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        let mut local_buf = vec![0_u8; 16 * 1024];
+        // Two full Vision frames fit one outer TLS record. Reserving their
+        // headers avoids a ten-byte third frame on every full local read.
+        let mut local_buf = vec![0_u8; 2 * (crate::protocol::vless::VISION_FRAME_SIZE - 5)];
         let mut upload_open = true;
         let mut download_open = true;
         let activity = self.io.activity.clone();

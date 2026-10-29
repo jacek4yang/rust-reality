@@ -210,25 +210,54 @@ impl VisionIo {
         }
         let mut offset = 0;
         while offset < payload.len() {
-            // The preamble already consumed the UUID; reserve the five-byte frame header.
+            // The preamble already consumed the UUID. Pack two complete
+            // bounded frames in the existing AEAD storage, without an
+            // intermediate plaintext allocation or a delayed flush.
             let want = (payload.len() - offset).min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
-            let plan = self
+            let first = self
                 .encoder
                 .plan(want, VisionCommand::Continue, false)
                 .map_err(|_| VisionTunnelError::Vision)?;
-            let content = &payload[offset..offset + want];
+            let next =
+                (payload.len() - offset - want).min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
+            let second = if next == 0 {
+                None
+            } else {
+                self.encoder
+                    .plan_within(
+                        next,
+                        VisionCommand::Continue,
+                        false,
+                        MAX_PLAINTEXT_LEN - first.wire_len(),
+                    )
+                    .map_err(|_| VisionTunnelError::Vision)?
+            };
+            let wire_len = first.wire_len() + second.as_ref().map_or(0, |plan| plan.wire_len());
             self.writer
                 .write_assembled(
-                    plan.wire_len(),
-                    |frame| {
-                        self.encoder.assemble(&plan, content, frame);
+                    wire_len,
+                    |record| {
+                        let (frame, tail) = record.split_at_mut(first.wire_len());
+                        self.encoder
+                            .assemble(&first, &payload[offset..offset + want], frame);
+                        if let Some(plan) = &second {
+                            self.encoder.assemble(
+                                plan,
+                                &payload[offset + want..offset + want + next],
+                                tail,
+                            );
+                        }
                     },
                     crate::io_activity::WRITE_STALL_TIMEOUT,
                 )
                 .await
                 .map_err(VisionTunnelError::Tls)?;
-            self.encoder.commit(&plan);
+            self.encoder.commit(&first);
             offset += want;
+            if let Some(plan) = second {
+                self.encoder.commit(&plan);
+                offset += next;
+            }
         }
         Ok(())
     }
@@ -347,6 +376,65 @@ mod tests {
             assert!(response.is_none());
             assert_eq!(output, b"payload");
             assert_eq!(decoder.mode(), VisionMode::Raw);
+        }
+    }
+
+    #[tokio::test]
+    async fn bulk_upload_packs_two_bounded_frames_in_one_authenticated_record() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (client, accepted) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let (mut peer, _) = accepted.unwrap();
+        let (reader, writer) = client.unwrap().into_split();
+        let (_, read) = record_pair();
+        let (write, mut uplink) = record_pair();
+        let (reader, writer) = application_halves(
+            reader,
+            Vec::new(),
+            writer,
+            read,
+            write,
+            false,
+            crate::protocol::vless::VISION_FRAME_SIZE,
+        );
+        let user = UserId::new([0x11; 16]);
+        let mut encoder = VisionEncoder::new(user).unwrap();
+        let mut decoder = VisionDecoder::new(user);
+        let mut preamble = Vec::new();
+        encoder
+            .encode(&[], VisionCommand::Continue, true, &mut preamble)
+            .unwrap();
+        decoder.decode_append(&preamble, &mut Vec::new()).unwrap();
+        let mut io = VisionIo {
+            reader: ReadDirection::Tls(reader),
+            writer,
+            response: None,
+            encoder,
+            decoder,
+            readable: Vec::new(),
+            readable_at: 0,
+            activity: Arc::new(crate::io_activity::SessionActivity::default()),
+        };
+        let mut received = Vec::new();
+        // Exercise the bulk boundary, a partial second frame, and the next
+        // record's sequence number. A full local read must cost one record.
+        for length in [16374, 8190, 1, 16374] {
+            let payload: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
+            io.write_application(&payload).await.unwrap();
+            let mut wire = read_tls_record(&mut peer, Duration::from_secs(1))
+                .await
+                .unwrap()
+                .into_wire();
+            let opened = uplink.open_in_place(&mut wire).unwrap();
+            assert!(opened.plaintext().len() <= MAX_PLAINTEXT_LEN);
+            received.clear();
+            io.decoder
+                .decode_append(opened.plaintext(), &mut received)
+                .unwrap();
+            assert_eq!(received, payload);
+            assert_eq!(io.decoder.mode(), VisionMode::Framed);
         }
     }
 
