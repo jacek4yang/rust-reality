@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "toolSource": "7163414a9a48bde9d0b2dd7d8e9021cd69479f47",
+  "toolSha256": "11043498c571dbb6717dae797caef171ab1f19f27f715933d2ca5b1317a124a7",
+  "localFullGate": "19/19 PASS; target/rr-dev/check/1793305975952-1781527",
+  "performanceVerdict": "NOT_ACCEPTED",
+  "campaigns": [
+    {
+      "name": "aa",
+      "status": "COMPLETED_CONTROL_TAIL_PRECISION_UNRESOLVED",
+      "manifest": "aa/archive-manifest.json",
+      "sha256": "e2b4d31224db72b44097475a7aaae122d81116d8ffbb2c5a1b41070aee1e344b"
+    },
+    {
+      "name": "combined-ab-incomplete",
+      "status": "INCOMPLETE",
+      "manifest": "combined-ab-incomplete/archive-manifest.json",
+      "sha256": "8255a0bad3fc45e96796e5867faa2c55a898480d8644883782fc69a638132e63"
+    }
+  ],
+  "controlAssessment": {
+    "connections": 860160,
+    "failedConnections": 0,
+    "conntrackMaximumObserved": 0,
+    "cpuAndSetupRate": "Every concurrency confidence interval lies within +/-1%.",
+    "tailLatency": "Concurrency 1 p99 upper ratio 1.0252507815862875 and concurrency 64 p99 upper ratio 1.0230577922394704 exceed the 2% equivalence margin. Do not claim complete control equivalence.",
+    "incompleteComparison": "Shared samples=21 repeats all data cells 21 times; stopped for excessive campaign scale, not a product failure. No complete block is an acceptance result. Collect setup and data in separately predeclared campaigns."
+  }
+}

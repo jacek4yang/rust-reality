@@ -1,0 +1,48 @@
+{
+  "status": "INCOMPLETE",
+  "cancelledUnixSeconds": 1793308005.41671,
+  "reason": "The shared sample count repeats every data cell 21 times; the combined plan creates multiple terabytes of traffic and excessive duration. Preserve all partial samples; collect setup and data separately under newly predeclared plans. No result from this incomplete run is an acceptance pass.",
+  "processGroup": 2868487,
+  "ownedProcesses": [
+    {
+      "pid": 2868487,
+      "comm": "bash",
+      "startTimeTicks": "177529929"
+    },
+    {
+      "pid": 2868497,
+      "comm": "sudo",
+      "startTimeTicks": "177529931"
+    },
+    {
+      "pid": 2868499,
+      "comm": "python3",
+      "startTimeTicks": "177529932"
+    },
+    {
+      "pid": 2868502,
+      "comm": "rr-dev",
+      "startTimeTicks": "177529934"
+    },
+    {
+      "pid": 2868529,
+      "comm": "rr-dev",
+      "startTimeTicks": "177530036"
+    },
+    {
+      "pid": 2868530,
+      "comm": "rr-dev",
+      "startTimeTicks": "177530039"
+    },
+    {
+      "pid": 2955179,
+      "comm": "rust-reality",
+      "startTimeTicks": "177584012"
+    },
+    {
+      "pid": 2955180,
+      "comm": "rust-reality",
+      "startTimeTicks": "177584012"
+    }
+  ]
+}
