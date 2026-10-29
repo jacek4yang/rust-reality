@@ -29,7 +29,7 @@ const RECORD_HEADER_LEN: usize = 5;
 /// A ClientHello could not be constructed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HelloError {
-    /// Empty, over-long, or non-ASCII presentation name.
+    /// Empty, over-long, NUL-containing, or non-ASCII presentation name.
     InvalidServerName,
     /// Empty or over-long ALPN protocol.
     InvalidAlpn,
@@ -320,7 +320,11 @@ pub fn build_client_hello(
     server_public_key: &[u8; X25519_PUBLIC_LEN],
     auth: AuthPlaintext,
 ) -> Result<(HelloRecord, AuthKey), HelloError> {
-    if server_name.is_empty() || server_name.len() > 253 || !server_name.is_ascii() {
+    if server_name.is_empty()
+        || server_name.len() > 253
+        || !server_name.is_ascii()
+        || server_name.as_bytes().contains(&0)
+    {
         return Err(HelloError::InvalidServerName);
     }
     for protocol in alpn {
@@ -638,6 +642,19 @@ mod tests {
             RealityAuthenticator::from_entry(entry).expect("authenticator"),
             public,
         )
+    }
+
+    #[test]
+    fn invalid_sni_fails_before_serializing_an_unparseable_offer() {
+        for profile in [BrowserFingerprint::Chrome, BrowserFingerprint::Firefox] {
+            let keys = ClientKeyAgreement::for_profile(profile).unwrap();
+            for name in ["", "\0", "www.\0example.com", &"x".repeat(254)] {
+                assert!(matches!(
+                    build_client_hello(name, ALPN, &keys, &[0x22; 32], plaintext(1)),
+                    Err(HelloError::InvalidServerName)
+                ));
+            }
+        }
     }
 
     #[test]

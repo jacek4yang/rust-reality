@@ -89,6 +89,7 @@ fn is_secret_member(name: &str) -> bool {
         name,
         "id" | "userIds"
             | "shortIds"
+            | "shortId"
             | "privateKey"
             | "previousPrivateKeys"
             | "psk"
@@ -515,6 +516,7 @@ mod tests {
             .collect();
         assert_eq!(redacted, ["uuid-here", "aa", "bb"]);
         assert!(is_secret_member("password"));
+        assert!(is_secret_member("shortId"));
         assert!(!is_secret_member("name"));
     }
 

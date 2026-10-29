@@ -233,7 +233,8 @@ fn failover_from_dead_primary_to_live_alternate_before_socks5_reply() {
       "id": "{user_id}",
       "publicKey": "{public_key}",
       "shortId": "{short_id}",
-      "serverName": "localhost"
+      "serverName": "localhost",
+      "fingerprint": "firefox"
     }}
   ],
   "lineGroups": [{{ "name": "edge", "lines": ["dead", "live"] }}],

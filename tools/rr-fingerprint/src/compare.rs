@@ -166,6 +166,59 @@ fn normalized(mut h: ClientHello, chrome: bool) -> Result<ClientHello> {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+    fn fixture(name: &str) -> Vec<u8> {
+        std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../benchmarks/evidence/browser-clienthello/windows-20261029/{name}/sample-00.tls"))).unwrap()
+    }
+
+    fn extension_range(wire: &[u8], kind: u16) -> std::ops::Range<usize> {
+        let word = |i: usize| usize::from(u16::from_be_bytes([wire[i], wire[i + 1]]));
+        let mut offset = 5 + 4 + 2 + 32;
+        offset += 1 + usize::from(wire[offset]);
+        offset += 2 + word(offset);
+        offset += 1 + usize::from(wire[offset]);
+        offset += 2;
+        while offset < wire.len() {
+            let length = word(offset + 2);
+            if word(offset) == usize::from(kind) {
+                return offset + 4..offset + 4 + length;
+            }
+            offset += 4 + length;
+        }
+        panic!("missing fixture extension");
+    }
+
+    #[test]
+    fn normalization_does_not_hide_capability_or_content_regressions() {
+        for name in ["chrome", "firefox"] {
+            let reference = fixture(name);
+            for kind in [0, 10, 13, 16, 27, 43, 45] {
+                let mut bad = reference.clone();
+                let range = extension_range(&bad, kind);
+                bad[range.end - 1] ^= 1;
+                assert!(
+                    compare(&reference, &bad, name == "chrome").is_err(),
+                    "{name} extension {kind}"
+                );
+            }
+            let mut bad = reference.clone();
+            let range = extension_range(&bad, 65037);
+            bad[range.start + 4] = 2;
+            assert!(compare(&reference, &bad, name == "chrome").is_err());
+            let mut bad = reference.clone();
+            let range = extension_range(&bad, 51);
+            bad[range.start + 2] ^= 1;
+            assert!(compare(&reference, &bad, name == "chrome").is_err());
+        }
+        let reference = fixture("firefox");
+        let mut bad = reference.clone();
+        let range = extension_range(&bad, 0);
+        let first = range.start - 4;
+        // Swap SNI and the following empty extended-master-secret extension.
+        bad[first..range.end + 4].rotate_left(range.end - first);
+        assert!(compare(&reference, &bad, false).is_err());
+    }
+
     #[test]
     fn frozen_native_samples_have_verified_hashes_and_consistent_structure() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
