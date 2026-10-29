@@ -664,6 +664,15 @@ pub(crate) enum BenchCommand {
         /// Path to the Xray binary.
         #[arg(long, default_value = "xray")]
         xray_bin: PathBuf,
+        /// Fixed rust-reality server executable for client-setup-rate.
+        #[arg(long)]
+        setup_server_bin: Option<PathBuf>,
+        /// Candidate LINE fingerprint for client-setup-rate (defaults to chrome).
+        #[arg(long)]
+        client_fingerprint: Option<String>,
+        /// Baseline LINE fingerprint; omission measures that binary's default.
+        #[arg(long)]
+        baseline_client_fingerprint: Option<String>,
         /// Alternating transfers across both implementations.
         #[arg(long, default_value_t = 20)]
         runs: usize,

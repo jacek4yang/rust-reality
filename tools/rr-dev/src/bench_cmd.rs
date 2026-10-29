@@ -424,7 +424,9 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             for suite in &bench::runner::SUITES {
                 println!(
                     "{:<20} {:<20}  {}",
-                    suite.id, suite.supersedes, suite.summary
+                    suite.id,
+                    suite.supersedes.unwrap_or("native Rust"),
+                    suite.summary
                 );
             }
             ExitCode::SUCCESS
@@ -465,6 +467,9 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             suite,
             rust_bin,
             xray_bin,
+            setup_server_bin,
+            client_fingerprint,
+            baseline_client_fingerprint,
             runs,
             bytes,
             url,
@@ -533,6 +538,14 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
             deployment_plan,
             keep_work,
         } => {
+            if suite != "client-setup-rate"
+                && (setup_server_bin.is_some()
+                    || client_fingerprint.is_some()
+                    || baseline_client_fingerprint.is_some())
+            {
+                eprintln!("client setup options require --suite client-setup-rate");
+                return ExitCode::from(2);
+            }
             if *profile && !matches!(suite.as_str(), "setup-rate" | "vision-direct") {
                 eprintln!(
                     "bench run: --profile is supported only for setup-rate and vision-direct"
@@ -770,13 +783,28 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                     },
                 );
             }
-            if suite == "setup-rate" {
+            if matches!(suite.as_str(), "setup-rate" | "client-setup-rate") {
+                let peer = if suite == "client-setup-rate" {
+                    let Some(server) = setup_server_bin else {
+                        eprintln!("client-setup-rate requires --setup-server-bin");
+                        return ExitCode::from(2);
+                    };
+                    bench::paired::SetupPeer::RustServer {
+                        binary: server.clone(),
+                        baseline_fingerprint: baseline_client_fingerprint.clone(),
+                        candidate_fingerprint: client_fingerprint
+                            .clone()
+                            .unwrap_or_else(|| "chrome".to_owned()),
+                    }
+                } else {
+                    bench::paired::SetupPeer::XrayClient(xray_bin.clone())
+                };
                 return run_bench_setup_rate(
                     repo,
                     &SetupRateArgs {
                         baseline_bin: baseline_bin.as_deref(),
                         candidate_bin: rust_bin,
-                        xray_bin,
+                        peer,
                         baseline_identity: baseline_identity.as_deref(),
                         baseline_commit: baseline_commit.as_deref(),
                         out_dir: out_dir.as_deref(),
@@ -1741,7 +1769,7 @@ fn run_bench_fallback(repo: &Path, args: &FallbackArgs<'_>) -> ExitCode {
 struct SetupRateArgs<'a> {
     baseline_bin: Option<&'a Path>,
     candidate_bin: &'a Path,
-    xray_bin: &'a Path,
+    peer: bench::paired::SetupPeer,
     baseline_identity: Option<&'a Path>,
     baseline_commit: Option<&'a str>,
     out_dir: Option<&'a Path>,
@@ -1804,7 +1832,7 @@ fn run_bench_setup_rate(repo: &Path, args: &SetupRateArgs<'_>) -> ExitCode {
         repo: repo.to_path_buf(),
         baseline_bin: baseline_bin.to_path_buf(),
         candidate_bin: args.candidate_bin.to_path_buf(),
-        xray_bin: args.xray_bin.to_path_buf(),
+        peer: args.peer.clone(),
         baseline_identity: args.baseline_identity.map(Path::to_path_buf),
         baseline_commit: args.baseline_commit.map(str::to_owned),
         out_dir,

@@ -651,3 +651,20 @@ cargo dev bench run --suite descriptor-pressure \
 属于监听器等待中的 accept。仍强制执行汇总及各进程 RSS +32 MiB、HWM +64 MiB、
 线程 +8 包络；RSS/PSS 斜率及 FD 增量只作为诊断。所有权证据缺失或不一致时
 资格认证失败。CI 在失败后保留这些不含秘密的观察及最终身份核验尝试。
+
+
+## 统一客户端连接建立测量
+
+`cargo dev bench run --suite client-setup-rate` 复用现有 ABBA 调度与 SOCKS 工作负载，
+将 CPU 归因到被比较的客户端进程，所有样本使用同一个 `--setup-server-bin` 固定服务器。
+必须提供基线二进制、`--baseline-identity` 和 `--baseline-commit`；
+`--client-fingerprint` 选择 `chrome` 或 `firefox`。
+`--baseline-client-fingerprint` 可显式选择基线配置，省略表示该固定二进制自身的默认行为，
+元数据记录 null，不虚构浏览器版本。同一二进制 A/A 控制应显式使用相同配置。
+完整命令见[英文基准文档](../en/benchmarks.md#unified-client-setup-measurements)。
+
+该套件支持 `schedstat` 和 `wall`，提前拒绝未支持的 PMU、strace、掩护模式或整形组合。
+报告保留 `clientCpuPerConnection`、`clientPid`、固定服务器身份、配置以及每次连接延迟，
+p50/p99 使用现有完整配对块与统计分辨率要求。完成采集仍不代表性能通过，
+须沿用受保护指标阈值，逐单元评估，并区分浏览器固有握手成本。
+该负载止于首个 HTTP 正文字节，不证明大流量吞吐、长期内存或完整传输完整性。
