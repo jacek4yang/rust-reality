@@ -53,7 +53,6 @@ enum ReadDirection {
     Tls(TlsApplicationReader<tokio::net::tcp::OwnedReadHalf>),
     Raw {
         reader: tokio::net::tcp::OwnedReadHalf,
-        scratch: Vec<u8>,
     },
     Closed,
 }
@@ -160,14 +159,19 @@ impl VisionIo {
                 )?;
                 self.finish_read_transition()?;
             }
-            ReadDirection::Raw { reader, scratch } => {
-                let count = reader.read(scratch).await.map_err(VisionTunnelError::Io)?;
+            ReadDirection::Raw { reader } => {
+                // Reuse the drained delivery buffer directly. Its retained
+                // capacity bounds the read; no scratch allocation or payload
+                // copy is needed after the authenticated Direct transition.
+                let count = reader
+                    .read_buf(&mut self.readable)
+                    .await
+                    .map_err(VisionTunnelError::Io)?;
                 if count == 0 {
                     self.reader = ReadDirection::Closed;
                     return Err(VisionTunnelError::Closed);
                 }
                 self.activity.progress();
-                self.readable.extend_from_slice(&scratch[..count]);
             }
             ReadDirection::Closed => return Err(VisionTunnelError::Closed),
         }
@@ -184,10 +188,7 @@ impl VisionIo {
         };
         let (pending, reader) = reader.into_inner_with_pending();
         self.readable.extend_from_slice(&pending);
-        self.reader = ReadDirection::Raw {
-            reader,
-            scratch: vec![0; MAX_PLAINTEXT_LEN],
-        };
+        self.reader = ReadDirection::Raw { reader };
         // Directions transition independently. An authenticated downlink Direct
         // does not authorize removing the uplink's Vision or TLS framing.
         self.activity.enter_raw();
@@ -198,7 +199,29 @@ impl VisionIo {
         if self.readable_at < self.readable.len() {
             return Ok(());
         }
-        self.read_and_open_record().await
+        self.read_and_open_record().await?;
+        // Flush before a socket refill. Complete buffered records can share
+        // one local write, without delaying a sparse flow or growing a batch
+        // beyond two maximum plaintext records.
+        while self.readable.len() < MAX_PLAINTEXT_LEN
+            && matches!(&self.reader, ReadDirection::Tls(reader) if reader.has_buffered_record())
+        {
+            match self.read_and_open_record().await {
+                Err(VisionTunnelError::Tls(
+                    crate::protocol::reality::tls13::TlsApplicationIoError::PeerAlert {
+                        description: 0,
+                        ..
+                    },
+                )) => {
+                    // Deliver the authenticated prefix before the caller
+                    // observes EOF and shuts down its local write direction.
+                    self.reader = ReadDirection::Closed;
+                    break;
+                }
+                result => result?,
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn write_application(
@@ -377,6 +400,80 @@ mod tests {
             assert_eq!(output, b"payload");
             assert_eq!(decoder.mode(), VisionMode::Raw);
         }
+    }
+
+    #[tokio::test]
+    async fn buffered_downlink_delivers_authenticated_prefix_before_close_notify() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (client, accepted) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let (_peer, _) = accepted.unwrap();
+        let (reader, writer) = client.unwrap().into_split();
+        let (mut downlink, read) = record_pair();
+        let (write, _) = record_pair();
+        let user = UserId::new([0x11; 16]);
+        let mut encoder = VisionEncoder::new(user).unwrap();
+        let mut pending = Vec::new();
+        let mut frame = Vec::new();
+        let mut wire = Vec::new();
+        for content in [b"first".as_slice(), b"second"] {
+            encoder
+                .encode(content, VisionCommand::Continue, false, &mut frame)
+                .unwrap();
+            downlink
+                .seal_into(ContentType::ApplicationData, &frame, 0, &mut wire)
+                .unwrap();
+            pending.extend_from_slice(&wire);
+        }
+        downlink
+            .seal_into(ContentType::Alert, &[1, 0], 0, &mut wire)
+            .unwrap();
+        pending.extend_from_slice(&wire);
+        let (reader, writer) = application_halves(
+            reader,
+            pending,
+            writer,
+            read,
+            write,
+            false,
+            crate::protocol::vless::VISION_FRAME_SIZE,
+        );
+        let mut io = VisionIo {
+            reader: ReadDirection::Tls(reader),
+            writer,
+            response: None,
+            encoder: VisionEncoder::new(user).unwrap(),
+            decoder: VisionDecoder::new(user),
+            readable: Vec::with_capacity(MAX_PLAINTEXT_LEN),
+            readable_at: 0,
+            activity: Arc::new(crate::io_activity::SessionActivity::default()),
+        };
+        // The peer sends nothing: buffered records must not trigger a refill
+        // or allocate another delivery buffer.
+        {
+            use std::{
+                future::Future,
+                task::{Context, Poll, Waker},
+            };
+            let next = io.poll_fill_readable();
+            tokio::pin!(next);
+            let allocations = allocation_counter::measure(|| {
+                assert!(matches!(
+                    next.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                    Poll::Ready(Ok(()))
+                ));
+            });
+            assert_eq!(allocations.count_total, 0);
+        }
+        assert_eq!(io.readable, b"firstsecond");
+        assert!(matches!(io.reader, ReadDirection::Closed));
+        io.readable_at = io.readable.len();
+        assert!(matches!(
+            io.poll_fill_readable().await,
+            Err(VisionTunnelError::Closed)
+        ));
     }
 
     #[tokio::test]
