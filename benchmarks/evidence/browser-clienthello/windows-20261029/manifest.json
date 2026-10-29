@@ -1,0 +1,1077 @@
+{
+  "schemaVersion": 1,
+  "captureRun": "https://github.com/jacek4yang/rust-reality/actions/runs/40882928698",
+  "captureHead": "ded9c9a9d36151b12381726858dbf104325b3ddd",
+  "captureMergeCommit": "bd8456dfec4a3da0017e34dcb9806068d96371c9",
+  "conditions": {
+    "serverName": "browser-capture.test",
+    "port": 8443,
+    "address": "loopback",
+    "freshBrowserProfilePerSample": true,
+    "acceptInsecureCerts": false,
+    "headed": true,
+    "captureServerAlpn": [
+      "http/1.1"
+    ]
+  },
+  "profiles": {
+    "chrome": {
+      "identity": {
+        "purpose": "discovery-only; not an approved release fixture",
+        "source": "bd8456dfec4a3da0017e34dcb9806068d96371c9",
+        "browser": "chrome",
+        "distribution": "Google Chrome Stable, official signed enterprise MSI",
+        "expectedVersion": "156.0.8078.74",
+        "archiveSha256": "CF1757B01C3AF403DE494A1B702E2A96701FD10026F5B89BE53741689ED25895",
+        "driverArchiveSha256": "F782A94FC2A16E7DC6BE48C6A18516DC708DE8E86FF4A736DDC3FF62FF207EBF",
+        "browserVersion": "156.0.8078.74",
+        "browserSha256": "4132EB3E9C5B3978874EED48CB45C21DEBF343A0D383B6D2FB01A5FCF349EC65",
+        "publisher": "Valid",
+        "driverVersion": "ChromeDriver 156.0.8078.73 (2f9a11097447f226133bc1a31c787291a5eeab98-refs/branch-heads/8078@{#1612})",
+        "driverSha256": "5AE430A319C27E7B0D9AEB759FE4C3DB24A77AD0A31E59EFA5FD0D218E240B9E",
+        "toolSha256": "FD37D261AA8B1A8FEC511799F424259A50B63B586D8075E54E1F1B9D94D46164",
+        "os": {
+          "Caption": "Microsoft Windows Server 2025 Datacenter",
+          "Version": "10.0.26100",
+          "BuildNumber": "26100"
+        },
+        "imageOS": "win25-vs2026",
+        "imageVersion": "20261021.278.1",
+        "mode": "headed WebDriver; fresh profile for every sample",
+        "transport": "TCP TLS 1.3; HTTP/1.1 origin; no Alt-Svc; hosts DNS without ECH",
+        "samplesRequired": 20
+      },
+      "samples": [
+        {
+          "file": "chrome/sample-00.tls",
+          "sha256": "cc25efa9c5c45df9bd4aae1550e847f23bb8114da384286c52982a4e19a739e1",
+          "nonce": "18e303d4dd0552ec-00",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d4dd0552ec-00",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "cc25efa9c5c45df9bd4aae1550e847f23bb8114da384286c52982a4e19a739e1"
+          },
+          "originalSampleSha256": "910f6da4c7ce47b99a88fc93eb32f89feee74875d61e5d114c8ef0bf27373506"
+        },
+        {
+          "file": "chrome/sample-01.tls",
+          "sha256": "2ebfb2d55eb4b7b27938d93208a12d1d306da9636641c64c2bc31eeb4d74de73",
+          "nonce": "18e303d5edcecc10-01",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d5edcecc10-01",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "2ebfb2d55eb4b7b27938d93208a12d1d306da9636641c64c2bc31eeb4d74de73"
+          },
+          "originalSampleSha256": "9cd52af2136090c881fba93319dadaaf41b2b49da3926f36c611d59685052fc7"
+        },
+        {
+          "file": "chrome/sample-02.tls",
+          "sha256": "651cf69f01a75eb3a184600a67105ab286391eb316e1719047ffe847c4ef639c",
+          "nonce": "18e303d6a6706e04-02",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d6a6706e04-02",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "651cf69f01a75eb3a184600a67105ab286391eb316e1719047ffe847c4ef639c"
+          },
+          "originalSampleSha256": "416048df9bb07f6e0b310787835911b738bcfc91ee9327c0eaf249db634ea1db"
+        },
+        {
+          "file": "chrome/sample-03.tls",
+          "sha256": "7cf210c396e04b8b9e1603900ac12a1c1349cca2f4f8968c83438539de2cbc93",
+          "nonce": "18e303d725115688-03",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d725115688-03",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "7cf210c396e04b8b9e1603900ac12a1c1349cca2f4f8968c83438539de2cbc93"
+          },
+          "originalSampleSha256": "a0e5b0126ce942980b0dad6ba9c7cb2ea4c5e51815dde315050d5034e56fa808"
+        },
+        {
+          "file": "chrome/sample-04.tls",
+          "sha256": "50466262bff947d9a4ea40628ffc2a634fccc5fc827eabbe7d8787f487099590",
+          "nonce": "18e303d7a17395c4-04",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d7a17395c4-04",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "50466262bff947d9a4ea40628ffc2a634fccc5fc827eabbe7d8787f487099590"
+          },
+          "originalSampleSha256": "36c6d5ac7a5de1da2a89b92a428cc7fb69c71bbf7d9d828d01a2306b0bce7d10"
+        },
+        {
+          "file": "chrome/sample-05.tls",
+          "sha256": "7a0814b2f3406e887eca20a72457f0f0c69af10fe5de1f967cb6a12372962772",
+          "nonce": "18e303d81a22ade8-05",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d81a22ade8-05",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "7a0814b2f3406e887eca20a72457f0f0c69af10fe5de1f967cb6a12372962772"
+          },
+          "originalSampleSha256": "e6eb25424fec4cd7a1e427f6b7bc2d79c3a1857dcb4acbab624a33b07bd77399"
+        },
+        {
+          "file": "chrome/sample-06.tls",
+          "sha256": "196780f666b88f3cffaa4b69deef82a712298859c95e6496c76251f6aa6cda76",
+          "nonce": "18e303d89e9ed18c-06",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d89e9ed18c-06",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "196780f666b88f3cffaa4b69deef82a712298859c95e6496c76251f6aa6cda76"
+          },
+          "originalSampleSha256": "14b6fcb0f741ea08ce275a5b12047f93fe1047efbdeefb5bd77601aa9e3a41f0"
+        },
+        {
+          "file": "chrome/sample-07.tls",
+          "sha256": "ea68d7baf73266394d458a68d19ca25fd5366cf6a1b5d4f37b274dc950ee467c",
+          "nonce": "18e303d9179cf85c-07",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d9179cf85c-07",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "ea68d7baf73266394d458a68d19ca25fd5366cf6a1b5d4f37b274dc950ee467c"
+          },
+          "originalSampleSha256": "3b3b6be59e1990367d41e403327cbf8e836dd2e472d1520278d027d7d250b693"
+        },
+        {
+          "file": "chrome/sample-08.tls",
+          "sha256": "0fa55348556aa0ed1ea8e30099e532de316f9ebe5a495b1096ae739dd0ea6f24",
+          "nonce": "18e303d98a29f280-08",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303d98a29f280-08",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "0fa55348556aa0ed1ea8e30099e532de316f9ebe5a495b1096ae739dd0ea6f24"
+          },
+          "originalSampleSha256": "58355a8d6c0ebbf3ef2b88e6e5ef98a1ed6106b257b3d4cd18a07dc649df9ca3"
+        },
+        {
+          "file": "chrome/sample-09.tls",
+          "sha256": "2f9e6ce84aebd3d2d31bc60f6ece7de0c71b43c3739541ec84742b8cb035acb7",
+          "nonce": "18e303da060e48ec-09",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303da060e48ec-09",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "2f9e6ce84aebd3d2d31bc60f6ece7de0c71b43c3739541ec84742b8cb035acb7"
+          },
+          "originalSampleSha256": "3aa8d2df8edf40754d224287e72a63ff8169b9202fb9841bf1e7f4dc3490a3da"
+        },
+        {
+          "file": "chrome/sample-10.tls",
+          "sha256": "32fe9bd6630bc6f2a3ca86a434127683aa15bc41c7e14054227455f0245d0f7b",
+          "nonce": "18e303da8238eb0c-0a",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303da8238eb0c-0a",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "32fe9bd6630bc6f2a3ca86a434127683aa15bc41c7e14054227455f0245d0f7b"
+          },
+          "originalSampleSha256": "8708c2c737fc70e20d1f9630457e305d033745fb57c1a7f04c6a6cb29dd4b2a9"
+        },
+        {
+          "file": "chrome/sample-11.tls",
+          "sha256": "b33b8e20cf2853b4fc757be6ec69a90f9eefc99abeaa7ed7698006d0f8b3ca83",
+          "nonce": "18e303daf87036f4-0b",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303daf87036f4-0b",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "b33b8e20cf2853b4fc757be6ec69a90f9eefc99abeaa7ed7698006d0f8b3ca83"
+          },
+          "originalSampleSha256": "cdd1586223a953c53642856c7f4dfbce151e52c4a2ec88b8dc83a7019b4f96a3"
+        },
+        {
+          "file": "chrome/sample-12.tls",
+          "sha256": "478d53e25a12a64cc1c6295b42eccc92f3a4702004fef7a2d0505ddf65611ddd",
+          "nonce": "18e303db6fec5c30-0c",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303db6fec5c30-0c",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "478d53e25a12a64cc1c6295b42eccc92f3a4702004fef7a2d0505ddf65611ddd"
+          },
+          "originalSampleSha256": "15de5797be54e2e80e10cd8e46a615f6a8bbfd30e546494a77aeb0956afde3d2"
+        },
+        {
+          "file": "chrome/sample-13.tls",
+          "sha256": "247ac9280ec53dd29c5a0607d00d508417ca87f67adbfb0a8e1a6a2ad4a4368e",
+          "nonce": "18e303dbe6cf45b0-0d",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303dbe6cf45b0-0d",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "247ac9280ec53dd29c5a0607d00d508417ca87f67adbfb0a8e1a6a2ad4a4368e"
+          },
+          "originalSampleSha256": "51551d76eed97b248c43c3eb31e0d4c852d8b4d8d8ee592dd8eecf658a57c821"
+        },
+        {
+          "file": "chrome/sample-14.tls",
+          "sha256": "1e735cbe44cf5db526828dc870b920b49a1c1e2bc65fe22a6a973ba1c81ea0be",
+          "nonce": "18e303dc74bd9d7c-0e",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303dc74bd9d7c-0e",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "1e735cbe44cf5db526828dc870b920b49a1c1e2bc65fe22a6a973ba1c81ea0be"
+          },
+          "originalSampleSha256": "6884178ba5f5b6450af04518685bcd724a75627159eacc160b41303b72d0d649"
+        },
+        {
+          "file": "chrome/sample-15.tls",
+          "sha256": "d6d4b8b8a503106a37a77aef77e732a219845a37162e17bba7026f40f2300472",
+          "nonce": "18e303dce8d452f0-0f",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303dce8d452f0-0f",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "d6d4b8b8a503106a37a77aef77e732a219845a37162e17bba7026f40f2300472"
+          },
+          "originalSampleSha256": "14b77c35d46ff2bd5417b435f65d98b8c9ed309a76e58ec0b02c767e7ad72284"
+        },
+        {
+          "file": "chrome/sample-16.tls",
+          "sha256": "0d16ad5a827a91c14fcd3159bc7a34f82b6c45010faef3e7109d9af7843d47f0",
+          "nonce": "18e303dd54948924-10",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303dd54948924-10",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "0d16ad5a827a91c14fcd3159bc7a34f82b6c45010faef3e7109d9af7843d47f0"
+          },
+          "originalSampleSha256": "bb820b4f06247a0129d5661885a1062d59b9eb06a0cec4f9b2a7fff6a02b8c1b"
+        },
+        {
+          "file": "chrome/sample-17.tls",
+          "sha256": "87032eba685e2c833c3deb97052db6f4ca4e80bee1bbc6caeefcbe453f3f5dc6",
+          "nonce": "18e303ddbc6a9da4-11",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303ddbc6a9da4-11",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "87032eba685e2c833c3deb97052db6f4ca4e80bee1bbc6caeefcbe453f3f5dc6"
+          },
+          "originalSampleSha256": "122fb0ec4d1599d64a2be44d5cbebf938c195485ffb78224fa0e422822aa5218"
+        },
+        {
+          "file": "chrome/sample-18.tls",
+          "sha256": "b15f28c905b5fb0df205ed64469779dfe40b229fd2dac206b3c6ea9ed8c320c8",
+          "nonce": "18e303de22136a78-12",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303de22136a78-12",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "b15f28c905b5fb0df205ed64469779dfe40b229fd2dac206b3c6ea9ed8c320c8"
+          },
+          "originalSampleSha256": "7c1b8b1e8e68d6b6898f79114e228e391c66ce3cc8522bfd2e95bd78c8493e7d"
+        },
+        {
+          "file": "chrome/sample-19.tls",
+          "sha256": "c34c44801cf49a54466547d01f11a9b38d78be3e79057d088e425eb1374be1d7",
+          "nonce": "18e303de8b816988-13",
+          "browserVersion": "156.0.8078.74",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303de8b816988-13",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "c34c44801cf49a54466547d01f11a9b38d78be3e79057d088e425eb1374be1d7"
+          },
+          "originalSampleSha256": "c91cb2ba0f6b26ccf606c6b2034f3bf387310a9d838407cb1d60782a3eadde63"
+        }
+      ]
+    },
+    "firefox": {
+      "identity": {
+        "purpose": "discovery-only; not an approved release fixture",
+        "source": "bd8456dfec4a3da0017e34dcb9806068d96371c9",
+        "browser": "firefox",
+        "distribution": "Mozilla Firefox official Stable en-US win64",
+        "expectedVersion": "159.0",
+        "archiveSha256": "8776887B79925ABBDD407FCDFE257D8382B54E24BE52A6466426B95A804D6790",
+        "driverArchiveSha256": "DFED9315ABE8D2FBC1B6161A2EE8002452E79CF05EE92FDC653A4E26BC35EDD8",
+        "browserVersion": "159.0",
+        "browserSha256": "D8B5ED82FCD9C0F159DC86DC1C4526CEAE981C4D9651F21908B6DE90D0A56D85",
+        "publisher": "Valid",
+        "driverVersion": "geckodriver 0.37.1 (300705c65d1b 2026-07-17 09:25 +0000)\r\n\r\nThe source code of this program is available from\r\ntesting/geckodriver in https://hg.mozilla.org/mozilla-central.\r\n\r\nThis program is subject to the terms of the Mozilla Public License 2.0.\r\nYou can obtain a copy of the license at https://mozilla.org/MPL/2.0/.",
+        "driverSha256": "E95B4EAC7960FFCD5ACBFD92BB7D49D48F99C1D01A20DDD297FEF8C80821020D",
+        "toolSha256": "0B034ED8B731DBC4D34C5D2987C651DDAE97DD5FD48263B37CDC044DC14D17A4",
+        "os": {
+          "Caption": "Microsoft Windows Server 2025 Datacenter",
+          "Version": "10.0.26100",
+          "BuildNumber": "26100"
+        },
+        "imageOS": "win25-vs2026",
+        "imageVersion": "20261021.278.1",
+        "mode": "headed WebDriver; fresh profile for every sample",
+        "transport": "TCP TLS 1.3; HTTP/1.1 origin; no Alt-Svc; hosts DNS without ECH",
+        "samplesRequired": 20
+      },
+      "samples": [
+        {
+          "file": "firefox/sample-00.tls",
+          "sha256": "aa41402532bb1c812f62a174c21f0e31dba3ddfdd3a91388a3facb37e81ca8c7",
+          "nonce": "18e30395db6c0e10-00",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e30395db6c0e10-00",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "aa41402532bb1c812f62a174c21f0e31dba3ddfdd3a91388a3facb37e81ca8c7"
+          },
+          "originalSampleSha256": "bdb4d7b5948311edd741424db463313d45f8a8c32dccaf7edf1645e19746154a"
+        },
+        {
+          "file": "firefox/sample-01.tls",
+          "sha256": "fd5272cdae059356eaa85daac6d4c970801da4c47c7170e492ca358ef9ddac03",
+          "nonce": "18e303977ccbccb8-01",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303977ccbccb8-01",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "fd5272cdae059356eaa85daac6d4c970801da4c47c7170e492ca358ef9ddac03"
+          },
+          "originalSampleSha256": "3562cebb5416c16f7b6a8c90679f9f0b5701843fa8a23154fb1d229b765b169e"
+        },
+        {
+          "file": "firefox/sample-02.tls",
+          "sha256": "160b0d843d74306fc676ee3e69e317c3879d46c84c5a2bc123f699d84b3eed5e",
+          "nonce": "18e30398a2e66fd8-02",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e30398a2e66fd8-02",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "160b0d843d74306fc676ee3e69e317c3879d46c84c5a2bc123f699d84b3eed5e"
+          },
+          "originalSampleSha256": "56bb7ca8b83e0f769e9478bae36739b0740fc9cb40f27fd14f218d4b181f682a"
+        },
+        {
+          "file": "firefox/sample-03.tls",
+          "sha256": "fe8f734ce7760f041abfcbec04d00bfc89fb2cb956c88daaab1943a902d2b51a",
+          "nonce": "18e30399f90425d0-03",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e30399f90425d0-03",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "fe8f734ce7760f041abfcbec04d00bfc89fb2cb956c88daaab1943a902d2b51a"
+          },
+          "originalSampleSha256": "65c61d04b24689207ce45f8a83f184ba8c34e34c482948ffa71083d1fe5dccff"
+        },
+        {
+          "file": "firefox/sample-04.tls",
+          "sha256": "ca08293af4d1429781cc2048afd3a874490e825a532d94c203b270496939a857",
+          "nonce": "18e3039b130a8248-04",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e3039b130a8248-04",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "ca08293af4d1429781cc2048afd3a874490e825a532d94c203b270496939a857"
+          },
+          "originalSampleSha256": "169e7c1c685a83dedd39d655f9c082c87057e46abe9c17109cba54fdabd57b74"
+        },
+        {
+          "file": "firefox/sample-05.tls",
+          "sha256": "ebf488d0d6d5b65961f69ef5a3f5b8ad776c7b93f3b8de2b635336eef5e7028d",
+          "nonce": "18e3039c541aa884-05",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e3039c541aa884-05",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "ebf488d0d6d5b65961f69ef5a3f5b8ad776c7b93f3b8de2b635336eef5e7028d"
+          },
+          "originalSampleSha256": "657e3301c3e290732eca1f7bf5f1ff9b5c88196f23870f7f37ad0c9383684d17"
+        },
+        {
+          "file": "firefox/sample-06.tls",
+          "sha256": "e61262a8c5eb4197f1de6a7e3febe9ac3ac02fbd63a11c8decb1d5ffe0a79c1d",
+          "nonce": "18e3039d88304d08-06",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e3039d88304d08-06",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "e61262a8c5eb4197f1de6a7e3febe9ac3ac02fbd63a11c8decb1d5ffe0a79c1d"
+          },
+          "originalSampleSha256": "54316d4dc6cbacbb108a4db4284964cff1c2cc4c51b2f3bff1226211cca64a34"
+        },
+        {
+          "file": "firefox/sample-07.tls",
+          "sha256": "c14ed611f44824bc377d907e2be26a27d4f442f8c8ff6f1799cb817701f250f7",
+          "nonce": "18e3039ed8f6c9a0-07",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e3039ed8f6c9a0-07",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "c14ed611f44824bc377d907e2be26a27d4f442f8c8ff6f1799cb817701f250f7"
+          },
+          "originalSampleSha256": "fb86b46c71e8cca54017ace57763953c568e563b39af158eb69494482467fc77"
+        },
+        {
+          "file": "firefox/sample-08.tls",
+          "sha256": "309da5d1931c8606b7afa1668d9bb3dd3cbefabed89a48275f32ed5521bdf1c7",
+          "nonce": "18e303a01b5c50d4-08",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a01b5c50d4-08",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "309da5d1931c8606b7afa1668d9bb3dd3cbefabed89a48275f32ed5521bdf1c7"
+          },
+          "originalSampleSha256": "be80bf671690ba9aaee566aa767f2d4c8cd898664b1c0b9c92402f7516aaebc9"
+        },
+        {
+          "file": "firefox/sample-09.tls",
+          "sha256": "d96e4f6c2d4a14fe6e22db3fc8b299c0b770607cca16f7ca4034ac4389d0a734",
+          "nonce": "18e303a1730546c8-09",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a1730546c8-09",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "d96e4f6c2d4a14fe6e22db3fc8b299c0b770607cca16f7ca4034ac4389d0a734"
+          },
+          "originalSampleSha256": "736c4a3c5ac0eff7d2c59fdaceef26e89b1f508b5c3da8ad3e44fdf0e5f22165"
+        },
+        {
+          "file": "firefox/sample-10.tls",
+          "sha256": "35fc4364fbcca76aaf98711c4075e4322b4191e1a038ef51159e643ad0a6330b",
+          "nonce": "18e303a299c9b068-0a",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a299c9b068-0a",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "35fc4364fbcca76aaf98711c4075e4322b4191e1a038ef51159e643ad0a6330b"
+          },
+          "originalSampleSha256": "3c9fcca5c875dbd9b1d2494ad6c3930107b727ebd87a314b61c445c1c230237a"
+        },
+        {
+          "file": "firefox/sample-11.tls",
+          "sha256": "20a1589b232d80a7dd8fbe1014ca79e01d07636b870d6dd4829ab59e984004de",
+          "nonce": "18e303a3bf246208-0b",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a3bf246208-0b",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "20a1589b232d80a7dd8fbe1014ca79e01d07636b870d6dd4829ab59e984004de"
+          },
+          "originalSampleSha256": "77d9fdee76fd96c114ff087e76bcfb33689fac89a0620d3503a597a4399ff7e6"
+        },
+        {
+          "file": "firefox/sample-12.tls",
+          "sha256": "659271182798ff65952dc950911a1d5e259dc54c25d95918780b93517eb27f23",
+          "nonce": "18e303a507346da8-0c",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a507346da8-0c",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "659271182798ff65952dc950911a1d5e259dc54c25d95918780b93517eb27f23"
+          },
+          "originalSampleSha256": "380359e9202cb6c926179f546253a8c01dfa6a56289f391580adaffd5c78b0e2"
+        },
+        {
+          "file": "firefox/sample-13.tls",
+          "sha256": "5a14b1c8d9d0fd7377abd954035afb921c9ef4d35bfa31cdb5ca2aa9681567bf",
+          "nonce": "18e303a63b0a649c-0d",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a63b0a649c-0d",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "5a14b1c8d9d0fd7377abd954035afb921c9ef4d35bfa31cdb5ca2aa9681567bf"
+          },
+          "originalSampleSha256": "3f74d47c227b0c6913a1ad10baf19809cfef651587b39c0f7e0469a43d635a43"
+        },
+        {
+          "file": "firefox/sample-14.tls",
+          "sha256": "9d685762c57d0843f631cf52e92b327b236fbbfac30e557864c762de8ca67b7e",
+          "nonce": "18e303a77642652c-0e",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a77642652c-0e",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "9d685762c57d0843f631cf52e92b327b236fbbfac30e557864c762de8ca67b7e"
+          },
+          "originalSampleSha256": "ed8e4f286345b94391e353e549f9419c895e60ca4334ce9e5a4bf049e142c86f"
+        },
+        {
+          "file": "firefox/sample-15.tls",
+          "sha256": "b12c1e05f633ed019ada83905fef52bb01f651c9695229de7bf9fefed1406d6e",
+          "nonce": "18e303a94c6d4670-0f",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303a94c6d4670-0f",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "b12c1e05f633ed019ada83905fef52bb01f651c9695229de7bf9fefed1406d6e"
+          },
+          "originalSampleSha256": "68172fd59f1c3faf7875babb25e7901fc3d7bc50aa9901a4e76c5bbab80f6546"
+        },
+        {
+          "file": "firefox/sample-16.tls",
+          "sha256": "3bdb273923280b15c2cc31c1645184a3ac8b41244be7f9a7c64857202cb544f5",
+          "nonce": "18e303aa76bcb8d8-10",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303aa76bcb8d8-10",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "3bdb273923280b15c2cc31c1645184a3ac8b41244be7f9a7c64857202cb544f5"
+          },
+          "originalSampleSha256": "de16d35b8e9dcbe2d2f5974c5463749b8e8cdc8037a9deb4bf17d63c8c0caecf"
+        },
+        {
+          "file": "firefox/sample-17.tls",
+          "sha256": "3dff89f6708614ff8d9fdda2778b16cc8d6f7e7302216432f2c1f20d43bf935b",
+          "nonce": "18e303ab87a0a258-11",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303ab87a0a258-11",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "3dff89f6708614ff8d9fdda2778b16cc8d6f7e7302216432f2c1f20d43bf935b"
+          },
+          "originalSampleSha256": "fdce6c1f06c992b73001005efa32705a5234b305a4d3c0f929feba3ecdcb273b"
+        },
+        {
+          "file": "firefox/sample-18.tls",
+          "sha256": "1f069f2e1465585403a8f589a45b259c73d840bbef096aab0488b7422c94a0f4",
+          "nonce": "18e303ae8b463d84-12",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303ae8b463d84-12",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "1f069f2e1465585403a8f589a45b259c73d840bbef096aab0488b7422c94a0f4"
+          },
+          "originalSampleSha256": "e3a8324de3a7bf01fcab24d7c482425b2317a4bf472ca5d79b51e0da23ac5ee2"
+        },
+        {
+          "file": "firefox/sample-19.tls",
+          "sha256": "82f6d2a5fa78952e2c321195ebbcc50be0e78efd4b3d4928f9c22415e00e77c3",
+          "nonce": "18e303afce76f908-13",
+          "browserVersion": "159.0",
+          "httpsVerified": true,
+          "receipt": {
+            "alpn": [
+              104,
+              116,
+              116,
+              112,
+              47,
+              49,
+              46,
+              49
+            ],
+            "cipher": "Some(TLS13_AES_128_GCM_SHA256)",
+            "responseWritten": true,
+            "sample": "18e303afce76f908-13",
+            "tlsVersion": "Some(TLSv1_3)",
+            "wireSha256": "82f6d2a5fa78952e2c321195ebbcc50be0e78efd4b3d4928f9c22415e00e77c3"
+          },
+          "originalSampleSha256": "c717b0c787a3b3548f4b7e3102e4ac743629e92b3315e546c2b45a3a40777b93"
+        }
+      ]
+    }
+  }
+}

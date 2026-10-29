@@ -1,0 +1,195 @@
+//! Independent, bounded comparison policy for the pinned native browser corpus.
+use crate::{ClientHello, DecodeError, Result};
+
+fn grease(value: u16) -> bool {
+    value & 0x0f0f == 0x0a0a && value >> 8 == value & 255
+}
+fn normalize_word(value: &mut u16) {
+    if grease(*value) {
+        *value = 0x0a0a;
+    }
+}
+
+/// Compare browser and candidate records without discarding capability or framing
+/// differences. Chrome's middle extension permutation and ECH length choices are
+/// validated separately; Firefox extension order remains exact.
+pub fn compare(reference: &[u8], candidate: &[u8], chrome: bool) -> Result<()> {
+    let a = normalized(crate::decode(reference)?, chrome)?;
+    let b = normalized(crate::decode(candidate)?, chrome)?;
+    if a != b {
+        return Err(DecodeError("ClientHello structural mismatch"));
+    }
+    Ok(())
+}
+
+fn normalized(mut h: ClientHello, chrome: bool) -> Result<ClientHello> {
+    if h.records.len() != 1
+        || h.records[0].version != 0x0301
+        || h.legacy_version != 0x0303
+        || h.random.len() != 32
+        || h.session_id.len() != 32
+        || h.compression != [0]
+    {
+        return Err(DecodeError("browser record/version/session framing"));
+    }
+    h.random.fill(0);
+    h.session_id.fill(0);
+    let shares = h
+        .key_shares
+        .as_mut()
+        .ok_or(DecodeError("missing key shares"))?;
+    let expected: &[(u16, usize)] = if chrome {
+        &[(0x0a0a, 1), (4588, 1216), (29, 32)]
+    } else {
+        &[(4588, 1216), (29, 32), (23, 65)]
+    };
+    if shares.len() != expected.len() {
+        return Err(DecodeError("key share count"));
+    }
+    for (share, (group, length)) in shares.iter().zip(expected) {
+        let actual = if grease(share.group) {
+            0x0a0a
+        } else {
+            share.group
+        };
+        if actual != *group || share.exchange.len() != *length {
+            return Err(DecodeError("key share group/order/length"));
+        }
+    }
+    let hybrid = &shares[usize::from(chrome)].exchange;
+    let standalone = &shares[usize::from(chrome) + 1].exchange;
+    if (hybrid[1184..] == *standalone) == chrome {
+        return Err(DecodeError("browser hybrid/standalone X25519 relationship"));
+    }
+    if !chrome && shares[2].exchange[0] != 4 {
+        return Err(DecodeError("P-256 SEC1 encoding"));
+    }
+    if chrome {
+        let groups = h.groups.as_ref().ok_or(DecodeError("missing groups"))?;
+        if groups.first() != Some(&shares[0].group) || shares[0].exchange != [0] {
+            return Err(DecodeError("GREASE key share relationship"));
+        }
+        if h.extensions.len() != 19
+            || !grease(h.extensions[0].kind)
+            || !h.extensions[0].body.is_empty()
+            || !grease(h.extensions[18].kind)
+            || h.extensions[18].body != [0]
+            || h.extensions[0].kind == h.extensions[18].kind
+        {
+            return Err(DecodeError("GREASE extension placement/content"));
+        }
+        h.extensions[0].kind = 0x0a0a;
+        h.extensions[18].kind = 0x1a1a;
+    } else if h.extensions.len() != 17 {
+        return Err(DecodeError("Firefox extension count"));
+    }
+    for s in shares.iter_mut() {
+        normalize_word(&mut s.group);
+        s.exchange.fill(0);
+        if s.group == 23 {
+            s.exchange[0] = 4;
+        }
+    }
+    for values in [
+        &mut h.cipher_suites,
+        h.groups.as_mut().ok_or(DecodeError("groups"))?,
+        h.signature_algorithms
+            .as_mut()
+            .ok_or(DecodeError("signatures"))?,
+        h.supported_versions
+            .as_mut()
+            .ok_or(DecodeError("versions"))?,
+    ] {
+        values.iter_mut().for_each(normalize_word);
+    }
+    for e in &mut h.extensions {
+        match e.kind {
+            10 | 13 | 43 => {
+                let offset = if e.kind == 43 { 1 } else { 2 };
+                for pair in e.body[offset..].as_chunks_mut::<2>().0 {
+                    let mut value = u16::from_be_bytes([pair[0], pair[1]]);
+                    normalize_word(&mut value);
+                    pair.copy_from_slice(&value.to_be_bytes());
+                }
+            }
+            51 => {
+                let mut body = vec![0, 0];
+                for s in shares.iter() {
+                    body.extend_from_slice(&s.group.to_be_bytes());
+                    body.extend_from_slice(&(s.exchange.len() as u16).to_be_bytes());
+                    body.extend_from_slice(&s.exchange);
+                }
+                let length = (body.len() - 2) as u16;
+                body[..2].copy_from_slice(&length.to_be_bytes());
+                e.body = body;
+            }
+            65037 => {
+                let b = &e.body;
+                if b.len() < 42
+                    || b[..3] != [0, 0, 1]
+                    || b[3] != 0
+                    || !(b[4] == 1 || (!chrome && b[4] == 3))
+                    || b[6..8] != [0, 32]
+                {
+                    return Err(DecodeError("ECH GREASE header"));
+                }
+                let payload = usize::from(u16::from_be_bytes([b[40], b[41]]));
+                if b.len() != payload + 42
+                    || (chrome && (!matches!(payload, 144 | 176 | 208 | 240) || b[39] & 128 != 0))
+                {
+                    return Err(DecodeError("ECH GREASE payload/enc"));
+                }
+                if !chrome && payload != 240 {
+                    return Err(DecodeError("Firefox fixture ECH payload length"));
+                }
+                // Only Chrome has a randomized length. Preserve Firefox's exact
+                // length, and all other record bytes/length contributions.
+                if chrome {
+                    h.records[0].length = h.records[0]
+                        .length
+                        .checked_sub(payload)
+                        .ok_or(DecodeError("record length"))?;
+                    e.body.truncate(42);
+                }
+                e.body.fill(0);
+            }
+            _ => {}
+        }
+    }
+    if chrome {
+        h.extensions[1..18].sort_by_key(|e| e.kind);
+    }
+    Ok(h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    #[test]
+    fn frozen_native_samples_have_verified_hashes_and_consistent_structure() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../benchmarks/evidence/browser-clienthello/windows-20261029");
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
+        for name in ["chrome", "firefox"] {
+            let samples = manifest["profiles"][name]["samples"].as_array().unwrap();
+            assert_eq!(samples.len(), 20);
+            let reference = std::fs::read(root.join(samples[0]["file"].as_str().unwrap())).unwrap();
+            for sample in samples {
+                let wire = std::fs::read(root.join(sample["file"].as_str().unwrap())).unwrap();
+                assert_eq!(
+                    Sha256::digest(&wire)
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>(),
+                    sample["sha256"].as_str().unwrap()
+                );
+                compare(&reference, &wire, name == "chrome").unwrap();
+                let mut bad = wire.clone();
+                bad[2] ^= 1;
+                assert!(compare(&reference, &bad, name == "chrome").is_err());
+            }
+        }
+    }
+}

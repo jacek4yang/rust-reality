@@ -40,6 +40,7 @@ pub struct Line {
     public_key: [u8; 32],
     short_id: [u8; 8],
     server_name: String,
+    fingerprint: crate::protocol::reality::BrowserFingerprint,
     allow_udp_443: bool,
 }
 
@@ -102,6 +103,7 @@ impl Line {
             public_key,
             short_id,
             server_name: config.server_name.clone(),
+            fingerprint: config.fingerprint,
             allow_udp_443: config.allow_udp_443,
         })
     }
@@ -124,7 +126,7 @@ impl Line {
             })?
             .map_err(LineError::Dial)?;
 
-        let keys = ClientKeyAgreement::generate().map_err(map_hello)?;
+        let keys = ClientKeyAgreement::for_profile(self.fingerprint).map_err(map_hello)?;
         let now = unix_now();
         let auth = AuthPlaintext {
             version: CLIENT_VERSION,
@@ -143,7 +145,7 @@ impl Line {
             .await
             .map_err(LineError::Dial)?;
 
-        let session = complete(&mut stream, &hello, &keys, &auth_key, ALPN)
+        let session = complete(&mut stream, &hello, keys, &auth_key, ALPN)
             .await
             .map_err(LineError::Handshake)?;
 

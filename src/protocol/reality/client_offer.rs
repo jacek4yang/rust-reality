@@ -13,10 +13,10 @@ use ml_kem::{
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use super::{
-    AuthKey, AuthPlaintext, MAX_CLIENT_HELLO_BYTES, RealityAuthError, SESSION_ID_LEN,
-    SESSION_ID_OFFSET, X25519_GROUP, X25519_MLKEM768_GROUP,
+    AuthKey, AuthPlaintext, BrowserFingerprint, MAX_CLIENT_HELLO_BYTES, P256_GROUP,
+    RealityAuthError, SESSION_ID_LEN, SESSION_ID_OFFSET, X25519_GROUP, X25519_MLKEM768_GROUP,
 };
-use crate::crypto::{SharedSecret, StaticX25519Key, entropy};
+use crate::crypto::{EphemeralP256Key, SharedSecret, StaticX25519Key, entropy};
 
 const X25519_PUBLIC_LEN: usize = 32;
 const MLKEM768_CIPHERTEXT_LEN: usize = 1_088;
@@ -26,15 +26,6 @@ const LEGACY_VERSION: [u8; 2] = [3, 3];
 const HANDSHAKE_CLIENT_HELLO: u8 = 1;
 const CONTENT_TYPE_HANDSHAKE: u8 = 22;
 const RECORD_HEADER_LEN: usize = 5;
-const SUPPORTED_VERSIONS_BODY: [u8; 3] = [2, 3, 4];
-
-const CIPHER_SUITES: [u16; 6] = [0x1301, 0x1302, 0x1303, 0xc02b, 0xc02f, 0xc030];
-const KEY_SHARE_GROUPS: [u16; 2] = [X25519_MLKEM768_GROUP, X25519_GROUP];
-const SUPPORTED_GROUPS: [u16; 5] = [X25519_MLKEM768_GROUP, X25519_GROUP, 0x0017, 0x0018, 0x0019];
-const SIGNATURE_ALGORITHMS: [u16; 9] = [
-    0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0601, 0x0806, 0x0807,
-];
-
 /// A ClientHello could not be constructed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HelloError {
@@ -85,6 +76,8 @@ impl From<RealityAuthError> for HelloError {
 pub enum TlsSharedSecret {
     /// Plain X25519 (32 bytes).
     X25519([u8; 32]),
+    /// P-256 ECDH (32 bytes).
+    P256([u8; 32]),
     /// X25519MLKEM768 (ML-KEM shared || X25519 shared).
     Hybrid([u8; 64]),
 }
@@ -94,7 +87,7 @@ impl TlsSharedSecret {
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         match self {
-            Self::X25519(bytes) => bytes,
+            Self::X25519(bytes) | Self::P256(bytes) => bytes,
             Self::Hybrid(bytes) => bytes,
         }
     }
@@ -113,6 +106,8 @@ impl fmt::Debug for TlsSharedSecret {
 /// X25519. It is stored as [`StaticX25519Key`] so both agreements can use `&self`
 /// without violating the single-consume ephemeral API.
 pub struct ClientKeyAgreement {
+    profile: BrowserFingerprint,
+    p256: Option<EphemeralP256Key>,
     x25519: StaticX25519Key,
     x25519_public: [u8; X25519_PUBLIC_LEN],
     // Hybrid private state is read by `tls_shared_secret` during the TLS handshake.
@@ -129,14 +124,33 @@ impl ClientKeyAgreement {
     ///
     /// Returns [`HelloError::Entropy`] when entropy is unavailable.
     pub fn generate() -> Result<Self, HelloError> {
-        let x25519_secret = entropy::bytes::<32>().map_err(|_| HelloError::Entropy)?;
-        let hybrid_secret = entropy::bytes::<32>().map_err(|_| HelloError::Entropy)?;
+        Self::for_profile(BrowserFingerprint::default())
+    }
+
+    /// Generate exactly the private agreements needed by the selected profile.
+    pub fn for_profile(profile: BrowserFingerprint) -> Result<Self, HelloError> {
+        let x25519_secret =
+            Zeroizing::new(entropy::bytes::<32>().map_err(|_| HelloError::Entropy)?);
+        let hybrid_secret = Zeroizing::new(match profile {
+            BrowserFingerprint::Chrome => {
+                entropy::bytes::<32>().map_err(|_| HelloError::Entropy)?
+            }
+            BrowserFingerprint::Firefox => *x25519_secret,
+        });
+        let p256 = match profile {
+            BrowserFingerprint::Chrome => None,
+            BrowserFingerprint::Firefox => {
+                Some(EphemeralP256Key::generate().map_err(|_| HelloError::Entropy)?)
+            }
+        };
         let x25519 = StaticX25519Key::new(&x25519_secret);
         let hybrid_x25519 = StaticX25519Key::new(&hybrid_secret);
         let x25519_public = x25519.public_key();
         let hybrid_x25519_public = hybrid_x25519.public_key();
         let (hybrid_mlkem, hybrid_encap) = generate_mlkem()?;
         Ok(Self {
+            profile,
+            p256,
             x25519,
             x25519_public,
             hybrid_x25519,
@@ -161,11 +175,12 @@ impl ClientKeyAgreement {
 
     /// Agrees the TLS 1.3 ECDHE secret for the group the server selected.
     pub(crate) fn tls_shared_secret(
-        &self,
+        self,
         group: u16,
         server_share: &[u8],
     ) -> Option<TlsSharedSecret> {
         match group {
+            P256_GROUP => Some(TlsSharedSecret::P256(*self.p256?.agree(server_share)?)),
             X25519_GROUP => {
                 let peer = <[u8; X25519_PUBLIC_LEN]>::try_from(server_share).ok()?;
                 let secret = self.x25519.agree(&peer)?;
@@ -192,23 +207,28 @@ impl ClientKeyAgreement {
         &self.x25519_public
     }
 
-    fn key_shares(&self) -> Result<(Vec<u8>, [u16; KEY_SHARE_GROUPS.len()]), HelloError> {
-        let mut output = Vec::with_capacity(
-            8 + self.hybrid_encap.len()
-                + self.hybrid_x25519_public.len()
-                + self.x25519_public.len(),
-        );
-        output.extend_from_slice(&KEY_SHARE_GROUPS[0].to_be_bytes());
+    fn key_shares(&self, grease: u16) -> Result<Vec<u8>, HelloError> {
+        let mut output = Vec::with_capacity(1_332);
+        if self.profile == BrowserFingerprint::Chrome {
+            push_u16(&mut output, usize::from(grease))?;
+            output.extend_from_slice(&[0, 1, 0]);
+        }
+        push_u16(&mut output, usize::from(X25519_MLKEM768_GROUP))?;
         push_u16(
             &mut output,
             self.hybrid_encap.len() + self.hybrid_x25519_public.len(),
         )?;
         output.extend_from_slice(&self.hybrid_encap);
         output.extend_from_slice(&self.hybrid_x25519_public);
-        output.extend_from_slice(&KEY_SHARE_GROUPS[1].to_be_bytes());
+        push_u16(&mut output, usize::from(X25519_GROUP))?;
         push_u16(&mut output, self.x25519_public.len())?;
         output.extend_from_slice(&self.x25519_public);
-        Ok((output, KEY_SHARE_GROUPS))
+        if let Some(key) = &self.p256 {
+            push_u16(&mut output, usize::from(P256_GROUP))?;
+            push_u16(&mut output, 65)?;
+            output.extend_from_slice(&key.public_key());
+        }
+        Ok(output)
     }
 }
 
@@ -224,7 +244,7 @@ pub struct HelloRecord {
     record_length: u16,
     random: [u8; 32],
     session_id: [u8; SESSION_ID_LEN],
-    key_share_groups: [u16; KEY_SHARE_GROUPS.len()],
+    profile: BrowserFingerprint,
 }
 
 impl HelloRecord {
@@ -266,13 +286,14 @@ impl HelloRecord {
     /// Whether this hello offered the named cipher suite.
     #[must_use]
     pub fn cipher_offered(&self, suite: u16) -> bool {
-        CIPHER_SUITES.contains(&suite)
+        self.profile.ciphers().contains(&suite)
     }
 
     /// Whether this hello offered the named key-share group.
     #[must_use]
     pub fn key_share_group_offered(&self, group: u16) -> bool {
-        self.key_share_groups.contains(&group)
+        matches!(group, X25519_GROUP | X25519_MLKEM768_GROUP)
+            || (group == P256_GROUP && self.profile == BrowserFingerprint::Firefox)
     }
 }
 
@@ -281,7 +302,7 @@ impl fmt::Debug for HelloRecord {
         formatter
             .debug_struct("HelloRecord")
             .field("message_len", &self.message.len())
-            .field("key_share_groups", &self.key_share_groups)
+            .field("profile", &self.profile)
             .finish_non_exhaustive()
     }
 }
@@ -310,7 +331,7 @@ pub fn build_client_hello(
 
     let random = entropy::bytes::<32>().map_err(|_| HelloError::Entropy)?;
     let auth_key = keys.auth_key(server_public_key, &random)?;
-    let (mut message, key_share_groups) = assemble(server_name, alpn, keys, &random)?;
+    let mut message = assemble(server_name, alpn, keys, &random)?;
     let session_id = auth_key.seal_session_id(&random, &message, auth)?;
     message
         .get_mut(SESSION_ID_OFFSET..SESSION_ID_OFFSET + SESSION_ID_LEN)
@@ -323,7 +344,7 @@ pub fn build_client_hello(
             record_length,
             random,
             session_id,
-            key_share_groups,
+            profile: keys.profile,
         },
         auth_key,
     ))
@@ -334,71 +355,117 @@ fn assemble(
     alpn: &[&[u8]],
     keys: &ClientKeyAgreement,
     random: &[u8; 32],
-) -> Result<(Vec<u8>, [u16; KEY_SHARE_GROUPS.len()]), HelloError> {
-    let mut extensions = Vec::new();
-    let host = server_name.as_bytes();
-    push_extension(&mut extensions, 0x0000, |body| {
-        push_u16(body, 3 + host.len())?;
-        body.push(0);
-        push_u16(body, host.len())?;
-        body.extend_from_slice(host);
-        Ok(())
-    })?;
-    push_extension(&mut extensions, 0x000a, |body| {
-        push_u16(body, SUPPORTED_GROUPS.len() * 2)?;
-        for group in SUPPORTED_GROUPS {
-            push_u16(body, usize::from(group))?;
+) -> Result<Vec<u8>, HelloError> {
+    let chrome = keys.profile == BrowserFingerprint::Chrome;
+    let seeds = entropy::bytes::<6>().map_err(|_| HelloError::Entropy)?;
+    let grease = seeds.map(|seed| u16::from(seed & 0xf0 | 0x0a) * 0x0101);
+    let mut order = if chrome {
+        vec![
+            0, 23, 65281, 10, 11, 35, 16, 5, 18, 51, 43, 13, 45, 27, 65037, 17613, 51764,
+        ]
+    } else {
+        vec![
+            0, 23, 65281, 10, 11, 35, 16, 5, 34, 18, 51, 43, 13, 45, 28, 27, 65037,
+        ]
+    };
+    if chrome {
+        for i in (1..order.len()).rev() {
+            let j = random_index(i + 1)?;
+            order.swap(i, j);
         }
-        Ok(())
-    })?;
-    push_extension(&mut extensions, 0x000d, |body| {
-        push_u16(body, SIGNATURE_ALGORITHMS.len() * 2)?;
-        for scheme in SIGNATURE_ALGORITHMS {
-            push_u16(body, usize::from(scheme))?;
-        }
-        Ok(())
-    })?;
-    // RFC 6066 / Go crypto/tls: status_type=ocsp, empty responder list, empty extensions.
-    // A 2-byte body is rejected by stock Xray (Go) with "error decoding message".
-    push_extension(&mut extensions, 0x0005, |body| {
-        body.extend_from_slice(&[1, 0, 0, 0, 0]);
-        Ok(())
-    })?;
-    push_extension(&mut extensions, 0x0010, |body| {
-        let list_len: usize = alpn.iter().map(|protocol| 1 + protocol.len()).sum();
-        push_u16(body, list_len)?;
-        for protocol in alpn {
-            let length = u8::try_from(protocol.len()).map_err(|_| HelloError::TooLarge)?;
-            body.push(length);
-            body.extend_from_slice(protocol);
-        }
-        Ok(())
-    })?;
-    // psk_key_exchange_modes (0x002d), not the typo 0x2d00. Stock Xray requires a
-    // parseable ClientHello; the wrong type was skipped as unknown but paired with
-    // the broken status_request above made Go abort the handshake.
-    push_extension(&mut extensions, 0x002d, |body| {
-        body.extend_from_slice(&[1, 1]); // modes_len=1, psk_dhe_ke
-        Ok(())
-    })?;
-    push_extension(&mut extensions, 0x002b, |body| {
-        body.extend_from_slice(&SUPPORTED_VERSIONS_BODY);
-        Ok(())
-    })?;
-    let (entries, groups) = keys.key_shares()?;
-    push_extension(&mut extensions, 0x0033, |body| {
-        push_u16(body, entries.len())?;
-        body.extend_from_slice(&entries);
-        Ok(())
-    })?;
-
-    let suites_len = CIPHER_SUITES.len() * 2;
+    }
+    let mut extensions = Vec::with_capacity(1_900);
+    if chrome {
+        push_extension(&mut extensions, grease[4], |_| Ok(()))?;
+    }
+    for kind in order {
+        push_extension(&mut extensions, kind, |body| {
+            match kind {
+                0 => {
+                    push_u16(body, 3 + server_name.len())?;
+                    body.push(0);
+                    push_u16(body, server_name.len())?;
+                    body.extend_from_slice(server_name.as_bytes());
+                }
+                23 | 35 | 18 => {}
+                65281 => body.push(0),
+                10 => {
+                    let mut groups = vec![X25519_MLKEM768_GROUP, X25519_GROUP, P256_GROUP, 24];
+                    if chrome {
+                        groups.insert(0, grease[1]);
+                    } else {
+                        groups.push(25);
+                    }
+                    push_vector(body, &groups)?;
+                }
+                11 => body.extend_from_slice(&[1, 0]),
+                16 => {
+                    push_u16(body, alpn.iter().map(|p| 1 + p.len()).sum())?;
+                    for p in alpn {
+                        body.push(u8::try_from(p.len()).map_err(|_| HelloError::TooLarge)?);
+                        body.extend_from_slice(p);
+                    }
+                }
+                5 => body.extend_from_slice(&[1, 0, 0, 0, 0]),
+                34 => body.extend_from_slice(&[0, 8, 4, 3, 5, 3, 6, 3, 2, 3]),
+                51 => {
+                    let entries = keys.key_shares(grease[1])?;
+                    push_u16(body, entries.len())?;
+                    body.extend_from_slice(&entries);
+                }
+                43 => {
+                    body.push(if chrome { 6 } else { 4 });
+                    if chrome {
+                        push_u16(body, usize::from(grease[2]))?;
+                    }
+                    body.extend_from_slice(&[3, 4, 3, 3]);
+                }
+                13 => {
+                    push_u16(
+                        body,
+                        (keys.profile.signatures().len() + usize::from(chrome)) * 2,
+                    )?;
+                    if chrome {
+                        push_u16(body, usize::from(grease[3]))?;
+                    }
+                    for scheme in keys.profile.signatures() {
+                        push_u16(body, usize::from(*scheme))?;
+                    }
+                }
+                45 => body.extend_from_slice(&[1, 1]),
+                28 => body.extend_from_slice(&[64, 1]),
+                27 => body.extend_from_slice(if chrome {
+                    &[2, 0, 2]
+                } else {
+                    &[6, 0, 1, 0, 2, 0, 3]
+                }),
+                17613 => body.extend_from_slice(&[0, 3, 2, b'h', b'2']),
+                51764 => body.extend_from_slice(super::browser_profile::CHROME_TRUST_ANCHORS),
+                65037 => write_ech(body, chrome, server_name.len())?,
+                _ => unreachable!("immutable profile extension"),
+            }
+            Ok(())
+        })?;
+    }
+    if chrome {
+        // BoringSSL forces its two extension GREASE values to differ.
+        let last = if grease[5] == grease[4] {
+            grease[5] ^ 0x1010
+        } else {
+            grease[5]
+        };
+        push_extension(&mut extensions, last, |body| {
+            body.push(0);
+            Ok(())
+        })?;
+    }
+    let suites = keys.profile.ciphers();
+    let suites_len = (suites.len() + usize::from(chrome)) * 2;
     let body_len = 2 + 32 + 1 + SESSION_ID_LEN + 2 + suites_len + 1 + 1 + 2 + extensions.len();
     let message_len = body_len + 4;
     if message_len > MAX_CLIENT_HELLO_BYTES || message_len > usize::from(u16::MAX) {
         return Err(HelloError::TooLarge);
     }
-
     let mut message = Vec::with_capacity(message_len);
     message.push(HANDSHAKE_CLIENT_HELLO);
     let length = u32::try_from(body_len).map_err(|_| HelloError::TooLarge)?;
@@ -408,17 +475,61 @@ fn assemble(
     message.push(u8::try_from(SESSION_ID_LEN).map_err(|_| HelloError::TooLarge)?);
     message.resize(message.len() + SESSION_ID_LEN, 0);
     push_u16(&mut message, suites_len)?;
-    for suite in CIPHER_SUITES {
-        push_u16(&mut message, usize::from(suite))?;
+    if chrome {
+        push_u16(&mut message, usize::from(grease[0]))?;
     }
-    message.push(1);
-    message.push(0);
+    for suite in suites {
+        push_u16(&mut message, usize::from(*suite))?;
+    }
+    message.extend_from_slice(&[1, 0]);
     push_u16(&mut message, extensions.len())?;
     message.extend_from_slice(&extensions);
-    if message.len() != message_len {
-        return Err(HelloError::TooLarge);
+    Ok(message)
+}
+
+fn push_vector(body: &mut Vec<u8>, values: &[u16]) -> Result<(), HelloError> {
+    push_u16(body, values.len() * 2)?;
+    for value in values {
+        push_u16(body, usize::from(*value))?;
     }
-    Ok((message, groups))
+    Ok(())
+}
+
+fn random_index(bound: usize) -> Result<usize, HelloError> {
+    // Rejection sampling avoids modulo bias; all callers have bounds <= 17.
+    let cutoff = 256 - 256 % bound;
+    for _ in 0..128 {
+        let value = usize::from(entropy::bytes::<1>().map_err(|_| HelloError::Entropy)?[0]);
+        if value < cutoff {
+            return Ok(value % bound);
+        }
+    }
+    Err(HelloError::Entropy)
+}
+
+fn write_ech(body: &mut Vec<u8>, chrome: bool, name_len: usize) -> Result<(), HelloError> {
+    let seed = entropy::bytes::<2>().map_err(|_| HelloError::Entropy)?;
+    // The captured Chrome platform has AES acceleration; Firefox chooses both
+    // AEAD identifiers independently of hardware in NSS tls13_MaybeGreaseEch.
+    let aead = if chrome || seed[0] & 1 != 0 { 1 } else { 3 };
+    body.extend_from_slice(&[0, 0, 1, 0, aead, seed[1], 0, 32]);
+    if chrome {
+        let secret = Zeroizing::new(entropy::bytes::<32>().map_err(|_| HelloError::Entropy)?);
+        body.extend_from_slice(&StaticX25519Key::new(&secret).public_key());
+    } else {
+        body.extend_from_slice(&entropy::bytes::<32>().map_err(|_| HelloError::Entropy)?);
+    }
+    // BoringSSL estimates 128..224 bytes in 32-byte steps. NSS compresses ten
+    // outer extensions, keeps the SNI, and pads to its configured 100-byte name.
+    let payload = if chrome {
+        128 + 32 * random_index(4)? + 16
+    } else {
+        (117 + name_len.max(100)).div_ceil(32) * 32 + 16
+    };
+    push_u16(body, payload)?;
+    let start = body.len();
+    body.resize(start + payload, 0);
+    entropy::fill(&mut body[start..]).map_err(|_| HelloError::Entropy)
 }
 
 fn push_extension(
@@ -530,6 +641,30 @@ mod tests {
     }
 
     #[test]
+    fn browser_offers_preserve_key_relationships() {
+        for profile in [BrowserFingerprint::Chrome, BrowserFingerprint::Firefox] {
+            for _ in 0..8 {
+                let keys = ClientKeyAgreement::for_profile(profile).unwrap();
+                let (record, _) = build_client_hello(
+                    "browser-capture.test",
+                    ALPN,
+                    &keys,
+                    &[0x22; 32],
+                    plaintext(1),
+                )
+                .unwrap();
+                let wire = record.record();
+                let hello = ClientHello::parse_record(&wire).unwrap();
+                assert_eq!(hello.peer_x25519(), Some(*keys.authentication_public_key()));
+                assert_eq!(
+                    keys.x25519_public == keys.hybrid_x25519_public,
+                    profile == BrowserFingerprint::Firefox
+                );
+            }
+        }
+    }
+
+    #[test]
     fn built_hello_authenticates_against_the_shared_server_authenticator() {
         let (authenticator, server_public) = authenticator([0x42; 32]);
         let keys = ClientKeyAgreement::generate().expect("keys");
@@ -574,11 +709,12 @@ mod tests {
     fn tls_shared_secret_agrees_for_plain_x25519() {
         let keys = ClientKeyAgreement::generate().expect("keys");
         let peer = ClientKeyAgreement::generate().expect("peer");
+        let public = *keys.authentication_public_key();
         let secret = keys
             .tls_shared_secret(X25519_GROUP, peer.authentication_public_key())
             .expect("x25519 agreement");
         let mirrored = peer
-            .tls_shared_secret(X25519_GROUP, keys.authentication_public_key())
+            .tls_shared_secret(X25519_GROUP, &public)
             .expect("mirrored");
         assert_eq!(secret.as_bytes(), mirrored.as_bytes());
         assert_eq!(secret.as_bytes().len(), 32);

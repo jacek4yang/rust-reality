@@ -4,6 +4,8 @@
 //! record boundaries, and complete extension bodies. Normalization is a
 //! separate policy: this decoder never turns a wire difference into equality.
 
+pub mod compare;
+
 use serde::Serialize;
 use std::fmt;
 

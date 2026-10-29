@@ -300,6 +300,7 @@ mod tests {
             public_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
             short_id: "0102030405060708".to_owned(),
             server_name: "www.example.com".to_owned(),
+            fingerprint: Default::default(),
             allow_udp_443: false,
         }
     }

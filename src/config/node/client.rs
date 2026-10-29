@@ -64,6 +64,9 @@ pub struct LineConfig {
     pub short_id: String,
     /// Server-accepted SNI / serverName.
     pub server_name: String,
+    /// Browser ClientHello profile. Omission selects Chrome 156.0.8078.74.
+    #[serde(default)]
+    pub fingerprint: crate::protocol::reality::BrowserFingerprint,
     /// When true, UDP/443 is permitted under XUDP (stock `xtls-rprx-vision-udp443` policy).
     /// Wire Addons still carry `xtls-rprx-vision`. Default false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -116,6 +119,28 @@ mod tests {
         assert_eq!(parsed.listeners.len(), 1);
         assert_eq!(parsed.lines.len(), 1);
         assert_eq!(parsed.lines[0].port, 8443);
+        assert_eq!(
+            parsed.lines[0].fingerprint,
+            crate::protocol::reality::BrowserFingerprint::Chrome
+        );
+        for name in ["chrome", "firefox"] {
+            let explicit = json.replace(
+                "\"port\": 8443,",
+                &format!("\"port\": 8443, \"fingerprint\": \"{name}\","),
+            );
+            let config: ClientConfig = serde_json::from_str(&explicit).unwrap();
+            assert_eq!(
+                serde_json::to_value(&config).unwrap()["lines"][0]["fingerprint"],
+                name
+            );
+        }
+        for name in ["safari", "random", "hellofirefox_120", "Chrome", ""] {
+            let explicit = json.replace(
+                "\"port\": 8443,",
+                &format!("\"port\": 8443, \"fingerprint\": \"{name}\","),
+            );
+            assert!(serde_json::from_str::<ClientConfig>(&explicit).is_err());
+        }
     }
 
     #[test]

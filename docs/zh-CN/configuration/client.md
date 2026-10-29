@@ -37,3 +37,19 @@ UDP/443 仅在 LINE 设置 `allowUdp443: true` 时允许。服务端 XUDP 出站
 **Direct**、**NXR** 或 **Handoff**（[ADR 0060](../../adr/0060-xudp-over-nxr-and-handoff.md)）；
 Block 与不支持的出站失败关闭，且不得静默回退到 Direct。详见英文
 [XUDP and Vision UDP/443](../../en/development/xudp.md)。
+
+## 浏览器 ClientHello
+
+每个 LINE 可设置 `"fingerprint": "chrome"`（默认）或 `"fingerprint": "firefox"`。
+固定的原生 Windows 版本分别为 Google Chrome Stable 156.0.8078.74 和 Firefox 159.0。
+Chrome 提供 GREASE、X25519MLKEM768、X25519；Firefox 提供混合组、X25519 和 P-256。
+Firefox 混合组复用独立 X25519 公钥，Chrome 使用独立密钥。所有真实 key share
+都保留相应私钥用于协商。LINE 选择和竞速保持各自配置，格式化及生成的 schema 包含此字段。
+未知名称、历史版本、Safari/iOS 和随机配置名称在加载时拒绝。
+
+该配置复现无恢复、无真实 ECH 的首次 TCP ClientHello，保留每次握手的随机性、
+Chrome 扩展洗牌、GREASE 和 ECH GREASE。生产运行时仅支持 TLS 1.3，并拒绝
+HelloRetryRequest；声明的 TLS 1.2 掩护能力不启用 TLS 1.2 会话。
+REALITY 的认证 session ID 和证书身份仍遵循协议自身约定。ClientHello 等价不代表
+HTTP、QUIC、操作系统、时序或完整流量行为等价。浏览器与抓包依赖不进入生产二进制。
+复现命令和证据见[测试文档](../development/testing.md)。

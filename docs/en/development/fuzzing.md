@@ -56,3 +56,7 @@ directly (`cargo fuzz run <target>`) against `fuzz/`.
   bytes come from the network.
 
 The `nested_tls_prefix` target checks destination TLS header-prefix classification at every fragment boundary against the complete-header predicate. Async open-origin progress and pending-read cancellation are covered by socket regression tests.
+
+`browser_offer` exercises both production browser serializers with variable SNI
+input and independently decodes successful records. `fingerprint_capture` also
+exercises the structural comparison policy with malformed captures.

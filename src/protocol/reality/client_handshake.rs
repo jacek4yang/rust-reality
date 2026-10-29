@@ -188,7 +188,7 @@ impl fmt::Debug for ClientSession {
 pub async fn complete<S>(
     stream: &mut S,
     hello: &HelloRecord,
-    keys: &ClientKeyAgreement,
+    keys: ClientKeyAgreement,
     auth_key: &AuthKey,
     offered_alpn: &[&[u8]],
 ) -> Result<ClientSession, ClientHandshakeError>
@@ -301,7 +301,7 @@ where
 /// Same rejection classes as [`complete`], plus a ClientFinished mismatch.
 pub async fn establish_with_server_flight(
     hello: &HelloRecord,
-    keys: &ClientKeyAgreement,
+    keys: ClientKeyAgreement,
     auth_key: &AuthKey,
     offered_alpn: &[&[u8]],
     flight: ServerFlight,
@@ -622,11 +622,49 @@ mod tests {
             .expect("server flight");
 
         let (session, established) =
-            establish_with_server_flight(&record, &keys, &auth_key, ALPN, flight)
+            establish_with_server_flight(&record, keys, &auth_key, ALPN, flight)
                 .await
                 .expect("handshake");
         let suite = session.negotiated().suite;
         (session, established, suite)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn browser_profiles_authenticate_and_finish_every_offered_group() {
+        use super::super::{BrowserFingerprint, P256_GROUP, X25519_MLKEM768_GROUP};
+        for profile in [BrowserFingerprint::Chrome, BrowserFingerprint::Firefox] {
+            for group in [X25519_GROUP, X25519_MLKEM768_GROUP, P256_GROUP] {
+                if profile == BrowserFingerprint::Chrome && group == P256_GROUP {
+                    continue;
+                }
+                let (authenticator, server_public) = authenticator([0x42; 32]);
+                let keys = ClientKeyAgreement::for_profile(profile).unwrap();
+                let now = 1_700_000_000;
+                let (record, auth_key) =
+                    build_client_hello(NAME, ALPN, &keys, &server_public, plaintext(now)).unwrap();
+                let client = ClientHello::parse_message(record.message()).unwrap();
+                let auth = authenticator.authenticate(&client, u64::from(now)).unwrap();
+                let dummy = vec![
+                    0x55;
+                    match group {
+                        P256_GROUP => 65,
+                        X25519_MLKEM768_GROUP => 1120,
+                        _ => 32,
+                    }
+                ];
+                let target_message = synthetic_server_hello(&client, group, &dummy);
+                let target = ServerHelloTemplate::parse(&target_message, &client).unwrap();
+                let identity = CertificateIdentity::from_seed([0x42; 32]);
+                let flight =
+                    build_server_flight(&client, auth.auth_key(), target, &identity, Some(b"h2"))
+                        .unwrap();
+                let (session, _) =
+                    establish_with_server_flight(&record, keys, &auth_key, ALPN, flight)
+                        .await
+                        .unwrap();
+                assert_eq!(session.negotiated().key_share_group, group);
+            }
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -720,7 +758,7 @@ mod tests {
         let wrong_key = AuthKey::from_test_bytes([0x11; 32]);
         let flight = build_server_flight(&client, &wrong_key, target, &identity, Some(b"h2"))
             .expect("flight");
-        let error = establish_with_server_flight(&record, &keys, &auth_key, ALPN, flight)
+        let error = establish_with_server_flight(&record, keys, &auth_key, ALPN, flight)
             .await
             .expect_err("binding must fail");
         assert!(matches!(
@@ -792,7 +830,7 @@ mod tests {
         )
         .expect("flight");
         let (mut session, mut established) =
-            establish_with_server_flight(&record, &keys, &auth_key, ALPN, flight)
+            establish_with_server_flight(&record, keys, &auth_key, ALPN, flight)
                 .await
                 .expect("handshake");
         let mut record = Vec::new();
@@ -860,7 +898,7 @@ mod tests {
         });
 
         let mut stream = TcpStream::connect(addr).await.expect("connect");
-        let mut session = complete(&mut stream, &record, &keys, &auth_key, ALPN)
+        let mut session = complete(&mut stream, &record, keys, &auth_key, ALPN)
             .await
             .expect("client handshake over tcp");
         assert_eq!(session.negotiated().alpn.as_deref(), Some(b"h2".as_slice()));

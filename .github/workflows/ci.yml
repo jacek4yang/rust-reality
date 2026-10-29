@@ -64,6 +64,19 @@ jobs:
       - name: Run repository quality checks
         run: cargo dev check --all
 
+      - name: Compare production browser offers with frozen native captures
+        env:
+          RR_BROWSER_COMPARISON_OUTPUT: ${{ runner.temp }}/browser-offers
+        run: |
+          cargo test --test browser_line_capture --locked
+          cargo build --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
+          for browser in chrome firefox; do
+            for sample in "$RR_BROWSER_COMPARISON_OUTPUT"/"$browser"-*.tls; do
+              tools/target/debug/rr-fingerprint compare "$browser" "benchmarks/evidence/browser-clienthello/windows-20261029/$browser/sample-00.tls" "$sample"
+            done
+          done
+
+
       # The gate keeps each stage's complete stdout and stderr in files rather
       # than flooding the terminal, and prints a bounded excerpt. That is right
       # locally, where the files are still there, and wrong on a runner that is

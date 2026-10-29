@@ -312,3 +312,20 @@ ACK 早于普查的形状以 Class B 夹具缺陷 fail-closed。 同一套 Class
 排空时刻）。到达该边界属于计划内终止，不是传输失败。已提交的尝试及部分结果仍
 保留；覆盖不足或在途请求超出规定窗口完成仍会失败，不会把恢复之后发起的请求悄
 悄归入故障期。
+
+## 固定浏览器 ClientHello 对照
+
+`benchmarks/evidence/browser-clienthello/windows-20261029/` 保存原生 Windows
+运行 [40882928698](https://github.com/jacek4yang/rust-reality/actions/runs/40882928698)
+中每个浏览器 20 次全新会话的 TLS 记录。manifest 绑定实际执行的合并提交、安装包与
+可执行文件散列、系统镜像、每条记录 SHA-256 和 HTTPS 回执；不包含后台预连接或恢复会话。
+原始 identity 的 discovery 标签保留，后续散列和结构测试负责固定证据验证。
+
+设置 `RR_BROWSER_COMPARISON_OUTPUT=/tmp/rr-browser-offers` 后运行
+`cargo test --test browser_line_capture --locked`，
+再通过 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare chrome`
+加上固定参考 `.tls` 路径及生成的 `.tls` 路径逐条对照；Firefox 使用 `firefox`。
+CI 对每个配置比较 32 条生成记录。独立解析器不导入生产协议代码，保留能力列表顺序、
+扩展内容、key share 结构和记录边界，只规范化经过验证的临时随机字段。
+Chrome 中间扩展允许洗牌，首尾 GREASE 约束保留；Firefox 扩展顺序严格一致。
+该证据不覆盖恢复、HRR、真实 ECH 或完整浏览器流量行为。

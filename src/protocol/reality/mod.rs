@@ -1,6 +1,8 @@
 //! Bounded REALITY wire parsing and handshake state.
 
 mod auth;
+mod browser_profile;
+pub use browser_profile::BrowserFingerprint;
 mod client_handshake;
 mod client_hello;
 mod client_offer;

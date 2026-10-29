@@ -4,6 +4,23 @@ mod webdriver;
 use std::{fs::File, io::Read};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 4 && args[0] == "compare" {
+        let chrome = match args[1].to_str() {
+            Some("chrome") => true,
+            Some("firefox") => false,
+            _ => return Err("browser profile".into()),
+        };
+        let read = |path: &std::ffi::OsStr| -> Result<Vec<u8>, std::io::Error> {
+            let mut bytes = Vec::new();
+            File::open(path)?
+                .take((rr_fingerprint::MAX_CAPTURE_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)?;
+            Ok(bytes)
+        };
+        rr_fingerprint::compare::compare(&read(&args[2])?, &read(&args[3])?, chrome)?;
+        println!("ClientHello structural comparison passed");
+        return Ok(());
+    }
     if args.len() == 3 && args[0] == "prepare" {
         return capture::prepare(
             std::path::Path::new(&args[1]),

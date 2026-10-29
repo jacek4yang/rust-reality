@@ -115,6 +115,15 @@ fn spawn_logged(name: &str, mut command: Command, log: &Path) -> KillOnDrop {
 
 #[test]
 fn curl_through_single_line_socks5_to_isolated_origin() {
+    run_socks5("chrome");
+}
+
+#[test]
+fn firefox_through_single_line_socks5_to_isolated_origin() {
+    run_socks5("firefox");
+}
+
+fn run_socks5(fingerprint: &str) {
     let openssl = which("openssl").expect("openssl required for cover");
     let python = which("python3").expect("python3 required for origin");
     let curl = which("curl").expect("curl required");
@@ -244,7 +253,8 @@ fn curl_through_single_line_socks5_to_isolated_origin() {
     "id": "{user_id}",
     "publicKey": "{public_key}",
     "shortId": "{short_id}",
-    "serverName": "localhost"
+    "serverName": "localhost",
+    "fingerprint": "{fingerprint}"
   }}]
 }}
 "#
