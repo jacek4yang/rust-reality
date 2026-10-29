@@ -278,8 +278,8 @@ impl LinePool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
     use crate::config::node::LineConfig;
+    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 
     fn dummy_line(tag: &str, port: u16) -> LineConfig {
         LineConfig {
