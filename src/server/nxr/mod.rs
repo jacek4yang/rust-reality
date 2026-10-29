@@ -13,13 +13,13 @@ use crate::{
     network::NetworkEnvironment,
     protocol::{
         nxr::{
-            FLAG_TCP, FLAG_UDP, NxrKey, NxrProtocolError, REQUEST_HEADER_LEN,
-            decode_authenticated_request, peek_open_flags, request_len_from_header,
+            FLAG_TCP, FLAG_UDP, NxrKey, NxrProtocolError, REQUEST_HEADER_LEN, peek_open_flags,
+            request_len_from_header,
         },
         nxr_udp::{
             DIR_LANDING_TO_LINE, DIR_LINE_TO_LANDING, FRAME_TYPE_CLOSE, FRAME_TYPE_DATAGRAM,
-            NXR_UDP_MAX_PAYLOAD, NxrUdpError, NxrUdpSeq, NxrUdpSessionKey, decode_udp_open,
-            drain_frames, encode_frame, open_authenticated_prefix, udp_open_len_from_header,
+            NXR_UDP_MAX_PAYLOAD, NxrUdpError, NxrUdpSeq, NxrUdpSessionKey, drain_frames,
+            encode_frame, udp_open_len_from_header,
         },
         vless::{Address, Destination},
     },
@@ -35,77 +35,15 @@ use super::{
 use crate::config::node::network::NetworkConfig;
 use crate::runtime::policy::ResourceGovernorPolicy;
 
+mod auth;
 mod error;
 mod replay;
 
+pub use auth::NxrAuthenticator;
 pub use replay::NxrReplayCache;
 pub(crate) use replay::{REPLAY_NONCE_CAPACITY, replay_retention_seconds};
 
 pub use error::{NxrAuthenticationError, NxrLandingConfigError, NxrLandingError, NxrReplayError};
-
-/// Verified NXR request policy with an independent HMAC key and replay cache.
-#[derive(Clone)]
-pub struct NxrAuthenticator {
-    key: NxrKey,
-    replay: NxrReplayCache,
-    maximum_time_difference: u64,
-}
-
-impl NxrAuthenticator {
-    /// Binds a PSK, time window in seconds, and bounded nonce cache.
-    #[must_use]
-    pub const fn new(key: NxrKey, replay: NxrReplayCache, maximum_time_difference: u64) -> Self {
-        Self {
-            key,
-            replay,
-            maximum_time_difference,
-        }
-    }
-
-    /// Verifies HMAC and time first, reserves the nonce second, and only then
-    /// returns a parsed destination that callers may resolve or connect.
-    ///
-    /// # Errors
-    ///
-    /// Rejects malformed or unauthenticated requests, stale timestamps, duplicate
-    /// nonces, and exhausted replay capacity.
-    pub fn authenticate(
-        &self,
-        request: &[u8],
-        now: u64,
-    ) -> Result<Destination, NxrAuthenticationError> {
-        let authenticated =
-            decode_authenticated_request(request, &self.key, now, self.maximum_time_difference)?;
-        self.replay.reserve(*authenticated.nonce())?;
-        let (_, destination) = authenticated.into_parts();
-        Ok(destination)
-    }
-
-    /// Verifies a UDP-mode open, reserves the nonce, and derives the session MAC key.
-    ///
-    /// # Errors
-    ///
-    /// Rejects TCP-mode opens, HMAC/time failures, and replay admission failures.
-    pub fn authenticate_udp(
-        &self,
-        request: &[u8],
-        now: u64,
-    ) -> Result<
-        (
-            crate::protocol::nxr_udp::UdpAuthenticatedOpen,
-            NxrUdpSessionKey,
-        ),
-        NxrAuthenticationError,
-    > {
-        let open = decode_udp_open(request, &self.key, now, self.maximum_time_difference)
-            .map_err(|error| NxrAuthenticationError::Protocol(NxrProtocolError::from(error)))?;
-        self.replay.reserve(*open.nonce())?;
-        let prefix = open_authenticated_prefix(request)
-            .ok_or(NxrAuthenticationError::Protocol(NxrProtocolError::Length))?;
-        let session = NxrUdpSessionKey::derive(&self.key, prefix);
-        Ok((open, session))
-    }
-}
 
 /// One NXR landing connection: authenticate once, connect once, then relay raw
 /// bytes with normal TCP half-close semantics.
