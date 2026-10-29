@@ -1,0 +1,26 @@
+[
+  {
+    "block": 1,
+    "concurrency": 1,
+    "connections": 8,
+    "connectionsPerSecond": 22.34270694512684,
+    "failed": 0,
+    "implementation": "baseline",
+    "latenciesSeconds": [
+      0.043101704,
+      0.044046385,
+      0.044509626,
+      0.044884666,
+      0.044946992,
+      0.044973071,
+      0.045223047,
+      0.045280019
+    ],
+    "p50Seconds": 0.044946992,
+    "p95Seconds": 0.045280019,
+    "p99Seconds": 0.045280019,
+    "position": 1,
+    "sampleIndex": 0,
+    "wallSeconds": 0.358058673
+  }
+]

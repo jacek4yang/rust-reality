@@ -1,0 +1,72 @@
+{
+  "baseline": {
+    "buildId": "59bff3b7b0392163ecd67a4d98942eb0a470394b",
+    "identity": "",
+    "path": "/home/jacek/.cache/rr-v230-baseline-eb91df6/binary/rust-reality",
+    "sha256": "0071eac26e36f6e8eb73bca313db5ec6567affefabbe8352d112dbd1f1bc60a3"
+  },
+  "blocks": 3,
+  "candidate": {
+    "buildId": "8cc0e07b976287c6f4eb72c93380f10c02032c5b",
+    "identity": "{\"gitCommit\":\"7ac961a139b29af48497f6d0a1aa24657f3665e3\",\"version\":\"2.2.0\"}",
+    "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7ac961a/binary/rust-reality",
+    "sha256": "09face2b5e2a3a9f3d1a0d399ff579289d6908563e8eb328b176e7feaa38e6f6"
+  },
+  "clientDataMiB": 1,
+  "concurrencies": "1 8",
+  "connectionsPerSample": 8,
+  "coverModes": {
+    "baseline": "default",
+    "candidate": "default"
+  },
+  "coverNetwork": {
+    "model": "loopback",
+    "netemRttMs": null,
+    "target": "127.0.0.1:61001"
+  },
+  "fingerprints": {
+    "baseline": null,
+    "candidate": "chrome"
+  },
+  "harness": {
+    "benchOrigin": {
+      "embedded": true,
+      "path": "/home/jacek/.cache/rr-v230-client-perf-tool-7163414/rr-dev",
+      "sha256": "11043498c571dbb6717dae797caef171ab1f19f27f715933d2ca5b1317a124a7"
+    },
+    "contract": null,
+    "entrypoint": {
+      "path": "/home/jacek/.cache/rr-v230-client-perf-tool-7163414/rr-dev",
+      "sha256": "11043498c571dbb6717dae797caef171ab1f19f27f715933d2ca5b1317a124a7"
+    },
+    "keeperHelper": null
+  },
+  "hostExclusiveLock": {
+    "deviceInode": "49:27742",
+    "mode": "lockDirectory",
+    "path": "/run/user/1000/rust-reality/host-exclusive.lock.d",
+    "protocolVersion": 1,
+    "required": true
+  },
+  "measureMode": "schedstat",
+  "measuredRole": "client",
+  "method": "balanced block ABBA",
+  "ports": {
+    "address": "127.0.0.1",
+    "base": 61000,
+    "count": 26
+  },
+  "repository": {
+    "dirty": false,
+    "head": "7163414a9a48bde9d0b2dd7d8e9021cd69479f47"
+  },
+  "runId": "original-baseline-preflight-7ac961a",
+  "samplesPerSlot": 1,
+  "schemaVersion": 2,
+  "server": {
+    "buildId": "b21814d2480c4b0c8c154cec8b59fe22461e0783",
+    "identity": "{\"gitCommit\":\"c02e4882e00dd05c224779b83a8e950fecbf1036\",\"version\":\"2.2.0\"}",
+    "path": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+    "sha256": "1af42605b1ec2b883ba854ec10a2bf69759e8c9a461eb8f3a1a4ba98a292511d"
+  }
+}
