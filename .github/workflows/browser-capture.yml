@@ -32,6 +32,7 @@ jobs:
           cargo build --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
           if ($LASTEXITCODE -ne 0) { throw 'capture tool build failed' }
       - name: Capture fresh headed browser sessions over verified HTTPS
+        timeout-minutes: 12
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -50,13 +51,15 @@ jobs:
             return $path
           }
           if ($browser -eq 'chrome') {
-            $expectedVersion = '156.0.8078.73'
-            $distribution = 'Google Chrome for Testing, official Stable release'
-            $archive = Fetch-Pinned 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chrome-win64.zip' 'chrome.zip' '5db0ad4c070907a791ec895b9de5ed15334b27f79af2556a131c3c11b3913a2b'
+            $expectedVersion = '156.0.8078.74'
+            $distribution = 'Google Chrome Stable, official signed enterprise MSI'
+            $archive = Fetch-Pinned 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi' 'chrome.msi' 'cf1757b01c3af403de494a1b702e2a96701fd10026f5b89be53741689ed25895'
             $driverArchive = Fetch-Pinned 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chromedriver-win64.zip' 'driver.zip' 'f782a94fc2a16e7dc6be48c6a18516dc708de8e86ff4a736ddc3ff62ff207ebf'
-            Expand-Archive $archive -DestinationPath $inputs
+            if ((Get-AuthenticodeSignature $archive).Status -ne 'Valid') { throw 'Chrome installer signature invalid' }
+            $install = Start-Process msiexec.exe -ArgumentList @('/i', $archive, '/qn', '/norestart') -Wait -PassThru
+            if ($install.ExitCode -notin @(0,3010)) { throw "Chrome installation failed: $($install.ExitCode)" }
             Expand-Archive $driverArchive -DestinationPath $inputs
-            $binary = Join-Path $inputs 'chrome-win64/chrome.exe'
+            $binary = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
             $driver = Join-Path $inputs 'chromedriver-win64/chromedriver.exe'
           } else {
             $expectedVersion = '159.0'
@@ -90,12 +93,15 @@ jobs:
             transport = 'TCP TLS 1.3; HTTP/1.1 origin; no Alt-Svc; hosts DNS without ECH'
             samplesRequired = 20
           }
-          if ($identity.publisher -ne 'Valid') { throw 'browser publisher signature invalid' }
-          if ($identity.browserVersion -ne $expectedVersion) { throw 'browser version differs from pinned stable version' }
           $identity | ConvertTo-Json -Depth 8 | Set-Content "$evidence/identity.json"
+          if ($identity.publisher -ne 'Valid') { throw "browser publisher signature invalid: $($identity.publisher)" }
+          if ($identity.browserVersion -ne $expectedVersion) { throw 'browser version differs from pinned stable version' }
+          Write-Host 'Browser identity verified; preparing local HTTPS certificates'
           & $tool prepare $private $caPath
           if ($LASTEXITCODE -ne 0) { throw 'test certificate preparation failed' }
-          $cert = Import-Certificate -FilePath $caPath -CertStoreLocation Cert:\CurrentUser\Root
+          Write-Host 'Certificates prepared; installing temporary runner machine trust'
+          $cert = Import-Certificate -FilePath $caPath -CertStoreLocation Cert:\LocalMachine\Root
+          Write-Host 'Temporary trust installed; starting capture processes'
           $hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
           $originalHosts = [IO.File]::ReadAllBytes($hosts)
           $origin = $null
@@ -130,7 +136,7 @@ jobs:
               if ($null -ne $process -and -not $process.HasExited) { taskkill /PID $process.Id /T /F | Out-Null }
             }
             [IO.File]::WriteAllBytes($hosts,$originalHosts)
-            Remove-Item "Cert:\CurrentUser\Root\$($cert.Thumbprint)"
+            Remove-Item "Cert:\LocalMachine\Root\$($cert.Thumbprint)"
             Remove-Item $private -Recurse -Force
             Remove-Item $caPath -Force
           }

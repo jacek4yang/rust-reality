@@ -15,14 +15,16 @@ verdict. Decode a saved record with `cargo run --manifest-path tools/Cargo.toml
 -p rr-fingerprint -- CAPTURE.tls`. The `fingerprint_capture` fuzz target covers
 the bounded independent decoder; see ADR 0061 for the evidence boundary.
 
-The collector pins Chrome for Testing 156.0.8078.73 with the matching
-ChromeDriver and Firefox 159.0 (en-US win64) with GeckoDriver 0.37.1. Archive
+The collector pins signed Chrome Stable 156.0.8078.74 with ChromeDriver
+156.0.8078.73 and Firefox 159.0 (en-US win64) with GeckoDriver 0.37.1. Archive
 SHA-256 values are checked before execution, and the browser executable must
 have a valid publisher signature and the expected version. The executable hash
-must remain unchanged throughout collection. Chrome for Testing is Google's
-[official automation distribution](https://developer.chrome.com/docs/automation-and-testing/chrome-for-testing),
-not a Chromium rebuild; its distribution identity remains part of the evidence.
-Version selection used Google's Stable channel metadata and Mozilla's
+must remain unchanged throughout collection. Chrome uses Google's official
+enterprise MSI. Its download URL is mutable: a future replacement fails the
+pinned digest check rather than silently changing the browser. Preserve the
+verified input package locally when reproducing this capture after an update.
+Version selection used Google's [Stable release announcement](https://chromereleases.googleblog.com/2026/10/)
+and Mozilla's
 [159.0 release notes](https://www.firefox.com/en-US/firefox/159.0/releasenotes/).
 The workflow pins these inputs rather than following future channel updates.
 

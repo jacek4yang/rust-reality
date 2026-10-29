@@ -12,13 +12,13 @@
 使用 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- CAPTURE.tls`
 解码保存的记录。`fingerprint_capture` 模糊测试覆盖有界独立解码器；证据边界见 ADR 0061。
 
-采集器固定使用 Chrome for Testing 156.0.8078.73 及同版本 ChromeDriver，
+采集器固定使用签名的 Chrome Stable 156.0.8078.74 及 ChromeDriver 156.0.8078.73，
 以及 Firefox 159.0（en-US win64）与 GeckoDriver 0.37.1。执行前检查下载包的
 SHA-256，浏览器可执行文件必须具有有效发布者签名及预期版本，采集前后的文件哈希
-必须一致。Chrome for Testing 是 Google 的
-[官方自动化测试发行版](https://developer.chrome.com/docs/automation-and-testing/chrome-for-testing)，
-不是自行构建的 Chromium；证据始终保留其发行版身份。版本选择依据 Google Stable
-频道元数据及 Mozilla 的 [159.0 发布说明](https://www.firefox.com/en-US/firefox/159.0/releasenotes/)。
+必须一致。Chrome 使用 Google 官方企业 MSI，其下载地址可变：上游替换文件后，
+固定哈希检查必须失败，不能悄悄更换浏览器。更新后复现时需使用本地保留的已验证安装包。
+版本选择依据 Google 的 [Stable 发布公告](https://chromereleases.googleblog.com/2026/10/)
+及 Mozilla 的 [159.0 发布说明](https://www.firefox.com/en-US/firefox/159.0/releasenotes/)。
 工作流固定这些输入，不自动追随以后的频道更新。
 
 - **单元及模块测试**与源代码放在一起（`src/**`、`crates/**`），验证协议、状态机
