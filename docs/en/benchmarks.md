@@ -942,3 +942,17 @@ upload receipt. The summary reports block-bootstrap throughput and CPU per GiB
 for every scenario/concurrency. It does not automatically declare performance
 acceptance. This mode requires a same-binary control and the existing protected
 metric evaluation, and does not measure same-socket duplex, NXR or Handoff.
+
+Client setup with `schedstat` also retains separate CPU windows for each
+concurrency. `setup-cN-samples.json` and `setup-cN-schedstat.json` are the
+original cell observations; `samples.json` combines their rows for the existing
+rate/latency evaluator. `clientCpuPerConcurrency` reports CPU per connection
+for each level independently. The aggregate CPU field remains diagnostic and
+cannot substitute for these cells: an improvement at high concurrency must not
+hide a low-concurrency regression. Missing CPU cells fail aggregation.
+
+A failed setup slot now writes its collected successful and failed rows before
+returning failure. Error diagnostics name only the protocol step and OS error
+code; they do not print payloads or credentials. Failed slots still prevent
+publication. Earlier collectors that did not retain failed-slot rows remain
+labelled as incomplete evidence; missing historical samples are not recreated.

@@ -1988,27 +1988,30 @@ fn run_bench_workload(
             }
         };
     }
-    let rows = match bench::workload::run_slot(plan) {
-        Ok(rows) => rows,
-        Err(error) => {
-            eprintln!("bench workload: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
     let Some(output) = output else {
         eprintln!("bench workload: --output is required when samples are measured");
         return ExitCode::from(2);
     };
-    let document = bench::workload::rows_json(&rows, plan.record_latencies).to_python_json();
-    match std::fs::write(output, document) {
-        Ok(()) => ExitCode::SUCCESS,
+    let result = bench::workload::run_slot(plan);
+    let rows = match &result {
+        Ok(rows) => rows,
         Err(error) => {
-            eprintln!(
-                "bench workload: could not write {}: {error}",
-                output.display()
-            );
-            ExitCode::FAILURE
+            eprintln!("bench workload: {error}");
+            &error.rows
         }
+    };
+    let document = bench::workload::rows_json(rows, plan.record_latencies).to_python_json();
+    if let Err(error) = std::fs::write(output, document) {
+        eprintln!(
+            "bench workload: could not write {}: {error}",
+            output.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    if result.is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
 
@@ -2110,5 +2113,34 @@ fn probe_egress() -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("curl exited {:?}", outcome.code))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_setup_workload_retains_rows_and_returns_failure() {
+        let workspace = bench::workspace::Workspace::create("failed-setup-rows").unwrap();
+        let output = workspace.join("samples.json");
+        let plan = bench::workload::SetupRatePlan {
+            socks_port: 0,
+            origin_port: 0,
+            connections: 1,
+            concurrencies: vec![1],
+            samples: 1,
+            implementation: "candidate".to_owned(),
+            block: 1,
+            position: 1,
+            record_latencies: true,
+        };
+        assert_eq!(run_bench_workload(&plan, Some(&output)), ExitCode::FAILURE);
+        let rows: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["failed"], 1);
+        assert_eq!(rows[0]["connections"], 0);
+        assert_eq!(rows[0]["latenciesSeconds"], serde_json::json!([]));
     }
 }

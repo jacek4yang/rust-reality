@@ -178,7 +178,7 @@ pub struct SuiteOutcome {
 ///
 /// Returns the first violated guard.
 pub fn validate(suite: &SetupRateSuite) -> Result<(), String> {
-    if suite.client_data_mib.is_some()
+    if suite.peer.is_client_measurement()
         && suite
             .concurrencies
             .iter()
@@ -186,7 +186,7 @@ pub fn validate(suite: &SetupRateSuite) -> Result<(), String> {
             .len()
             != suite.concurrencies.len()
     {
-        return Err("client data concurrency levels must be unique".to_owned());
+        return Err("client concurrency levels must be unique".to_owned());
     }
     if let Some(mib) = suite.client_data_mib
         && (!suite.peer.is_client_measurement()
@@ -568,6 +568,7 @@ struct MeasuredSlot {
     pool: Option<PoolSummary>,
     profile: Option<ProfileSummary>,
     data: Vec<super::client_data::Row>,
+    client_cpu_cells: Vec<(usize, f64)>,
 }
 
 /// The role a slot's implementation label denotes.
@@ -868,14 +869,22 @@ fn measure_slot(
         )),
         _ => None,
     };
-    let workload_result = slot::drive(
-        &workload,
-        &samples_path,
-        suite.attribution,
-        measured_pid,
-        &perf_csv,
-        workspace.path(),
-    );
+    let mut client_cpu_cells = Vec::new();
+    let workload_result = if suite.peer.is_client_measurement()
+        && matches!(suite.attribution, Attribution::Schedstat)
+    {
+        drive_client_setup(&workload, &slot_dir, measured_pid, workspace.path())
+            .map(|cells| client_cpu_cells = cells)
+    } else {
+        slot::drive(
+            &workload,
+            &samples_path,
+            suite.attribution,
+            measured_pid,
+            &perf_csv,
+            workspace.path(),
+        )
+    };
     let schedstat_after = match (&workload_result, &schedstat_before) {
         (Ok(()), Some(_)) => Some(schedstat::CpuSnapshot::capture(measured_pid)?),
         _ => None,
@@ -984,11 +993,51 @@ fn measure_slot(
     Ok(MeasuredSlot {
         slot: entry.clone(),
         task_clock_ms,
+        client_cpu_cells,
         data,
         rows,
         pool,
         profile,
     })
+}
+
+/// Attribute setup CPU separately to each concurrency, retaining original rows.
+fn drive_client_setup(
+    workload: &SetupRatePlan,
+    directory: &Path,
+    pid: u32,
+    cwd: &Path,
+) -> Result<Vec<(usize, f64)>, String> {
+    let mut cells = Vec::new();
+    let mut rows = Vec::new();
+    for &concurrency in &workload.concurrencies {
+        let mut cell = workload.clone();
+        cell.concurrencies = vec![concurrency];
+        let samples = directory.join(format!("setup-c{concurrency}-samples.json"));
+        let before = schedstat::CpuSnapshot::capture(pid)?;
+        let started = std::time::Instant::now();
+        slot::drive(
+            &cell,
+            &samples,
+            Attribution::Schedstat,
+            pid,
+            &directory.join("unused-perf.csv"),
+            cwd,
+        )?;
+        let after = schedstat::CpuSnapshot::capture(pid)?;
+        let cpu = schedstat::delta(&before, &after, started.elapsed().as_nanos())?;
+        std::fs::write(
+            directory.join(format!("setup-c{concurrency}-schedstat.json")),
+            cpu.to_json().to_python_json(),
+        )
+        .map_err(|error| format!("could not retain client CPU cell: {error}"))?;
+        cells.push((concurrency, cpu.milliseconds()));
+        rows.extend(crate::bench::ab_suites::read_rows(&samples)?);
+    }
+    let combined = Json::Array(rows.iter().map(|row| row.to_json(true)).collect());
+    std::fs::write(directory.join("samples.json"), combined.to_python_json())
+        .map_err(|error| format!("could not retain combined setup samples: {error}"))?;
+    Ok(cells)
 }
 
 fn absolute_profile_dir(out_dir: &Path) -> Result<PathBuf, String> {
@@ -1190,48 +1239,7 @@ fn summarise(
     measured: &[MeasuredSlot],
     run_kind: &str,
 ) -> Result<Json, String> {
-    let expected_slots = suite.blocks * 4;
-    if measured.len() != expected_slots {
-        return Err(format!(
-            "missing ABBA slots: expected {expected_slots}, measured {}",
-            measured.len()
-        ));
-    }
-    let expected_rows = suite.samples * suite.concurrencies.len();
-    for slot in measured {
-        if slot.rows.len() != expected_rows {
-            return Err(format!(
-                "missing samples: {} has {} of {expected_rows}",
-                slot.slot.directory_name(),
-                slot.rows.len()
-            ));
-        }
-        if slot
-            .rows
-            .iter()
-            .any(|row| row.failed > 0 || row.connections != suite.connections)
-        {
-            return Err(format!(
-                "failed setup sample: {}",
-                slot.slot.directory_name()
-            ));
-        }
-    }
-
-    if suite.peer.is_client_measurement()
-        && measured.iter().flat_map(|slot| &slot.rows).any(|row| {
-            row.latencies_seconds.len() != row.connections
-                || row
-                    .latencies_seconds
-                    .iter()
-                    .any(|v| !v.is_finite() || *v <= 0.0)
-        })
-    {
-        return Err(
-            "client setup requires every successful connection's positive finite latency"
-                .to_owned(),
-        );
-    }
+    validate_setup_measurements(suite, measured)?;
     let mut cells: Vec<(String, Json)> = Vec::with_capacity(suite.concurrencies.len());
     for concurrency in &suite.concurrencies {
         let blocks = collect_blocks(suite, measured, |slot| {
@@ -1279,6 +1287,12 @@ fn summarise(
             "latency".to_owned(),
             client_latency_summary(suite, measured)?,
         ));
+        if matches!(suite.attribution, Attribution::Schedstat) {
+            details.push((
+                "clientCpuPerConcurrency".to_owned(),
+                client_cpu_summary(suite, measured)?,
+            ));
+        }
     }
     if suite.client_data_mib.is_some() {
         details.push((
@@ -1293,6 +1307,81 @@ fn summarise(
         rows,
         details,
     ))
+}
+
+fn validate_setup_measurements(
+    suite: &SetupRateSuite,
+    measured: &[MeasuredSlot],
+) -> Result<(), String> {
+    let expected_slots = suite.blocks * 4;
+    if measured.len() != expected_slots {
+        return Err(format!(
+            "missing ABBA slots: expected {expected_slots}, measured {}",
+            measured.len()
+        ));
+    }
+    let expected_rows = suite.samples * suite.concurrencies.len();
+    for slot in measured {
+        if slot.rows.len() != expected_rows {
+            return Err(format!(
+                "missing samples: {} has {} of {expected_rows}",
+                slot.slot.directory_name(),
+                slot.rows.len()
+            ));
+        }
+        if slot
+            .rows
+            .iter()
+            .any(|row| row.failed > 0 || row.connections != suite.connections)
+        {
+            return Err(format!(
+                "failed setup sample: {}",
+                slot.slot.directory_name()
+            ));
+        }
+    }
+
+    if suite.peer.is_client_measurement()
+        && measured.iter().flat_map(|slot| &slot.rows).any(|row| {
+            row.latencies_seconds.len() != row.connections
+                || row
+                    .latencies_seconds
+                    .iter()
+                    .any(|v| !v.is_finite() || *v <= 0.0)
+        })
+    {
+        return Err(
+            "client setup requires every successful connection's positive finite latency"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[expect(clippy::cast_precision_loss, reason = "bounded benchmark work counts")]
+fn client_cpu_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
+    let connections = (suite.samples as f64) * (suite.connections as f64);
+    let mut cells = Vec::new();
+    for concurrency in &suite.concurrencies {
+        let blocks = collect_blocks(suite, measured, |slot| {
+            slot.client_cpu_cells
+                .iter()
+                .filter(|(level, _)| level == concurrency)
+                .map(|(_, milliseconds)| milliseconds * 1000.0 / connections)
+                .collect()
+        });
+        let cell = aggregate::paired_cell(
+            &blocks,
+            2,
+            0xC100 + u64::try_from(*concurrency).unwrap_or(0),
+            "client setup CPU cell",
+        )?;
+        cells.push((
+            concurrency.to_string(),
+            aggregate::paired_cell_json(&cell, Some("microsecondsPerConnection")),
+        ));
+    }
+    Ok(Json::object(cells))
 }
 
 fn client_data_summary(suite: &SetupRateSuite, measured: &[MeasuredSlot]) -> Result<Json, String> {
@@ -1797,6 +1886,28 @@ mod tests {
     }
 
     #[test]
+    fn setup_cpu_cells_cannot_hide_a_low_concurrency_regression() {
+        let mut context = client_suite();
+        context.concurrencies = vec![1, 8];
+        let mut slots = measured(3, 1, true);
+        for slot in &mut slots {
+            slot.client_cpu_cells = if slot.slot.implementation == "candidate" {
+                vec![(1, 200.0), (8, 50.0)]
+            } else {
+                vec![(1, 100.0), (8, 100.0)]
+            };
+        }
+        let json = client_cpu_summary(&context, &slots)
+            .unwrap()
+            .to_python_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["1"]["medianCandidateVsBaseline"], 2.0);
+        assert_eq!(value["8"]["medianCandidateVsBaseline"], 0.5);
+        slots[0].client_cpu_cells.pop();
+        assert!(client_cpu_summary(&context, &slots).is_err());
+    }
+
+    #[test]
     fn the_script_guards_are_reproduced() {
         validate(&suite()).expect("the defaults are valid");
 
@@ -1890,6 +2001,11 @@ mod tests {
                 MeasuredSlot {
                     slot: entry,
                     task_clock_ms: with_perf.then_some(if candidate { 100.0 } else { 200.0 }),
+                    client_cpu_cells: if with_perf {
+                        vec![(1, if candidate { 100.0 } else { 200.0 })]
+                    } else {
+                        Vec::new()
+                    },
                     data: Vec::new(),
                     rows,
                     pool: None,
