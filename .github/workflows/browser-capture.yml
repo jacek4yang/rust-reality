@@ -32,6 +32,7 @@ jobs:
           cargo build --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
           if ($LASTEXITCODE -ne 0) { throw 'capture tool build failed' }
       - name: Capture fresh headed browser sessions over verified HTTPS
+        timeout-minutes: 12
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -95,9 +96,12 @@ jobs:
           $identity | ConvertTo-Json -Depth 8 | Set-Content "$evidence/identity.json"
           if ($identity.publisher -ne 'Valid') { throw "browser publisher signature invalid: $($identity.publisher)" }
           if ($identity.browserVersion -ne $expectedVersion) { throw 'browser version differs from pinned stable version' }
+          Write-Host 'Browser identity verified; preparing local HTTPS certificates'
           & $tool prepare $private $caPath
           if ($LASTEXITCODE -ne 0) { throw 'test certificate preparation failed' }
-          $cert = Import-Certificate -FilePath $caPath -CertStoreLocation Cert:\CurrentUser\Root
+          Write-Host 'Certificates prepared; installing temporary runner machine trust'
+          $cert = Import-Certificate -FilePath $caPath -CertStoreLocation Cert:\LocalMachine\Root
+          Write-Host 'Temporary trust installed; starting capture processes'
           $hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
           $originalHosts = [IO.File]::ReadAllBytes($hosts)
           $origin = $null
@@ -132,7 +136,7 @@ jobs:
               if ($null -ne $process -and -not $process.HasExited) { taskkill /PID $process.Id /T /F | Out-Null }
             }
             [IO.File]::WriteAllBytes($hosts,$originalHosts)
-            Remove-Item "Cert:\CurrentUser\Root\$($cert.Thumbprint)"
+            Remove-Item "Cert:\LocalMachine\Root\$($cert.Thumbprint)"
             Remove-Item $private -Recurse -Force
             Remove-Item $caPath -Force
           }
