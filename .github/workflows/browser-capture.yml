@@ -1,0 +1,144 @@
+name: Native browser capture
+
+on:
+  pull_request:
+    paths:
+      - 'tools/rr-fingerprint/**'
+      - 'tools/Cargo.*'
+      - '.github/workflows/browser-capture.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    name: Genuine ${{ matrix.browser }} on Windows
+    runs-on: windows-2025
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Build isolated native capture tool
+        shell: pwsh
+        run: |
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { throw 'toolchain installation failed' }
+          cargo test --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
+          if ($LASTEXITCODE -ne 0) { throw 'capture tool tests failed' }
+          cargo build --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
+          if ($LASTEXITCODE -ne 0) { throw 'capture tool build failed' }
+      - name: Capture fresh headed browser sessions over verified HTTPS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tool = Join-Path $pwd 'tools/target/debug/rr-fingerprint.exe'
+          $evidence = Join-Path $env:RUNNER_TEMP 'browser-evidence'
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          $private = Join-Path $env:RUNNER_TEMP 'browser-private'
+          $caPath = Join-Path $env:RUNNER_TEMP 'browser-ca.der'
+          $browser = '${{ matrix.browser }}'
+          $inputs = Join-Path $env:RUNNER_TEMP 'browser-inputs'
+          New-Item -ItemType Directory -Path $inputs | Out-Null
+          function Fetch-Pinned($url, $name, $sha256) {
+            $path = Join-Path $inputs $name
+            Invoke-WebRequest -Uri $url -OutFile $path -TimeoutSec 180
+            if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $sha256) { throw "download digest mismatch: $name" }
+            return $path
+          }
+          if ($browser -eq 'chrome') {
+            $expectedVersion = '156.0.8078.73'
+            $distribution = 'Google Chrome for Testing, official Stable release'
+            $archive = Fetch-Pinned 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chrome-win64.zip' 'chrome.zip' '5db0ad4c070907a791ec895b9de5ed15334b27f79af2556a131c3c11b3913a2b'
+            $driverArchive = Fetch-Pinned 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chromedriver-win64.zip' 'driver.zip' 'f782a94fc2a16e7dc6be48c6a18516dc708de8e86ff4a736ddc3ff62ff207ebf'
+            Expand-Archive $archive -DestinationPath $inputs
+            Expand-Archive $driverArchive -DestinationPath $inputs
+            $binary = Join-Path $inputs 'chrome-win64/chrome.exe'
+            $driver = Join-Path $inputs 'chromedriver-win64/chromedriver.exe'
+          } else {
+            $expectedVersion = '159.0'
+            $distribution = 'Mozilla Firefox official Stable en-US win64'
+            $archive = Fetch-Pinned 'https://archive.mozilla.org/pub/firefox/releases/159.0/win64/en-US/Firefox%20Setup%20159.0.exe' 'firefox.exe' '8776887b79925abbdd407fcdfe257d8382b54e24be52a6466426b95a804d6790'
+            $driverArchive = Fetch-Pinned 'https://github.com/mozilla/geckodriver/releases/download/v0.37.1/geckodriver-v0.37.1-win64.zip' 'driver.zip' 'dfed9315abe8d2fbc1b6161a2ee8002452e79cf05ee92fdc653a4e26bc35edd8'
+            & 7z x $archive "-o$inputs/firefox" -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Firefox extraction failed' }
+            Expand-Archive $driverArchive -DestinationPath $inputs
+            $binary = Join-Path $inputs 'firefox/core/firefox.exe'
+            $driver = Join-Path $inputs 'geckodriver.exe'
+          }
+          $identity = [ordered]@{
+            purpose = 'discovery-only; not an approved release fixture'
+            source = '${{ github.sha }}'
+            browser = $browser
+            distribution = $distribution
+            expectedVersion = $expectedVersion
+            archiveSha256 = (Get-FileHash $archive -Algorithm SHA256).Hash
+            driverArchiveSha256 = (Get-FileHash $driverArchive -Algorithm SHA256).Hash
+            browserVersion = (Get-Item $binary).VersionInfo.ProductVersion
+            browserSha256 = (Get-FileHash $binary -Algorithm SHA256).Hash
+            publisher = (Get-AuthenticodeSignature $binary).Status.ToString()
+            driverVersion = (& $driver --version | Out-String).Trim()
+            driverSha256 = (Get-FileHash $driver -Algorithm SHA256).Hash
+            toolSha256 = (Get-FileHash $tool -Algorithm SHA256).Hash
+            os = (Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber)
+            imageOS = $env:ImageOS
+            imageVersion = $env:ImageVersion
+            mode = 'headed WebDriver; fresh profile for every sample'
+            transport = 'TCP TLS 1.3; HTTP/1.1 origin; no Alt-Svc; hosts DNS without ECH'
+            samplesRequired = 20
+          }
+          if ($identity.publisher -ne 'Valid') { throw 'browser publisher signature invalid' }
+          if ($identity.browserVersion -ne $expectedVersion) { throw 'browser version differs from pinned stable version' }
+          $identity | ConvertTo-Json -Depth 8 | Set-Content "$evidence/identity.json"
+          & $tool prepare $private $caPath
+          if ($LASTEXITCODE -ne 0) { throw 'test certificate preparation failed' }
+          $cert = Import-Certificate -FilePath $caPath -CertStoreLocation Cert:\CurrentUser\Root
+          $hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
+          $originalHosts = [IO.File]::ReadAllBytes($hosts)
+          $origin = $null
+          $webdriver = $null
+          try {
+            Add-Content -Path $hosts -Value "`n127.0.0.1 browser-capture.test"
+            $origin = Start-Process -FilePath $tool -ArgumentList @('serve', $private, "$evidence/wire") -PassThru -RedirectStandardOutput "$evidence/origin.stdout" -RedirectStandardError "$evidence/origin.stderr"
+            $webdriver = Start-Process -FilePath $driver -ArgumentList @('--port=4444') -PassThru -RedirectStandardOutput "$evidence/driver.stdout" -RedirectStandardError "$evidence/driver.stderr"
+            $ready = $false
+            for ($i=0; $i -lt 30; $i++) {
+              if ($origin.HasExited -or $webdriver.HasExited) { throw 'capture process exited during startup' }
+              try {
+                $status = Invoke-RestMethod -Uri 'http://127.0.0.1:4444/status' -TimeoutSec 1
+                if ((Test-Path "$evidence/wire/ready") -and $status.value.ready) { $ready=$true; break }
+              } catch { }
+              Start-Sleep -Seconds 1
+            }
+            if (-not $ready) { throw 'capture process startup deadline exceeded' }
+            & $tool collect $browser $binary "$evidence/browser"
+            if ($LASTEXITCODE -ne 0) { throw 'browser HTTPS capture failed' }
+            if ((Get-FileHash $binary -Algorithm SHA256).Hash -ne $identity.browserSha256) { throw 'browser changed during capture' }
+            $samples = Get-ChildItem "$evidence/browser/sample-*.json"
+            if ($samples.Count -ne 20) { throw 'missing browser samples' }
+            $receipts = @(Get-ChildItem "$evidence/wire/*.receipt.json" | ForEach-Object { Get-Content $_ -Raw | ConvertFrom-Json })
+            foreach ($sampleFile in $samples) {
+              $sample = Get-Content $sampleFile -Raw | ConvertFrom-Json
+              $match = @($receipts | Where-Object { $_.sample -eq $sample.sample -and $_.responseWritten })
+              if ($match.Count -ne 1 -or -not $sample.httpsVerified) { throw 'missing or ambiguous origin/browser binding' }
+            }
+          } finally {
+            foreach ($process in @($webdriver, $origin)) {
+              if ($null -ne $process -and -not $process.HasExited) { taskkill /PID $process.Id /T /F | Out-Null }
+            }
+            [IO.File]::WriteAllBytes($hosts,$originalHosts)
+            Remove-Item "Cert:\CurrentUser\Root\$($cert.Thumbprint)"
+            Remove-Item $private -Recurse -Force
+            Remove-Item $caPath -Force
+          }
+      - name: Preserve observations including failed attempts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-${{ matrix.browser }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-evidence/
+          if-no-files-found: error
+          retention-days: 30
