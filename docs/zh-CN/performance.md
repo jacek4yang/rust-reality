@@ -76,6 +76,19 @@ EOF，其[失败证据](../../benchmarks/evidence/releases/v2.3.0/client-data-ab
 下限。其余 39 项通过。两种缩小容量方案均被否决；客户端依据
 [ADR 0064](../adr/0064-retain-full-client-delivery-capacity.md) 保留完整的 16 KiB 初始交付容量。
 
+恢复完整容量的 [`7e4d89d` 对照](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-7e4d89d/archive-manifest.json)
+同样完成 3,840 个批次、120,960 次请求，零功能错误，但并发 64 双向吞吐仍失败：
+比值 0.9732，区间 [0.9659, 0.9872]。37 项通过；并发 32 双向吞吐与并发 64
+分帧上传 CPU 的区间未决。其完整可执行代码段与 `2fb3076` 相同，但较早的成功
+对照不能覆盖本次失败。仅恢复容量不足以证明数据路径无回退。
+
+独立的[三组 PMU 诊断](../../benchmarks/evidence/releases/v2.3.0/client-bidi-hotspot-7e4d89d/archive-manifest.json)
+观察并发 64 双向预热及三个 64 MiB 样本期间已有的客户端和服务端线程。
+客户端发送调用降至基线的 0.502、指令数为 0.973、周期数为 0.938，上下文切换
+则升至 1.129。这些区块比值中位数支持进一步检查合并写入减少的调度工作，但
+不能证明因果关系。带探针的计时不作为验收；原始计数、帧指针采样以及被否决的
+首次控制器调用均保留，不采集负载内容或原始用户栈。
+
 针对 `6455589` 的 [Heaptrack 诊断](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
 使用三轮零连接及 128 连接对照，全部 1,152 次已认证负载连接成功。扣除启动基线后，
 每连接分配调用次数为原始客户端 91.16–91.33、Chrome 88、Firefox 87–87.01。

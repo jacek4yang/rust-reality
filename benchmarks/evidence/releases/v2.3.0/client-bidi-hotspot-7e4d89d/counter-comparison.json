@@ -1,0 +1,145 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "rows": [
+    {
+      "role": "client",
+      "metric": "cpu_core/cycles/",
+      "blockRatios": [
+        0.9324509154867505,
+        0.9383767415440465,
+        0.9426096633899262
+      ],
+      "medianRatio": 0.9383767415440465
+    },
+    {
+      "role": "client",
+      "metric": "cpu_core/instructions/",
+      "blockRatios": [
+        0.9690636904459055,
+        0.9736798452031132,
+        0.9725477367152664
+      ],
+      "medianRatio": 0.9725477367152664
+    },
+    {
+      "role": "client",
+      "metric": "task-clock",
+      "blockRatios": [
+        0.957575385558469,
+        0.9423233726501623,
+        0.9445855068958283
+      ],
+      "medianRatio": 0.9445855068958283
+    },
+    {
+      "role": "client",
+      "metric": "context-switches",
+      "blockRatios": [
+        1.0971304941926667,
+        1.1314660765752844,
+        1.1293392981890482
+      ],
+      "medianRatio": 1.1293392981890482
+    },
+    {
+      "role": "client",
+      "metric": "syscalls:sys_enter_recvfrom",
+      "blockRatios": [
+        0.9929744536734103,
+        0.9990847632432611,
+        1.0004581137467403
+      ],
+      "medianRatio": 0.9990847632432611
+    },
+    {
+      "role": "client",
+      "metric": "syscalls:sys_enter_sendto",
+      "blockRatios": [
+        0.4990524122287409,
+        0.5018092817954171,
+        0.5024717985188674
+      ],
+      "medianRatio": 0.5018092817954171
+    },
+    {
+      "role": "client",
+      "metric": "syscalls:sys_enter_write",
+      "blockRatios": [
+        0.6829268292682927,
+        0.5992366412213741,
+        0.692
+      ],
+      "medianRatio": 0.6829268292682927
+    },
+    {
+      "role": "server",
+      "metric": "cpu_core/cycles/",
+      "blockRatios": [
+        0.9124866649097824,
+        0.9235777969999117,
+        0.9342490096626066
+      ],
+      "medianRatio": 0.9235777969999117
+    },
+    {
+      "role": "server",
+      "metric": "cpu_core/instructions/",
+      "blockRatios": [
+        0.9029857407182977,
+        0.9115727941289813,
+        0.9166575412553502
+      ],
+      "medianRatio": 0.9115727941289813
+    },
+    {
+      "role": "server",
+      "metric": "task-clock",
+      "blockRatios": [
+        0.9344351267096072,
+        0.9159392723129622,
+        0.9230852298425413
+      ],
+      "medianRatio": 0.9230852298425413
+    },
+    {
+      "role": "server",
+      "metric": "context-switches",
+      "blockRatios": [
+        0.7819302827050397,
+        0.8006913103891778,
+        0.8581969260108521
+      ],
+      "medianRatio": 0.8006913103891778
+    },
+    {
+      "role": "server",
+      "metric": "syscalls:sys_enter_recvfrom",
+      "blockRatios": [
+        0.8713644011778139,
+        0.8780614103486584,
+        0.8790998370970483
+      ],
+      "medianRatio": 0.8780614103486584
+    },
+    {
+      "role": "server",
+      "metric": "syscalls:sys_enter_sendto",
+      "blockRatios": [
+        0.8490526851321153,
+        0.8521711114511933,
+        0.8530992420997027
+      ],
+      "medianRatio": 0.8521711114511933
+    },
+    {
+      "role": "server",
+      "metric": "syscalls:sys_enter_write",
+      "blockRatios": [
+        0.8345250255362615,
+        0.9798941798941799,
+        0.9743101807802094
+      ],
+      "medianRatio": 0.9743101807802094
+    }
+  ]
+}

@@ -282,6 +282,10 @@ impl VisionIo {
             if let Some(plan) = second {
                 self.encoder.commit(&plan);
                 offset += next;
+                // Batching removes the second frame's socket write, but not
+                // its work. Preserve a cooperative scheduling point; this
+                // yields only when the task has exhausted its budget.
+                tokio::task::consume_budget().await;
             }
         }
         Ok(())

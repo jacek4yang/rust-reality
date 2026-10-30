@@ -91,6 +91,23 @@ passes, but concurrency-64 bidirectional throughput fails: ratio 0.9754 with
 pass. Both capacity-reduction variants are rejected; the client retains full
 16-KiB initial delivery capacity under [ADR 0064](../adr/0064-retain-full-client-delivery-capacity.md).
 
+The [full-capacity repeat at `7e4d89d`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-7e4d89d/archive-manifest.json)
+also completes 3,840 batches and 120,960 requests without functional errors,
+but fails concurrency-64 bidirectional throughput: 0.9732 [0.9659, 0.9872].
+Thirty-seven assessments pass; concurrency-32 bidirectional throughput and
+concurrency-64 framed-upload CPU remain unresolved. Its full executable text
+matches `2fb3076`; that earlier successful comparison does not override this
+failure. Restoring capacity alone does not establish data-path non-regression.
+
+A [separate three-block PMU diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-bidi-hotspot-7e4d89d/archive-manifest.json)
+observes the existing client and server threads during concurrency-64
+bidirectional warm-up and three 64-MiB samples. Client send calls fall to 0.502
+of baseline, instructions to 0.973, and cycles to 0.938; context switches rise
+to 1.129. These median block ratios motivate examining the scheduling work
+removed by batched writes, but do not prove causality. Instrumented timing is
+not acceptance. Raw counters, frame-pointer samples and the rejected first
+controller invocation are retained; no payload or raw user stack is captured.
+
 [Heaptrack diagnostics](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
 on `6455589` use three repeats of zero- and 128-connection controls. All 1,152
 authenticated workload connections succeed. Startup-subtracted allocation calls

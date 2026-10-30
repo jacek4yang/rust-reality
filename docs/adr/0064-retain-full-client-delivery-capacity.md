@@ -21,6 +21,12 @@ same-Chrome comparisons against d72abc2, not browser-profile cost comparisons.
 The follow-up does not isolate which consequence of the smaller initial
 allocation causes the remaining throughput difference.
 
+The later [full-capacity comparison](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-7e4d89d/archive-manifest.json)
+also fails concurrency-64 bidirectional throughput: 0.9732 [0.9659, 0.9872].
+Its executable text matches the earlier `2fb3076` implementation. This prevents
+attributing the remaining regression to reduced initial capacity alone; restoring
+capacity is not a substitute for complete data-path qualification.
+
 The [original-client comparison](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-2fb3076/archive-manifest.json)
 already shows lower absolute held anonymous residency with full delivery
 capacity: 9,790 versus 10,012 KiB at 128 held connections. Its larger increment

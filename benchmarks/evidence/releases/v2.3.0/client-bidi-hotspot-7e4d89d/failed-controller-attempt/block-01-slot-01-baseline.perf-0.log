@@ -1,0 +1,10 @@
+timeout option is not supported with interval-print.
+
+ Usage: perf stat [<options>] [<command>]
+
+        --timeout <n>     stop workload and print counts after a timeout period in ms (>= 10ms)
+
+ Usage: perf stat [<options>] [<command>]
+
+    -I, --interval-print <n>
+                          print counts at regular interval in ms (overhead is possible for values <= 100ms)
