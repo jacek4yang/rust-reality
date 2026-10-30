@@ -1,0 +1,12 @@
+{
+  "schema": "rr-independent-native-download-verification/v1",
+  "sourceCommit": "1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "workflowRun": "https://github.com/jacek4yang/rust-reality/actions/runs/41010002375",
+  "artifact": "native-qualification-1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "verifiedFileCount": 3120,
+  "sha256sumsSha256": "29a812045fb2008444e2f080cfca9de118eb9561c27048be65f6cbb3b6b90826",
+  "publicationSha256": "06e7b16d9a7e4658b09c51307bd8a1ccaccd88f8ba2f90c0046b2dae3affc418",
+  "frozenBinarySha256": "5341de081fd9cfa2c25686aae47f21c16c4b212cf1d6febc583015648d0cb7e2",
+  "sixCellReceipt": "cell=rust/direct verdict=PASS receipt=/home/runner/work/_temp/qualification/rust-direct-xudp/receipt.txt\ncell=rust/nxr verdict=PASS receipt=/home/runner/work/_temp/qualification/nxr-xudp-e2e/receipt.txt\ncell=rust/handoff verdict=PASS receipt=/home/runner/work/_temp/qualification/handoff-xudp-e2e/receipt.txt\ncell=xray/direct verdict=PASS receipt=/home/runner/work/_temp/qualification/stock-xray-xudp/receipt.txt\ncell=xray/nxr verdict=PASS receipt=/home/runner/work/_temp/qualification/stock-xray-nxr-xudp/receipt.txt\ncell=xray/handoff verdict=PASS receipt=/home/runner/work/_temp/qualification/stock-xray-handoff-xudp/receipt.txt\nverdict=PASS\ncells=6\n",
+  "scope": "Independent download and file digest verification of successful exact-head Native workflow evidence. Hosted frozen binary is distinct from the local performance ELF. This is not final-main Frozen qualification or release publication."
+}
