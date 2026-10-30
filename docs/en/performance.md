@@ -135,6 +135,17 @@ rejected by the collector before measurement; the retained invocation failure
 preceded the corrected, predeclared 20-block campaign. No collector limit or
 acceptance threshold was changed.
 
+The [monitored idle-host repeat](../../benchmarks/evidence/releases/v2.3.0/client-data-idle-c64-1c1930f/archive-manifest.json)
+retains another complete 20-block, nine-sample c64 campaign without pooling
+prior samples. All 276,480 data requests succeed, and periodic monitoring finds
+no compiler processes. Nine metrics pass. Bidirectional throughput now passes
+at 1.0554 (1.0200-1.0785), but framed-upload CPU remains unresolved at 1.0140
+(0.9978-1.0500). The earlier passing framed-upload interval does not replace
+this unresolved result. No release acceptance follows. Host observations are
+retained; periodic compiler detection is not proof of exclusive physical CPUs
+or of the cause of historical variance. Framed-upload PMU profiling is the next
+discriminating investigation, not another unchanged acceptance retry.
+
 The [full comparison at `1c1930f`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
 uses the same 32-KiB Direct-window implementation against `d72abc2`: 16 ABBA
 blocks, three samples, 3,840 batches and 120,960 requests, without workload
