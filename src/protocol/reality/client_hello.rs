@@ -107,7 +107,7 @@ pub enum ClientHelloClassError {
     Malformed,
     /// TLS 1.3 PSK/resumption is outside the prebuilt-profile contract.
     PreSharedKey,
-    /// A key-share group outside the two REALITY groups and GREASE was offered.
+    /// A group outside X25519, X25519MLKEM768, P-256 and GREASE was offered.
     UnsupportedKeyShare,
     /// Bounded temporary classifier storage could not be reserved.
     BufferAllocation,

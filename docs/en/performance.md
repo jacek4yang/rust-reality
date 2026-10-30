@@ -14,7 +14,81 @@ frozen v1.0.0 release comparison matrix is published in
 sections immediately below and keeps the v1.0.0 tables unchanged as
 historical release measurements.
 
-## Native browser client: measured setup changes
+## Native browser client: qualified development measurements
+
+The following comparisons bind candidate `2fb3076` (binary SHA-256
+`801c4d8d3a9de87277e6f9c2d1055733ea70c092c09ee99c6473ccaf29d0e862`)
+and collector `38abe32`. They use Rust 1.99.1, the i5-1240P's logical CPUs
+0,2,4,6, unchanged governor and limits, and a private loopback namespace.
+These are development-binary measurements, not final release qualification or
+WAN throughput. Ratios are candidate/baseline; intervals are the collector's
+95% block bootstrap. Failed and cancelled earlier experiments remain retained.
+
+### Data transfers with the same Chrome profile
+
+Baseline `d72abc2` and candidate `2fb3076` use Chrome 156.0.8078.74 against
+fixed server `c02e488`. Twelve balanced ABBA blocks contain 48 slots and 960
+successful 16-MiB transfers across concurrency 1,8,32,64 and Direct upload,
+Direct download, framed upload, framed download and bidirectional traffic.
+All 40 CPU/GiB and throughput intervals pass the predeclared 1% non-regression
+limits. At concurrency 64:
+
+| Case | CPU/GiB ratio (95% interval) | Throughput ratio (95% interval) |
+| --- | --- | --- |
+| Direct upload | 0.8473 (0.8364, 0.8588) | 1.0496 (1.0439, 1.0643) |
+| Direct download | 0.9934 (0.9863, 0.9978) | 1.0554 (1.0334, 1.0614) |
+| Framed upload | 0.9775 (0.9128, 1.0087) | 1.0605 (1.0280, 1.0735) |
+| Framed download | 0.9762 (0.9728, 0.9797) | 1.0781 (1.0739, 1.0848) |
+| Bidirectional | 0.9471 (0.9298, 0.9562) | 1.0181 (1.0093, 1.0265) |
+
+Framed upload passes non-regression but its interval does not establish a CPU
+improvement. These measurements include connection setup; they do not isolate
+AEAD cost or establish data p99 acceptance. The corrected benchmark origin
+acknowledges HTTP 100 Continue in both arms. Earlier upload throughput included
+curl's expectation wait and is not directly comparable.
+[All cells, raw samples and verified archive members](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-2fb3076/archive-manifest.json)
+retain the successful comparison. The original `eb91df6` client fails the
+Direct HTTPS data preflight with unexpected EOF; its
+[failure remains recorded](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-acbe/original-baseline-preflight/failure.json).
+`d72abc2` supplies the working canonical TLS I/O and half-close baseline.
+
+### Original client and server baselines
+
+The original fixed-profile client `eb91df6` versus current Chrome completes
+73,728 connections without failure in 12 ABBA blocks. All four concurrency
+cells pass 1% CPU/rate/p50 and 2% p99 non-regression. Rate ratios range from
+4.069 at concurrency 64 to 94.955 at concurrency one; CPU ratios range from
+0.1497 to 0.8888. The large low-concurrency change exposes the old socket
+policy, not faster cryptographic primitives. At 128 held connections, median
+additional anonymous residency is 30.52 versus 38.27 KiB per connection.
+The current canonical TLS reader retains cancellation-safe storage rather than
+allocating and copying each record as the original reader did. All 48 slots
+recover their original FD count at the two-second checkpoint. Residency is not
+an allocation count or proof of long-term retention.
+[Original-client evidence](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-2fb3076/archive-manifest.json)
+keeps this comparison separate from the same-profile intermediate baseline.
+
+With unchanged stock Xray 26.10.29, the original and current servers complete
+860,160 connections without failure in 20 ABBA blocks. Per-concurrency rate
+intervals and aggregate server CPU per connection pass 1% non-regression;
+the CPU ratio is 0.9994 (0.9987, 1.0027). The collector retains raw server
+latency samples but does not aggregate their p99 intervals, so this result
+does not establish server-tail acceptance.
+[Server evidence](../../benchmarks/evidence/releases/v2.3.0/server-original-setup-2fb3076/archive-manifest.json)
+does not replace Native or Frozen qualification.
+
+### Firefox profile cost
+
+Chrome and Firefox on the same `2fb3076` executable complete 73,728 connections
+without failure in 12 ABBA blocks. Firefox/Chrome CPU ratios are 1.437, 1.450,
+1.448 and 1.441 at concurrency 1,8,32,64; rate ratios are 0.792, 0.858, 0.874
+and 0.876. This is measured profile cost on this implementation, not an
+implementation regression or a claim that the entire difference is unavoidable.
+Firefox's additional valid P-256 share is required and is not omitted to improve
+the result. [Profile comparison evidence](../../benchmarks/evidence/releases/v2.3.0/client-profile-cost-2fb3076/archive-manifest.json)
+retains all intervals and binary identities.
+
+## Native browser client: intermediate setup changes
 
 A same-profile implementation comparison uses Chrome 156.0.8078.74 in both
 arms: baseline `d72abc2` and candidate `acbe49c`, with fixed server `c02e488`.

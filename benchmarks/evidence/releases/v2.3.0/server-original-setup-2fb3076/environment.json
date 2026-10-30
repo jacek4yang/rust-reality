@@ -1,0 +1,72 @@
+{
+  "baseline": {
+    "buildId": "59bff3b7b0392163ecd67a4d98942eb0a470394b",
+    "identity": "",
+    "path": "/home/jacek/.cache/rr-v230-baseline-eb91df6/binary/rust-reality",
+    "sha256": "0071eac26e36f6e8eb73bca313db5ec6567affefabbe8352d112dbd1f1bc60a3"
+  },
+  "blocks": 20,
+  "candidate": {
+    "buildId": "449a7cb179cc4f5ea646bd66426103d1d99026cc",
+    "identity": "{\"gitCommit\":\"2fb3076f40902a0ccd10078b13c5c38014180c8a\",\"version\":\"2.2.0\"}",
+    "path": "/home/jacek/.cache/rr-v230-candidate-freeze-2fb3076/binary/rust-reality",
+    "sha256": "801c4d8d3a9de87277e6f9c2d1055733ea70c092c09ee99c6473ccaf29d0e862"
+  },
+  "clientDataMiB": null,
+  "concurrencies": "1 8 32 64",
+  "connectionsPerSample": 128,
+  "coverModes": {
+    "baseline": "default",
+    "candidate": "default"
+  },
+  "coverNetwork": {
+    "model": "loopback",
+    "netemRttMs": null,
+    "target": "127.0.0.1:61001"
+  },
+  "fingerprints": {
+    "baseline": null,
+    "candidate": null
+  },
+  "harness": {
+    "benchOrigin": {
+      "embedded": true,
+      "path": "/home/jacek/.cache/rr-v230-client-perf-tool-38abe32/rr-dev",
+      "sha256": "ca416fcd777db10954ff8d8fec2be314d4c82e99f343089d9b4a2b7cdb7a2bba"
+    },
+    "contract": null,
+    "entrypoint": {
+      "path": "/home/jacek/.cache/rr-v230-client-perf-tool-38abe32/rr-dev",
+      "sha256": "ca416fcd777db10954ff8d8fec2be314d4c82e99f343089d9b4a2b7cdb7a2bba"
+    },
+    "keeperHelper": null
+  },
+  "hostExclusiveLock": {
+    "deviceInode": "49:29135",
+    "mode": "lockDirectory",
+    "path": "/run/user/1000/rust-reality/host-exclusive.lock.d",
+    "protocolVersion": 1,
+    "required": true
+  },
+  "measureMode": "schedstat",
+  "measuredRole": "server",
+  "method": "balanced block ABBA",
+  "ports": {
+    "address": "127.0.0.1",
+    "base": 61000,
+    "count": 162
+  },
+  "repository": {
+    "dirty": false,
+    "head": "2fb3076f40902a0ccd10078b13c5c38014180c8a"
+  },
+  "runId": "rr-v230-original-server-setup-2fb3076",
+  "samplesPerSlot": 21,
+  "schemaVersion": 2,
+  "xray": {
+    "buildId": null,
+    "identity": "Xray 26.10.29 (Xray, Penetrates Everything.) 0afec66 (go1.27.3 linux/amd64)",
+    "path": "/home/jacek/.cache/rr-v230-xray/extracted/xray",
+    "sha256": "e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa"
+  }
+}
