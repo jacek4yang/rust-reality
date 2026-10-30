@@ -139,6 +139,17 @@ Direct-download median throughput and CPU ratios are 1.0370 and 0.8625.
 These are promising diagnostic observations, not full qualification against
 `d72abc2` or acceptance-grade intervals.
 
+The [predeclared high-concurrency follow-up](../../benchmarks/evidence/releases/v2.3.0/client-data-precision-c64-1c1930f/archive-manifest.json)
+uses 20 ABBA blocks and nine samples per cell, retaining all five workloads at
+concurrency 64. All 276,480 data requests succeed. Nine of ten metric cells
+pass, but bidirectional throughput remains unresolved: ratio 1.0850, 95% interval
+0.9764-1.1642. Framed-upload CPU now passes at 0.9180 (0.8182-1.0061).
+The follow-up does not pool samples with the earlier concurrency schedule and
+does not establish release acceptance. Its initially requested 32-block run was
+rejected by the collector before measurement; the retained invocation failure
+preceded the corrected, predeclared 20-block campaign. No collector limit or
+acceptance threshold was changed.
+
 The [full comparison at `1c1930f`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
 uses the same 32-KiB Direct-window implementation against `d72abc2`: 16 ABBA
 blocks, three samples, 3,840 batches and 120,960 requests, without workload

@@ -1,0 +1,113 @@
+{
+  "scope": "Same-Chrome client data only; not final release acceptance. Ratios are candidate/baseline.",
+  "source": "Qualified collector summary bootstrap95; no recomputed statistics.",
+  "cpuUpperBound": 1.01,
+  "throughputLowerBound": 0.99,
+  "cells": [
+    {
+      "cell": "bidi:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8667029723517768,
+      "bootstrap95": [
+        0.8324659442123725,
+        0.9184578395241759
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0850477534860152,
+      "bootstrap95": [
+        0.9764349739271309,
+        1.1642203122655372
+      ],
+      "verdict": "UNRESOLVED"
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8387656537341351,
+      "bootstrap95": [
+        0.8338093474150103,
+        0.8473827952204567
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0817142563270896,
+      "bootstrap95": [
+        1.0737742848136338,
+        1.0928689411863912
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8347199788472996,
+      "bootstrap95": [
+        0.7840668057396853,
+        0.8682741904339686
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.07035535586586,
+      "bootstrap95": [
+        1.0440028054257509,
+        1.1454854130541212
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9728671316066397,
+      "bootstrap95": [
+        0.9667428057852372,
+        0.9773856529513043
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.084855190970747,
+      "bootstrap95": [
+        1.0739212382078978,
+        1.0941412827727333
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9180346126663681,
+      "bootstrap95": [
+        0.8182422953013783,
+        1.0060861582365614
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.1088438514826293,
+      "bootstrap95": [
+        1.0299012434881736,
+        1.231156520865764
+      ],
+      "verdict": "PASS"
+    }
+  ],
+  "counts": {
+    "PASS": 9,
+    "UNRESOLVED": 1
+  },
+  "verdict": "UNRESOLVED"
+}
