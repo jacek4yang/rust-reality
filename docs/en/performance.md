@@ -61,12 +61,27 @@ cells pass 1% CPU/rate/p50 and 2% p99 non-regression. Rate ratios range from
 0.1497 to 0.8888. The large low-concurrency change exposes the old socket
 policy, not faster cryptographic primitives. At 128 held connections, median
 additional anonymous residency is 30.52 versus 38.27 KiB per connection.
+Absolute held residency is 10,012 versus 9,790 KiB. The original implementation
+starts this phase with more allocator residency, so the incremental ratio alone
+does not establish a total-memory regression.
 The current canonical TLS reader retains cancellation-safe storage rather than
 allocating and copying each record as the original reader did. All 48 slots
 recover their original FD count at the two-second checkpoint. Residency is not
 an allocation count or proof of long-term retention.
 [Original-client evidence](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-2fb3076/archive-manifest.json)
 keeps this comparison separate from the same-profile intermediate baseline.
+
+The subsequent `119b37d` experiment reduces initial delivery storage to 8 KiB.
+Its [setup/resource comparison](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-119b37d/archive-manifest.json)
+passes the setup limits, with absolute held anonymous residency of 10,164 versus
+8,744 KiB and recovered residency of 9,764 versus 8,692 KiB. The post-churn
+increment is 31.06 versus 32.91 KiB per held connection; these measurements are
+not allocator-byte or allocation-count observations. Its
+[data comparison fails](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-119b37d/archive-manifest.json):
+seven assessments fail and two are unresolved. Direct retains the smaller
+socket-read capacity after the transition, increasing high-concurrency download
+CPU by about 25-30%. Framed download does not show that regression. The correction
+promotes delivery capacity at Direct; it requires a fresh matched comparison.
 
 With unchanged stock Xray 26.10.29, the original and current servers complete
 860,160 connections without failure in 20 ABBA blocks. Per-concurrency rate

@@ -190,6 +190,13 @@ impl VisionIo {
             return Err(VisionTunnelError::Vision);
         };
         let (pending, reader) = reader.into_inner_with_pending();
+        // Raw reads use delivery capacity as their socket-read bound. Promote
+        // once at Direct, so a small first frame cannot permanently shrink
+        // bulk reads while idle framed tunnels retain their smaller buffer.
+        if self.readable.capacity() < MAX_PLAINTEXT_LEN {
+            self.readable
+                .reserve(MAX_PLAINTEXT_LEN - self.readable.len());
+        }
         self.readable.extend_from_slice(&pending);
         self.reader = ReadDirection::Raw { reader };
         // Directions transition independently. An authenticated downlink Direct
@@ -664,7 +671,7 @@ mod tests {
             response: None,
             encoder: VisionEncoder::new(user).unwrap(),
             decoder: VisionDecoder::new(user),
-            readable: Vec::new(),
+            readable: Vec::with_capacity(crate::protocol::vless::VISION_FRAME_SIZE),
             readable_at: 0,
             activity: Arc::new(crate::io_activity::SessionActivity::default()),
         };
@@ -696,6 +703,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(matches!(io.reader, ReadDirection::Raw { .. }));
+        assert!(
+            io.readable.capacity() >= MAX_PLAINTEXT_LEN,
+            "Direct must promote delivery storage before bulk raw reads"
+        );
         let mut received = io.readable.clone();
         io.readable_at = io.readable.len();
         if received.len() < b"boundarypipelined raw bytes".len() {

@@ -57,6 +57,19 @@ EOF，其[失败证据](../../benchmarks/evidence/releases/v2.3.0/client-data-ab
 [原始客户端证据](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-2fb3076/archive-manifest.json)
 与相同指纹的中间实现基线对比分开保存。
 
+上述持有阶段的绝对匿名内存为 10,012 与 9,790 KiB。原始实现在该阶段开始时
+已有更多分配器驻留，因此仅凭增量比值不能认定总内存回退。
+
+后续 `119b37d` 实验将初始输出容量缩小到 8 KiB。
+[建连及资源对照](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-119b37d/archive-manifest.json)
+通过建连门槛；持有阶段绝对匿名内存为 10,164 与 8,744 KiB，回收后为 9,764
+与 8,692 KiB。相对建连压力后静置基线的每连接增量为 31.06 与 32.91 KiB，
+这些数据不是分配器字节数或分配次数。
+其[数据对照失败](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-119b37d/archive-manifest.json)：
+7 项失败、2 项未解决。Direct 切换后仍保留较小的 socket 读取容量，导致高并发
+下载 CPU 增加约 25–30%；分帧下载没有同样回退。修正在 Direct 切换时提升容量，
+仍须新的匹配测量才能验收。
+
 固定未经修改的 Xray 26.10.29 后，原始与当前服务端在 20 个 ABBA 区块中
 完成 860,160 次连接，零失败。各并发吞吐区间及汇总服务端每连接 CPU 通过
 1% 非回退；CPU 比值为 0.9994 (0.9987, 1.0027)。采集器保留原始服务端
