@@ -116,7 +116,10 @@ impl VisionIo {
             response: Some(Vec::new()),
             encoder,
             decoder: VisionDecoder::new(user_id),
-            readable: Vec::with_capacity(MAX_PLAINTEXT_LEN),
+            // Idle tunnels need only one initial Vision frame of delivery
+            // storage. Larger records and buffered batches grow this buffer
+            // under the existing bounds and retain it for subsequent reads.
+            readable: Vec::with_capacity(crate::protocol::vless::VISION_FRAME_SIZE),
             readable_at: 0,
             activity,
         })
