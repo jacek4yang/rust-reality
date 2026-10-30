@@ -1,0 +1,67 @@
+{
+  "sourceCommit": "1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "xraySha256": "e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa",
+  "scope": "Supplemental official stock Xray 26.10.29 ingress against compiled all-feature test executable; not the separately frozen default-feature release ELF.",
+  "results": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--all-features",
+        "--test",
+        "xudp_stock_xray_interop",
+        "stock_xray_client_udp_echo_via_rust_reality_entry",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--ignored"
+      ],
+      "exitCode": 0,
+      "seconds": 74.84760475158691,
+      "binarySha256": "50025279a1869b855fd39cfe60db513ccf92fbb7ee946b24549f988d618d3115",
+      "binaryVersion": "rust-reality 2.2.0\ncommit: 1c1930f929d2c6d51a5386ec0a539c30e4903ecd\n"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--all-features",
+        "--test",
+        "xudp_nxr_e2e",
+        "stock_xray_client_nxr_udp_echo_landing_is_sender",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--ignored"
+      ],
+      "exitCode": 0,
+      "seconds": 3.703568696975708,
+      "binarySha256": "50025279a1869b855fd39cfe60db513ccf92fbb7ee946b24549f988d618d3115",
+      "binaryVersion": "rust-reality 2.2.0\ncommit: 1c1930f929d2c6d51a5386ec0a539c30e4903ecd\n"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--all-features",
+        "--test",
+        "xudp_handoff_e2e",
+        "stock_xray_client_handoff_udp_echo_landing_is_sender",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--ignored"
+      ],
+      "exitCode": 0,
+      "seconds": 3.737921714782715,
+      "binarySha256": "50025279a1869b855fd39cfe60db513ccf92fbb7ee946b24549f988d618d3115",
+      "binaryVersion": "rust-reality 2.2.0\ncommit: 1c1930f929d2c6d51a5386ec0a539c30e4903ecd\n"
+    }
+  ]
+}

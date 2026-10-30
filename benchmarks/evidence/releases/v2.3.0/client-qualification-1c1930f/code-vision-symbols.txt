@@ -1,0 +1,8 @@
+00000000003e4290 t core::ptr::drop_glue::<<rust_reality::client::vision_io::VisionIo>::connect::{closure#0}>
+00000000003ee900 t core::ptr::drop_glue::<rust_reality::client::vision_io::VisionIo>
+00000000004a3050 t <rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}
+00000000004ce610 t <rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}
+00000000004cf0b0 t <rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}
+00000000004cf480 t <rust_reality::client::vision_io::VisionIo>::connect::{closure#0}
+0000000000527880 T <rust_reality::client::vision_io::VisionIo>::finish_read_transition
+000000000058a4d0 T rust_reality::client::vision_io::decode_downlink

@@ -1,0 +1,30 @@
+check all: 19 stages; full logs: /home/jacek/Projects/rust-reality-v230-client/target/rr-dev/check/1793339460237-4108455
+[01/19] PASS cargo dev repo check (75ms)
+[02/19] PASS cargo dev docs check (18ms)
+[03/19] PASS fuzz target manifest (0ms)
+[04/19] PASS active-probe manifest (16.5s)
+[05/19] PASS performance/cache contract (0ms)
+[06/19] PASS deployment summary contract (1ms)
+[07/19] PASS cargo fmt --all --check (670ms)
+[08/19] PASS cargo fmt --manifest-path tools/Cargo.toml --all --check (1.3s)
+[09/19] PASS cargo clippy --workspace --all-targets --all-features --locked -- -D warnings (6.8s)
+[10/19] PASS cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings (7.8s)
+[11/19] PASS cargo deny --all-features check bans licenses sources (345ms)
+[12/19] PASS cargo doc --workspace --all-features --locked --no-deps (2.5s)
+[13/19] PASS cargo nextest run --workspace --all-features --locked (28.7s)
+[14/19] FAIL cargo test --manifest-path tools/Cargo.toml --workspace --all-features --locked (106.9s)
+reason: `cargo test --manifest-path tools/Cargo.toml --workspace --all-features --locked` failed with exit status 101
+   Compiling ring v0.17.14
+   Compiling rustls-webpki v0.103.15
+   Compiling rcgen v0.13.2
+   Compiling rustls v0.23.46
+   Compiling ureq v3.4.0
+   Compiling rust-reality v2.2.0 (/home/jacek/Projects/rust-reality-v230-client)
+   Compiling rr-fingerprint v0.1.0 (/home/jacek/Projects/rust-reality-v230-client/tools/rr-fingerprint)
+   Compiling rr-dev v0.1.0 (/home/jacek/Projects/rust-reality-v230-client/tools/rr-dev)
+   Compiling rr-evidence-observe-server v0.1.0 (/home/jacek/Projects/rust-reality-v230-client/tools/rr-evidence-observe-server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.20s
+     Running unittests src/main.rs (tools/target/debug/deps/rr_dev-4065702ef4506d37)
+error: test failed, to rerun pass `-p rr-dev --bin rr-dev`
+stderr log: /home/jacek/Projects/rust-reality-v230-client/target/rr-dev/check/1793339460237-4108455/14-cargo-test-manifest-path-tools-cargo-toml-workspace-all-features.stderr.log
+FAIL check all: 13/19 passed in 171.6s; slowest: cargo test --manifest-path tools/Cargo.toml --workspace --all-features --locked (106.9s); logs: /home/jacek/Projects/rust-reality-v230-client/target/rr-dev/check/1793339460237-4108455

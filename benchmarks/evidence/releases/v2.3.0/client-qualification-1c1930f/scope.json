@@ -1,0 +1,7 @@
+{
+  "sourceCommit": "1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "scope": "Local full quality gate and supplemental stock ingress plus machine-code inspection. Does not certify release qualification or resolve the two ambiguous performance cells.",
+  "fullGate": "PASS19/19 on unchanged retry; first ETXTBSY failure retained, root cause unproven.",
+  "stockIngress": "Three official Xray26.10.29 UDP ingress tests PASS on the identified all-features executable.",
+  "machineCode": "Symbolized .text matches frozen default-feature ELF; authenticated Direct transition reserves once; raw reads reuse retained capacity."
+}
