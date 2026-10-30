@@ -1,0 +1,244 @@
+
+/home/jacek/.cache/rr-v230-code-inspection-1c1930f/rust-reality-symbols:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000004cf0b0 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}>:
+  4cf0b0:	55                   	push   %rbp
+  4cf0b1:	41 57                	push   %r15
+  4cf0b3:	41 56                	push   %r14
+  4cf0b5:	41 55                	push   %r13
+  4cf0b7:	41 54                	push   %r12
+  4cf0b9:	53                   	push   %rbx
+  4cf0ba:	48 83 ec 68          	sub    $0x68,%rsp
+  4cf0be:	48 89 f3             	mov    %rsi,%rbx
+  4cf0c1:	49 89 fe             	mov    %rdi,%r14
+  4cf0c4:	0f b6 46 10          	movzbl 0x10(%rsi),%eax
+  4cf0c8:	48 8d 0d a5 b1 c3 ff 	lea    -0x3c4e5b(%rip),%rcx        # 10a274 <anon.52698127c12854c52b81d178cd5cfcaf.6.llvm.3558453383676843257+0x3197>
+  4cf0cf:	48 63 04 81          	movslq (%rcx,%rax,4),%rax
+  4cf0d3:	48 01 c8             	add    %rcx,%rax
+  4cf0d6:	ff e0                	jmp    *%rax
+  4cf0d8:	4c 8b 2b             	mov    (%rbx),%r13
+  4cf0db:	4c 89 6b 08          	mov    %r13,0x8(%rbx)
+  4cf0df:	49 8b b5 88 03 00 00 	mov    0x388(%r13),%rsi
+  4cf0e6:	48 85 f6             	test   %rsi,%rsi
+  4cf0e9:	74 53                	je     4cf13e <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x8e>
+  4cf0eb:	49 8b 85 b8 00 00 00 	mov    0xb8(%r13),%rax
+  4cf0f2:	49 89 c7             	mov    %rax,%r15
+  4cf0f5:	49 29 f7             	sub    %rsi,%r15
+  4cf0f8:	0f 82 15 03 00 00    	jb     4cf413 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x363>
+  4cf0fe:	49 c7 85 b8 00 00 00 	movq   $0x0,0xb8(%r13)
+  4cf105:	00 00 00 00 
+  4cf109:	74 20                	je     4cf12b <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x7b>
+  4cf10b:	49 8b bd b0 00 00 00 	mov    0xb0(%r13),%rdi
+  4cf112:	48 01 fe             	add    %rdi,%rsi
+  4cf115:	49 89 d4             	mov    %rdx,%r12
+  4cf118:	4c 89 fa             	mov    %r15,%rdx
+  4cf11b:	ff 15 d7 40 2e 00    	call   *0x2e40d7(%rip)        # 7b31f8 <memmove@GLIBC_2.2.5>
+  4cf121:	4c 89 e2             	mov    %r12,%rdx
+  4cf124:	4d 89 bd b8 00 00 00 	mov    %r15,0xb8(%r13)
+  4cf12b:	48 8b 43 08          	mov    0x8(%rbx),%rax
+  4cf12f:	48 c7 80 88 03 00 00 	movq   $0x0,0x388(%rax)
+  4cf136:	00 00 00 00 
+  4cf13a:	4c 8b 6b 08          	mov    0x8(%rbx),%r13
+  4cf13e:	49 81 bd b8 00 00 00 	cmpq   $0x4000,0xb8(%r13)
+  4cf145:	00 40 00 00 
+  4cf149:	0f 86 b9 00 00 00    	jbe    4cf208 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x158>
+  4cf14f:	b8 0c 00 00 00       	mov    $0xc,%eax
+  4cf154:	e9 2e 01 00 00       	jmp    4cf287 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1d7>
+  4cf159:	4c 8b 63 20          	mov    0x20(%rbx),%r12
+  4cf15d:	49 bd 01 00 00 00 00 	movabs $0x8000000000000001,%r13
+  4cf164:	00 00 80 
+  4cf167:	4d 8b 7c 24 10       	mov    0x10(%r12),%r15
+  4cf16c:	49 8d 45 fe          	lea    -0x2(%r13),%rax
+  4cf170:	49 39 c7             	cmp    %rax,%r15
+  4cf173:	75 3a                	jne    4cf1af <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0xff>
+  4cf175:	48 8b 7b 08          	mov    0x8(%rbx),%rdi
+  4cf179:	48 8b 87 d8 00 00 00 	mov    0xd8(%rdi),%rax
+  4cf180:	4a 8d 0c 28          	lea    (%rax,%r13,1),%rcx
+  4cf184:	48 c1 f8 3f          	sar    $0x3f,%rax
+  4cf188:	48 21 c8             	and    %rcx,%rax
+  4cf18b:	48 83 f8 01          	cmp    $0x1,%rax
+  4cf18f:	0f 84 c8 00 00 00    	je     4cf25d <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1ad>
+  4cf195:	48 85 c0             	test   %rax,%rax
+  4cf198:	0f 85 d9 00 00 00    	jne    4cf277 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1c7>
+  4cf19e:	48 81 c7 d8 00 00 00 	add    $0xd8,%rdi
+  4cf1a5:	e8 06 f4 f0 ff       	call   3de5b0 <core::ptr::drop_glue::<rust_reality::protocol::reality::tls13::application_io::TlsApplicationReader<tokio::net::tcp::split_owned::OwnedReadHalf>>>
+  4cf1aa:	e9 c8 00 00 00       	jmp    4cf277 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1c7>
+  4cf1af:	49 8b 04 24          	mov    (%r12),%rax
+  4cf1b3:	4c 39 f8             	cmp    %r15,%rax
+  4cf1b6:	0f 84 28 02 00 00    	je     4cf3e4 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x334>
+  4cf1bc:	4c 29 f8             	sub    %r15,%rax
+  4cf1bf:	4d 03 7c 24 08       	add    0x8(%r12),%r15
+  4cf1c4:	4c 89 7c 24 08       	mov    %r15,0x8(%rsp)
+  4cf1c9:	48 89 44 24 10       	mov    %rax,0x10(%rsp)
+  4cf1ce:	0f 57 c0             	xorps  %xmm0,%xmm0
+  4cf1d1:	0f 11 44 24 18       	movups %xmm0,0x18(%rsp)
+  4cf1d6:	4c 89 7c 24 40       	mov    %r15,0x40(%rsp)
+  4cf1db:	48 8b 43 18          	mov    0x18(%rbx),%rax
+  4cf1df:	48 8b 38             	mov    (%rax),%rdi
+  4cf1e2:	48 83 c7 10          	add    $0x10,%rdi
+  4cf1e6:	48 8d 44 24 08       	lea    0x8(%rsp),%rax
+  4cf1eb:	48 89 d6             	mov    %rdx,%rsi
+  4cf1ee:	48 89 c2             	mov    %rax,%rdx
+  4cf1f1:	e8 8a d0 1f 00       	call   6cc280 <<tokio::net::tcp::stream::TcpStream>::poll_read_priv>
+  4cf1f6:	a8 01                	test   $0x1,%al
+  4cf1f8:	74 50                	je     4cf24a <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x19a>
+  4cf1fa:	49 c7 06 fe ff ff ff 	movq   $0xfffffffffffffffe,(%r14)
+  4cf201:	b0 04                	mov    $0x4,%al
+  4cf203:	e9 d8 00 00 00       	jmp    4cf2e0 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x230>
+  4cf208:	49 8b 85 d8 00 00 00 	mov    0xd8(%r13),%rax
+  4cf20f:	48 b9 01 00 00 00 00 	movabs $0x8000000000000001,%rcx
+  4cf216:	00 00 80 
+  4cf219:	48 01 c1             	add    %rax,%rcx
+  4cf21c:	48 c1 f8 3f          	sar    $0x3f,%rax
+  4cf220:	48 21 c8             	and    %rcx,%rax
+  4cf223:	48 83 f8 02          	cmp    $0x2,%rax
+  4cf227:	74 59                	je     4cf282 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1d2>
+  4cf229:	48 83 f8 01          	cmp    $0x1,%rax
+  4cf22d:	75 71                	jne    4cf2a0 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1f0>
+  4cf22f:	4d 8d a5 a8 00 00 00 	lea    0xa8(%r13),%r12
+  4cf236:	49 81 c5 e0 00 00 00 	add    $0xe0,%r13
+  4cf23d:	4c 89 6b 18          	mov    %r13,0x18(%rbx)
+  4cf241:	4c 89 63 20          	mov    %r12,0x20(%rbx)
+  4cf245:	e9 13 ff ff ff       	jmp    4cf15d <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0xad>
+  4cf24a:	49 89 d0             	mov    %rdx,%r8
+  4cf24d:	48 85 d2             	test   %rdx,%rdx
+  4cf250:	0f 84 26 01 00 00    	je     4cf37c <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x2cc>
+  4cf256:	b8 10 00 00 00       	mov    $0x10,%eax
+  4cf25b:	eb 2a                	jmp    4cf287 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1d7>
+  4cf25d:	48 8b 87 e0 00 00 00 	mov    0xe0(%rdi),%rax
+  4cf264:	f0 48 ff 08          	lock decq (%rax)
+  4cf268:	75 0d                	jne    4cf277 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1c7>
+  4cf26a:	48 81 c7 e0 00 00 00 	add    $0xe0,%rdi
+  4cf271:	ff 15 01 62 2e 00    	call   *0x2e6201(%rip)        # 7b5478 <_DYNAMIC+0x2688>
+  4cf277:	48 8b 43 08          	mov    0x8(%rbx),%rax
+  4cf27b:	4c 89 a8 d8 00 00 00 	mov    %r13,0xd8(%rax)
+  4cf282:	b8 0f 00 00 00       	mov    $0xf,%eax
+  4cf287:	49 89 06             	mov    %rax,(%r14)
+  4cf28a:	4d 89 46 08          	mov    %r8,0x8(%r14)
+  4cf28e:	4d 89 4e 10          	mov    %r9,0x10(%r14)
+  4cf292:	0f 28 44 24 30       	movaps 0x30(%rsp),%xmm0
+  4cf297:	41 0f 11 46 18       	movups %xmm0,0x18(%r14)
+  4cf29c:	b0 01                	mov    $0x1,%al
+  4cf29e:	eb 40                	jmp    4cf2e0 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x230>
+  4cf2a0:	49 81 c5 d8 00 00 00 	add    $0xd8,%r13
+  4cf2a7:	48 c7 43 18 2c 01 00 	movq   $0x12c,0x18(%rbx)
+  4cf2ae:	00 
+  4cf2af:	c7 43 20 00 00 00 00 	movl   $0x0,0x20(%rbx)
+  4cf2b6:	4c 89 6b 28          	mov    %r13,0x28(%rbx)
+  4cf2ba:	c6 43 48 00          	movb   $0x0,0x48(%rbx)
+  4cf2be:	48 8d 73 18          	lea    0x18(%rbx),%rsi
+  4cf2c2:	48 8d 7c 24 08       	lea    0x8(%rsp),%rdi
+  4cf2c7:	e8 34 aa 01 00       	call   4e9d00 <<rust_reality::protocol::reality::tls13::application_io::TlsApplicationReader<tokio::net::tcp::split_owned::OwnedReadHalf>>::read_application::{closure#0}>
+  4cf2cc:	48 8b 44 24 08       	mov    0x8(%rsp),%rax
+  4cf2d1:	48 83 f8 fe          	cmp    $0xfffffffffffffffe,%rax
+  4cf2d5:	75 1b                	jne    4cf2f2 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x242>
+  4cf2d7:	49 c7 06 fe ff ff ff 	movq   $0xfffffffffffffffe,(%r14)
+  4cf2de:	b0 03                	mov    $0x3,%al
+  4cf2e0:	88 43 10             	mov    %al,0x10(%rbx)
+  4cf2e3:	48 83 c4 68          	add    $0x68,%rsp
+  4cf2e7:	5b                   	pop    %rbx
+  4cf2e8:	41 5c                	pop    %r12
+  4cf2ea:	41 5d                	pop    %r13
+  4cf2ec:	41 5e                	pop    %r14
+  4cf2ee:	41 5f                	pop    %r15
+  4cf2f0:	5d                   	pop    %rbp
+  4cf2f1:	c3                   	ret
+  4cf2f2:	4c 8b 44 24 10       	mov    0x10(%rsp),%r8
+  4cf2f7:	4c 8b 4c 24 18       	mov    0x18(%rsp),%r9
+  4cf2fc:	0f 10 44 24 20       	movups 0x20(%rsp),%xmm0
+  4cf301:	0f 29 44 24 50       	movaps %xmm0,0x50(%rsp)
+  4cf306:	83 f8 ff             	cmp    $0xffffffff,%eax
+  4cf309:	74 0f                	je     4cf31a <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x26a>
+  4cf30b:	0f 28 44 24 50       	movaps 0x50(%rsp),%xmm0
+  4cf310:	0f 29 44 24 30       	movaps %xmm0,0x30(%rsp)
+  4cf315:	e9 6d ff ff ff       	jmp    4cf287 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1d7>
+  4cf31a:	48 8b 4b 08          	mov    0x8(%rbx),%rcx
+  4cf31e:	48 8d b1 c0 00 00 00 	lea    0xc0(%rcx),%rsi
+  4cf325:	48 8d 91 98 01 00 00 	lea    0x198(%rcx),%rdx
+  4cf32c:	48 81 c1 a8 00 00 00 	add    $0xa8,%rcx
+  4cf333:	48 8d 7c 24 08       	lea    0x8(%rsp),%rdi
+  4cf338:	ff 15 4a 67 2e 00    	call   *0x2e674a(%rip)        # 7b5a88 <_DYNAMIC+0x2c98>
+  4cf33e:	48 8b 44 24 08       	mov    0x8(%rsp),%rax
+  4cf343:	48 83 f8 ff          	cmp    $0xffffffffffffffff,%rax
+  4cf347:	75 1a                	jne    4cf363 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x2b3>
+  4cf349:	48 8b 73 08          	mov    0x8(%rbx),%rsi
+  4cf34d:	48 8d 7c 24 08       	lea    0x8(%rsp),%rdi
+  4cf352:	ff 15 38 67 2e 00    	call   *0x2e6738(%rip)        # 7b5a90 <_DYNAMIC+0x2ca0>
+  4cf358:	48 8b 44 24 08       	mov    0x8(%rsp),%rax
+  4cf35d:	48 83 f8 ff          	cmp    $0xffffffffffffffff,%rax
+  4cf361:	74 75                	je     4cf3d8 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x328>
+  4cf363:	4c 8b 44 24 10       	mov    0x10(%rsp),%r8
+  4cf368:	4c 8b 4c 24 18       	mov    0x18(%rsp),%r9
+  4cf36d:	0f 10 44 24 20       	movups 0x20(%rsp),%xmm0
+  4cf372:	0f 29 44 24 30       	movaps %xmm0,0x30(%rsp)
+  4cf377:	e9 0b ff ff ff       	jmp    4cf287 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1d7>
+  4cf37c:	48 8b 54 24 10       	mov    0x10(%rsp),%rdx
+  4cf381:	48 8b 74 24 18       	mov    0x18(%rsp),%rsi
+  4cf386:	48 39 d6             	cmp    %rdx,%rsi
+  4cf389:	0f 87 96 00 00 00    	ja     4cf425 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x375>
+  4cf38f:	48 8b 44 24 08       	mov    0x8(%rsp),%rax
+  4cf394:	48 89 44 24 48       	mov    %rax,0x48(%rsp)
+  4cf399:	49 39 c7             	cmp    %rax,%r15
+  4cf39c:	0f 85 92 00 00 00    	jne    4cf434 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x384>
+  4cf3a2:	48 8b 43 20          	mov    0x20(%rbx),%rax
+  4cf3a6:	48 8b 08             	mov    (%rax),%rcx
+  4cf3a9:	48 8b 50 10          	mov    0x10(%rax),%rdx
+  4cf3ad:	48 29 d1             	sub    %rdx,%rcx
+  4cf3b0:	48 39 f1             	cmp    %rsi,%rcx
+  4cf3b3:	0f 82 96 00 00 00    	jb     4cf44f <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x39f>
+  4cf3b9:	48 01 f2             	add    %rsi,%rdx
+  4cf3bc:	48 89 50 10          	mov    %rdx,0x10(%rax)
+  4cf3c0:	48 85 f6             	test   %rsi,%rsi
+  4cf3c3:	0f 84 ac fd ff ff    	je     4cf175 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0xc5>
+  4cf3c9:	48 8b 43 08          	mov    0x8(%rbx),%rax
+  4cf3cd:	48 8b 80 80 03 00 00 	mov    0x380(%rax),%rax
+  4cf3d4:	c6 40 10 01          	movb   $0x1,0x10(%rax)
+  4cf3d8:	48 c7 c0 ff ff ff ff 	mov    $0xffffffffffffffff,%rax
+  4cf3df:	e9 a3 fe ff ff       	jmp    4cf287 <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x1d7>
+  4cf3e4:	48 89 d5             	mov    %rdx,%rbp
+  4cf3e7:	ba 40 00 00 00       	mov    $0x40,%edx
+  4cf3ec:	b9 01 00 00 00       	mov    $0x1,%ecx
+  4cf3f1:	41 b8 01 00 00 00    	mov    $0x1,%r8d
+  4cf3f7:	4c 89 e7             	mov    %r12,%rdi
+  4cf3fa:	4c 89 fe             	mov    %r15,%rsi
+  4cf3fd:	e8 ce 64 f5 ff       	call   4258d0 <<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global>>
+  4cf402:	48 89 ea             	mov    %rbp,%rdx
+  4cf405:	49 8b 04 24          	mov    (%r12),%rax
+  4cf409:	4d 8b 7c 24 10       	mov    0x10(%r12),%r15
+  4cf40e:	e9 a9 fd ff ff       	jmp    4cf1bc <<rust_reality::client::vision_io::VisionIo>::read_and_open_record::{closure#0}+0x10c>
+  4cf413:	48 8d 0d 0e 44 2d 00 	lea    0x2d440e(%rip),%rcx        # 7a3828 <anon.52698127c12854c52b81d178cd5cfcaf.8.llvm.3558453383676843257+0x7128>
+  4cf41a:	31 ff                	xor    %edi,%edi
+  4cf41c:	48 89 c2             	mov    %rax,%rdx
+  4cf41f:	ff 15 33 3c 2e 00    	call   *0x2e3c33(%rip)        # 7b3058 <_DYNAMIC+0x268>
+  4cf425:	48 8d 0d 64 47 2d 00 	lea    0x2d4764(%rip),%rcx        # 7a3b90 <anon.52698127c12854c52b81d178cd5cfcaf.8.llvm.3558453383676843257+0x7490>
+  4cf42c:	31 ff                	xor    %edi,%edi
+  4cf42e:	ff 15 24 3c 2e 00    	call   *0x2e3c24(%rip)        # 7b3058 <_DYNAMIC+0x268>
+  4cf434:	4c 8d 0d 6d 47 2d 00 	lea    0x2d476d(%rip),%r9        # 7a3ba8 <anon.52698127c12854c52b81d178cd5cfcaf.8.llvm.3558453383676843257+0x74a8>
+  4cf43b:	48 8d 74 24 40       	lea    0x40(%rsp),%rsi
+  4cf440:	48 8d 54 24 48       	lea    0x48(%rsp),%rdx
+  4cf445:	31 ff                	xor    %edi,%edi
+  4cf447:	31 c9                	xor    %ecx,%ecx
+  4cf449:	ff 15 99 61 2e 00    	call   *0x2e6199(%rip)        # 7b55e8 <_DYNAMIC+0x27f8>
+  4cf44f:	48 89 74 24 08       	mov    %rsi,0x8(%rsp)
+  4cf454:	48 89 4c 24 10       	mov    %rcx,0x10(%rsp)
+  4cf459:	48 8d 7c 24 08       	lea    0x8(%rsp),%rdi
+  4cf45e:	ff 15 2c 40 2e 00    	call   *0x2e402c(%rip)        # 7b3490 <_DYNAMIC+0x6a0>
+  4cf464:	48 8d 3d ad 12 2d 00 	lea    0x2d12ad(%rip),%rdi        # 7a0718 <anon.52698127c12854c52b81d178cd5cfcaf.8.llvm.3558453383676843257+0x4018>
+  4cf46b:	ff 15 e7 43 2e 00    	call   *0x2e43e7(%rip)        # 7b3858 <_DYNAMIC+0xa68>
+  4cf471:	0f 0b                	ud2
+  4cf473:	cc                   	int3
+  4cf474:	cc                   	int3
+  4cf475:	cc                   	int3
+  4cf476:	cc                   	int3
+  4cf477:	cc                   	int3
+  4cf478:	cc                   	int3
+  4cf479:	cc                   	int3
+  4cf47a:	cc                   	int3
+  4cf47b:	cc                   	int3
+  4cf47c:	cc                   	int3
+  4cf47d:	cc                   	int3
+  4cf47e:	cc                   	int3
+  4cf47f:	cc                   	int3

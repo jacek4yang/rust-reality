@@ -1,0 +1,10 @@
+{
+  "sourceCommit": "1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "command": "RUST_REALITY_GIT_COMMIT=1c1930f929d2c6d51a5386ec0a539c30e4903ecd cargo dev check --all",
+  "verdict": "PASS",
+  "stagesPassed": 19,
+  "seconds": 430.6,
+  "logSha256": "f5e9a0376e89dc31c6b3191e6507bc185c892beb892e5fdcfa111335c8c8b568",
+  "logs": "target/rr-dev/check/1793339722438-4124139",
+  "priorFailedAttempt": "rr-v230-full-check-retry-1c1930f.json"
+}

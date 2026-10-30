@@ -101,6 +101,19 @@ EOF，其[失败证据](../../benchmarks/evidence/releases/v2.3.0/client-data-ab
 中位比值为 0.8658；Direct 下载吞吐与 CPU 中位比值为 1.0370、0.8625。
 这些是值得继续验证的诊断观察，不是相对 `d72abc2` 的完整资格或验收级区间。
 
+[`1c1930f` 的完整对照](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
+使用同一 32 KiB Direct 窗口实现与 `d72abc2` 比较：16 个 ABBA 区块、每格三个
+样本，共 3,840 个批次、120,960 次请求，零负载错误。38 项通过，两项未决。
+并发 64 双向吞吐为 0.9865 [0.9535, 1.0009]，不能证明满足 0.99 下限；分帧上传
+CPU/GiB 为 0.9918 [0.9736, 1.0271]，不能证明满足 1.01 上限。双向 CPU 通过，
+比值为 0.9062 [0.9022, 0.9513]；Direct 下载 CPU 为 0.8628 [0.8598, 0.8659]，
+吞吐为 1.0665 [1.0598, 1.0715]。CPU 节省不能豁免吞吐不确定性。此处双向指
+分别并发运行上传和下载连接，不是同一 socket 的两个方向。两项未决阻止性能
+验收，须依据现有契约增加测量精度。
+[本地检查与机器代码核验](../../benchmarks/evidence/releases/v2.3.0/client-qualification-1c1930f/scope.json)
+保留完整 19 阶段通过结果、此前的瞬态执行失败，以及三个 stock Xray 26.10.29
+UDP 入站补测的通过结果和精确身份。
+
 独立的[驻留内存诊断](../../benchmarks/evidence/releases/v2.3.0/client-direct-memory-04a1dc5/summary.json)
 对每个二进制轮换运行三次，持有 128 条验证过证书的 TLS 1.3 HTTPS 长连接，
 每条连接两次校验精确的 1 MiB 响应。全部 2,304 次响应正确，九次进程均恢复

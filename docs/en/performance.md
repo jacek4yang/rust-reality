@@ -124,6 +124,22 @@ Direct-download median throughput and CPU ratios are 1.0370 and 0.8625.
 These are promising diagnostic observations, not full qualification against
 `d72abc2` or acceptance-grade intervals.
 
+The [full comparison at `1c1930f`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
+uses the same 32-KiB Direct-window implementation against `d72abc2`: 16 ABBA
+blocks, three samples, 3,840 batches and 120,960 requests, without workload
+errors. Thirty-eight assessments pass; two remain unresolved. At concurrency
+64, bidirectional throughput is 0.9865 [0.9535, 1.0009], which does not establish
+the 0.99 lower bound. Framed-upload CPU/GiB is 0.9918 [0.9736, 1.0271], which
+does not establish the 1.01 upper bound. Bidirectional CPU passes at 0.9062
+[0.9022, 0.9513]; Direct-download CPU is 0.8628 [0.8598, 0.8659] and throughput
+is 1.0665 [1.0598, 1.0715]. CPU savings do not waive throughput uncertainty.
+Here bidirectional means simultaneous separate upload and download connections,
+not two directions on one socket. These unresolved cells prevent performance
+acceptance and require increased precision under the existing contract.
+[Local checks and code inspection](../../benchmarks/evidence/releases/v2.3.0/client-qualification-1c1930f/scope.json)
+retain the full 19-stage pass, the preceding transient execution failure, and
+three supplemental stock Xray 26.10.29 UDP ingress passes with exact identities.
+
 A [separate retained-memory diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-direct-memory-04a1dc5/summary.json)
 uses three rotated repeats per binary, 128 persistent verified TLS 1.3 HTTPS
 connections, and two exact 1-MiB responses per connection. All 2,304 responses
