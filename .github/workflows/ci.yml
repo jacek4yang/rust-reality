@@ -64,6 +64,28 @@ jobs:
       - name: Run repository quality checks
         run: cargo dev check --all
 
+      - name: Compare production browser offers with frozen native captures
+        env:
+          RR_BROWSER_COMPARISON_OUTPUT: ${{ runner.temp }}/browser-offers
+        run: |
+          cargo test --test browser_line_capture --locked
+          cargo build --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
+          for browser in chrome firefox; do
+            tools/target/debug/rr-fingerprint compare-corpus "$browser" "benchmarks/evidence/browser-clienthello/windows-20261029/$browser/sample-00.tls" "$RR_BROWSER_COMPARISON_OUTPUT"/"$browser"-*.tls
+            tools/target/debug/rr-fingerprint hashes "benchmarks/evidence/browser-clienthello/windows-20261029/$browser/sample-00.tls" > "$RR_BROWSER_COMPARISON_OUTPUT/$browser-reference-hashes.json"
+            for capture in "$RR_BROWSER_COMPARISON_OUTPUT"/"$browser"-*.tls; do
+              tools/target/debug/rr-fingerprint hashes "$capture" > "$capture.hashes.json"
+            done
+          done
+
+      - name: Retain production browser offers and auxiliary hashes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-offers-${{ github.sha }}
+          path: ${{ runner.temp }}/browser-offers/
+          if-no-files-found: error
+          retention-days: 30
+
       # The gate keeps each stage's complete stdout and stderr in files rather
       # than flooding the terminal, and prints a bounded excerpt. That is right
       # locally, where the files are still there, and wrong on a runner that is

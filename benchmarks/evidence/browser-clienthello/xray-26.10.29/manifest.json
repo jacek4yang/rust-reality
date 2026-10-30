@@ -1,0 +1,262 @@
+{
+  "binarySha256": "e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa",
+  "binaryVersionOutput": "Xray 26.10.29 (Xray, Penetrates Everything.) 0afec66 (go1.27.3 linux/amd64)\nA unified platform for anti-censorship.\n",
+  "captureSourceSha256": "51fe194242f84b5cb4915c89daffb7ed90ececf124e2d572b34d25405cd06c9f",
+  "captureToolSha256": "8675263dd177c2fdf51a5efd8323b6c3d5f4cd94f597e2c95f927ab7e3048177",
+  "conditions": {
+    "address": "loopback",
+    "authentication": "synthetic test credentials; capture endpoint closes after ClientHello; no authenticated-session claim",
+    "freshProcessPerSample": true,
+    "serverName": "browser-capture.test"
+  },
+  "platform": {
+    "arch": "x86_64",
+    "os": "linux"
+  },
+  "samples": [
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-00.tls",
+      "profile": "chrome",
+      "sha256": "24c8d3da8a23a76dd0d55a4f8f590941d53013ca15051c34b532adc675fd906b"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-01.tls",
+      "profile": "chrome",
+      "sha256": "20ee83b12961253ac8209eaa44f1188005b139f45fddcf935d071bc9bc18cc0c"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-02.tls",
+      "profile": "chrome",
+      "sha256": "0777ac3a8e39139a5a690b10a533f4f67ce70f53f5e72b0a2250f5f50c5d6627"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-03.tls",
+      "profile": "chrome",
+      "sha256": "b707a803ca7dd87455ff907c191b2f94eb7b158612471e3c8cb6e0f787003ed5"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-04.tls",
+      "profile": "chrome",
+      "sha256": "a9b2de0922a94bf11c88f9a2e799fb99f95d32329ccf43f340b1b55186e58490"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-05.tls",
+      "profile": "chrome",
+      "sha256": "960cba93aa8fe9e2d4a40bf7376113bf26e1dc1671fb26e56a8cd646e843a143"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-06.tls",
+      "profile": "chrome",
+      "sha256": "776e06511e97c97282ee234f2c5f556f3e374494b34c42340d91acfd1dd00423"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-07.tls",
+      "profile": "chrome",
+      "sha256": "2c30bf0e0195da21d6fbafe9be9e323b4f943cd2f5bf7c98f50f3e0d569fe1b4"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-08.tls",
+      "profile": "chrome",
+      "sha256": "646760bf2a19d11dc64bfda51cd4a3585a0ef03ff1dbfae3a290fa40803c2a8f"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-09.tls",
+      "profile": "chrome",
+      "sha256": "7f933b47faa6008ca04408e0657f2e21f42c892496de4b050ce5200d4d337d0f"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-10.tls",
+      "profile": "chrome",
+      "sha256": "6791cafd4e3d815116baa1fa5af7e652eb5df66255a8557e72d1b986402ca11a"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-11.tls",
+      "profile": "chrome",
+      "sha256": "7a8437ba8dacd419d89f4f6cb3a36e1c9d5d4019793d0b0bbe21c64d0c3db3f9"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-12.tls",
+      "profile": "chrome",
+      "sha256": "2b651e8bcd68f5350f661e31a2feee4ff621f0d6fbe2fbd24e86be0e2eebe4ca"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-13.tls",
+      "profile": "chrome",
+      "sha256": "e3242ef0dcae77c1e39cb58b70f22e7aafc18ba8f5c3b9ed0f42d86e815503d3"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-14.tls",
+      "profile": "chrome",
+      "sha256": "4a11c95148bed76ac6ad0b6ce961145c8c4ae79cc032a21e0e8925a37e9fca00"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-15.tls",
+      "profile": "chrome",
+      "sha256": "cc7a186e74ddf288cad34d62585c50ed2cfe54987af9554943ae85fa6f0e4e67"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-16.tls",
+      "profile": "chrome",
+      "sha256": "0844aa0f882be1587db97bc5d58a4c2fb2fb6ea1ff27bae13afeeab5a1f45315"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-17.tls",
+      "profile": "chrome",
+      "sha256": "5fb0bc7b30f09861a3e2378308c2df70911516eef60970e6f30a488be6853cd1"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-18.tls",
+      "profile": "chrome",
+      "sha256": "57c467ba3ef3e95a38a88bc0b64e183b8ac6519549dad3bd0a6ef41856ecc955"
+    },
+    {
+      "concreteProfile": "HelloChrome_133",
+      "file": "chrome/sample-19.tls",
+      "profile": "chrome",
+      "sha256": "3c4e17fa3de9c48ce7cd377e9a1898c09e89ee97bc527db6e8e3a99d964596f6"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-00.tls",
+      "profile": "firefox",
+      "sha256": "8dddec80e16286eb7de0ec9a77ce0ab56c8db93d2d2da8c3386cc318df1cf102"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-01.tls",
+      "profile": "firefox",
+      "sha256": "7bff1b11f30fd8873081bb26d282cda47e5472eb68be96d4200bdf6bbb8e4dc6"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-02.tls",
+      "profile": "firefox",
+      "sha256": "cef0c35fa7861fbb60080cca226a37eccf882d22281686fd376a5a085be1421f"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-03.tls",
+      "profile": "firefox",
+      "sha256": "d29cda2cabb54f6f1e8fc62a5ec4ccfac966c5907b61c7d39fe671d639625583"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-04.tls",
+      "profile": "firefox",
+      "sha256": "64a9e36cc7f6adf6c600818d8775e292fce032999ac96faead5cf26d9f900d8f"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-05.tls",
+      "profile": "firefox",
+      "sha256": "1fa1bebbe581a4d6ba69252dbee66130cb532029d30a259dcb06792eccf71160"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-06.tls",
+      "profile": "firefox",
+      "sha256": "fceaae83ffa1c8b0f15d32a551623a8f542769d4e62b045dfebcb2ef4f0bb78f"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-07.tls",
+      "profile": "firefox",
+      "sha256": "6d5a799bd0463e07bbf3af52ee99bb3b6c0451b36b435c81be47492cf2068f84"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-08.tls",
+      "profile": "firefox",
+      "sha256": "1cc642e95a117637b48eef581367d313392fc1778e3608f2a1d4035fb15fa852"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-09.tls",
+      "profile": "firefox",
+      "sha256": "0cb22d797319edd5058d13c4a77bef0cedd7c9b6f7b43d770c67a8044171a99f"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-10.tls",
+      "profile": "firefox",
+      "sha256": "bce1cf1434007fdfdfc1d0ec00a42cafa614d515b867068c1e5cb9c80fb4d593"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-11.tls",
+      "profile": "firefox",
+      "sha256": "a140b6cc8733a6e55ba12475ebe042dabef730d6a4a8f53197a24605861c6383"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-12.tls",
+      "profile": "firefox",
+      "sha256": "54e7977b017e2ff3516a6c7c4ce740a5136f0c81c92ddc26dcdd71ce40b195ae"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-13.tls",
+      "profile": "firefox",
+      "sha256": "240e14ec277138630f86f316b32bfd68c943d22c3716bc90c8c384791047a129"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-14.tls",
+      "profile": "firefox",
+      "sha256": "72067bacb742ab20ab6ff46a9026373e78189a2e7905d8a63ce3c64e40a5939c"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-15.tls",
+      "profile": "firefox",
+      "sha256": "0a21a89f732a23f2afa4cb165d80e5c11d70edf40c29704752f188ee563fa0d1"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-16.tls",
+      "profile": "firefox",
+      "sha256": "d580dc0fdb4ea842958c0553903f83c387b75e4aef29ef04edf23eb3348bafa9"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-17.tls",
+      "profile": "firefox",
+      "sha256": "8fcbd704de14cf79bdc7716cbcaaa4d9752d017f294a4d8ea8fd032c055de45e"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-18.tls",
+      "profile": "firefox",
+      "sha256": "02f2489e87c63ceb63df68910ed046233d867e8ae5ea10ac2f4348b5a34cdda2"
+    },
+    {
+      "concreteProfile": "HelloFirefox_148",
+      "file": "firefox/sample-19.tls",
+      "profile": "firefox",
+      "sha256": "a373fd1255874c48da53dcf4dd36b905a7a624f3deb787c92cdefb06160b6f64"
+    }
+  ],
+  "schemaVersion": 1,
+  "utlsCommit": "aa6edf4b11af82e110eea845bb2983d30138d651",
+  "xrayCommit": "0afec66085a85191e9dd2a4a6646c7c9a94688d1",
+  "xrayVersion": "v26.10.29"
+}

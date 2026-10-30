@@ -312,3 +312,64 @@ ACK 早于普查的形状以 Class B 夹具缺陷 fail-closed。 同一套 Class
 排空时刻）。到达该边界属于计划内终止，不是传输失败。已提交的尝试及部分结果仍
 保留；覆盖不足或在途请求超出规定窗口完成仍会失败，不会把恢复之后发起的请求悄
 悄归入故障期。
+
+## 固定浏览器 ClientHello 对照
+
+`benchmarks/evidence/browser-clienthello/windows-20261029/` 保存原生 Windows
+运行 [40882928698](https://github.com/jacek4yang/rust-reality/actions/runs/40882928698)
+中每个浏览器 20 次全新会话的 TLS 记录。manifest 绑定实际执行的合并提交、安装包与
+可执行文件散列、系统镜像、每条记录 SHA-256 和 HTTPS 回执；不包含后台预连接或恢复会话。
+原始 identity 的 discovery 标签保留，后续散列和结构测试负责固定证据验证。
+
+另有[冻结生产 ELF 的采集记录](../../../benchmarks/evidence/releases/v2.3.0/client-cli-fingerprint-6455589/archive-manifest.json)，
+以 SHA-256 绑定 `6455589` 可执行文件，通过实际 `run --config` SOCKS5 入口触发握手。
+每条样本启动新进程，并在回环上捕获首条有界 TLS 记录。省略字段的 16 条 Chrome
+样本及显式 Chrome 的 16 条样本通过独立 Chrome 语料比较；32 条显式 Firefox
+样本通过对应比较。采集端在服务端握手消息前关闭连接，因此这只证明线路结构及
+默认选择，不证明已认证会话完成或性能验收。归档不包含生成的私有配置。
+
+设置 `RR_BROWSER_COMPARISON_OUTPUT=/tmp/rr-browser-offers` 后运行
+`cargo test --test browser_line_capture --locked`，
+再通过 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare-corpus chrome`
+加上固定参考 `.tls` 路径及生成的 `chrome-*.tls` 路径对照；Firefox 使用 `firefox`。
+CI 对每个配置比较 32 条生成记录。独立解析器不导入生产协议代码，保留能力列表顺序、
+扩展内容、key share 结构和记录边界，只规范化经过验证的临时随机字段。
+语料对照接受 16 至 256 条全新握手，拒绝重复的 client random、session ID、非 GREASE
+key share 或 ECH 内容，并要求 Chrome 扩展顺序和密码套件 GREASE 值具有变化。
+这能发现固定字段或被关闭的洗牌，不能证明密码学随机数生成器的质量。
+Chrome 中间扩展允许洗牌，首尾 GREASE 约束保留；Firefox 扩展顺序严格一致。
+该证据不覆盖恢复、HRR、真实 ECH 或完整浏览器流量行为。
+
+辅助 JA3 / TCP JA4 可使用
+`cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- hashes CAPTURE.tls`
+输出哈希和未哈希输入。算法固定版本及公开示例向量见英文对应章节；MD5 仅是
+工具侧 JA3 标识，不用于安全判断。Chrome 扩展洗牌会改变 JA3；JA4 排序会隐藏
+该差异。两者均不能替代完整结构比较或认证会话验证。现有抓包 fuzz target
+亦覆盖这些摘要及错误的点格式向量长度。
+
+### Stock Xray 对照边界
+
+独立对照版本为 Xray-core v26.10.29，提交
+`0afec66085a85191e9dd2a4a6646c7c9a94688d1`，其 uTLS 固定提交仍为
+`aa6edf4b11af82e110eea845bb2983d30138d651`。`chrome` 和 `firefox` 别名
+分别指向 Chrome 133、Firefox 148，不是本次原生浏览器版本。
+使用 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- capture-xray`
+加上已验证的官方 Linux x86_64 二进制路径和全新输出目录，可复现每个别名 20 条记录。
+工具校验固定二进制 SHA-256，仅使用合成测试凭据，并在取得 ClientHello 后关闭连接；
+该抓包不声称认证成功，认证入口互操作由独立测试验证。
+
+原生 Chrome 增加了签名 GREASE、ML-DSA 和 trust-anchor 扩展；原生 Firefox
+减少了旧密码套件及 FFDHE 组，增加 session ticket/PSK modes，ECH 载荷为 240 字节，
+而 Xray 对照为 239 字节。旧 26.7.28 规范化摘要保存在
+`benchmarks/evidence/browser-clienthello/xray-26.7.28-normalized/`，仅为历史证据，
+不增加支持名称，也不允许省略 Firefox 的 P-256 私钥协商。
+
+
+## 客户端转发所有权回归
+
+进程测试通过 `--noproxy ""` 强制 curl 使用配置的代理，防止环境绕过列表让测试
+直接访问源站。Chrome 和 Firefox 的 HTTP CONNECT 用例验证临时 HTTPS 源站 CA，
+传输超过单条 TLS 记录的内容。NXR 和 Handoff TCP 用例分别验证双方先关闭写方向时
+的 128 KiB 传输。`client::vision_io` 覆盖部分加密记录读取取消、Direct 边界预读、
+独立的上行分帧以及分片 VLESS 响应头。TCP 和 XUDP 共用连接拥有的解码状态及
+规范 TLS 应用读写器。标记为 ignored 的 Native 专用用例仍须独立资格验证。

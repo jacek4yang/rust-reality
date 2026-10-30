@@ -14,6 +14,195 @@ frozen v1.0.0 release comparison matrix is published in
 sections immediately below and keeps the v1.0.0 tables unchanged as
 historical release measurements.
 
+## Native browser client: qualified development measurements
+
+The following comparisons bind candidate `2fb3076` (binary SHA-256
+`801c4d8d3a9de87277e6f9c2d1055733ea70c092c09ee99c6473ccaf29d0e862`)
+and collector `38abe32`. They use Rust 1.99.1, the i5-1240P's logical CPUs
+0,2,4,6, unchanged governor and limits, and a private loopback namespace.
+These are development-binary measurements, not final release qualification or
+WAN throughput. Ratios are candidate/baseline; intervals are the collector's
+95% block bootstrap. Failed and cancelled earlier experiments remain retained.
+
+### Data transfers with the same Chrome profile
+
+Baseline `d72abc2` and candidate `2fb3076` use Chrome 156.0.8078.74 against
+fixed server `c02e488`. Twelve balanced ABBA blocks contain 48 slots and 960
+successful workload batches (30,240 requests, 16 MiB each) across concurrency
+1,8,32,64 and Direct upload, Direct download, framed upload, framed download
+and bidirectional traffic.
+All 40 CPU/GiB and throughput intervals pass the predeclared 1% non-regression
+limits. At concurrency 64:
+
+| Case | CPU/GiB ratio (95% interval) | Throughput ratio (95% interval) |
+| --- | --- | --- |
+| Direct upload | 0.8473 (0.8364, 0.8588) | 1.0496 (1.0439, 1.0643) |
+| Direct download | 0.9934 (0.9863, 0.9978) | 1.0554 (1.0334, 1.0614) |
+| Framed upload | 0.9775 (0.9128, 1.0087) | 1.0605 (1.0280, 1.0735) |
+| Framed download | 0.9762 (0.9728, 0.9797) | 1.0781 (1.0739, 1.0848) |
+| Bidirectional | 0.9471 (0.9298, 0.9562) | 1.0181 (1.0093, 1.0265) |
+
+Framed upload passes non-regression but its interval does not establish a CPU
+improvement. These measurements include connection setup; they do not isolate
+AEAD cost or establish data p99 acceptance. The corrected benchmark origin
+acknowledges HTTP 100 Continue in both arms. Earlier upload throughput included
+curl's expectation wait and is not directly comparable.
+[All cells, raw samples and verified archive members](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-2fb3076/archive-manifest.json)
+retain the successful comparison. The original `eb91df6` client fails the
+Direct HTTPS data preflight with unexpected EOF; its
+[failure remains recorded](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-acbe/original-baseline-preflight/failure.json).
+`d72abc2` supplies the working canonical TLS I/O and half-close baseline.
+
+### Original client and server baselines
+
+The original fixed-profile client `eb91df6` versus current Chrome completes
+73,728 connections without failure in 12 ABBA blocks. All four concurrency
+cells pass 1% CPU/rate/p50 and 2% p99 non-regression. Rate ratios range from
+4.069 at concurrency 64 to 94.955 at concurrency one; CPU ratios range from
+0.1497 to 0.8888. The large low-concurrency change exposes the old socket
+policy, not faster cryptographic primitives. At 128 held connections, median
+additional anonymous residency is 30.52 versus 38.27 KiB per connection.
+Absolute held residency is 10,012 versus 9,790 KiB. The original implementation
+starts this phase with more allocator residency, so the incremental ratio alone
+does not establish a total-memory regression.
+The current canonical TLS reader retains cancellation-safe storage rather than
+allocating and copying each record as the original reader did. All 48 slots
+recover their original FD count at the two-second checkpoint. Residency is not
+an allocation count or proof of long-term retention.
+[Original-client evidence](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-2fb3076/archive-manifest.json)
+keeps this comparison separate from the same-profile intermediate baseline.
+
+The subsequent `119b37d` experiment reduces initial delivery storage to 8 KiB.
+Its [setup/resource comparison](../../benchmarks/evidence/releases/v2.3.0/client-original-setup-119b37d/archive-manifest.json)
+passes the setup limits, with absolute held anonymous residency of 10,164 versus
+8,744 KiB and recovered residency of 9,764 versus 8,692 KiB. The post-churn
+increment is 31.06 versus 32.91 KiB per held connection; these measurements are
+not allocator-byte or allocation-count observations. Its
+[data comparison fails](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-119b37d/archive-manifest.json):
+seven assessments fail and two are unresolved. Direct retains the smaller
+socket-read capacity after the transition, increasing high-concurrency download
+CPU by about 25-30%. Framed download does not show that regression.
+
+The `6455589` follow-up promotes capacity once at Direct. Its
+[16-block, three-sample comparison](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-6455589/archive-manifest.json)
+completes 3,840 batches and 120,960 requests without errors. Direct download CPU
+passes, but concurrency-64 bidirectional throughput fails: ratio 0.9754 with
+95% interval [0.9592, 0.9885], below the 0.99 limit. The other 39 assessments
+pass. Both capacity-reduction variants are rejected; the client retains full
+16-KiB initial delivery capacity under [ADR 0064](../adr/0064-retain-full-client-delivery-capacity.md).
+
+The [full-capacity repeat at `7e4d89d`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-7e4d89d/archive-manifest.json)
+also completes 3,840 batches and 120,960 requests without functional errors,
+but fails concurrency-64 bidirectional throughput: 0.9732 [0.9659, 0.9872].
+Thirty-seven assessments pass; concurrency-32 bidirectional throughput and
+concurrency-64 framed-upload CPU remain unresolved. Its full executable text
+matches `2fb3076`; that earlier successful comparison does not override this
+failure. Restoring capacity alone does not establish data-path non-regression.
+
+A [separate three-block PMU diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-bidi-hotspot-7e4d89d/archive-manifest.json)
+observes the existing client and server threads during concurrency-64
+bidirectional warm-up and three 64-MiB samples. Client send calls fall to 0.502
+of baseline, instructions to 0.973, and cycles to 0.938; context switches rise
+to 1.129. These median block ratios motivate examining the scheduling work
+removed by batched writes, but do not prove causality. Instrumented timing is
+not acceptance. Raw counters, frame-pointer samples and the rejected first
+controller invocation are retained; no payload or raw user stack is captured.
+
+The [cooperative-budget experiment at `234c38d`](../../benchmarks/evidence/releases/v2.3.0/client-budget-diagnostic-234c38d/archive-manifest.json)
+adds a scheduling budget unit for the second batched frame. Its three-block
+concurrency-64 diagnostic completes 180 batches and 13,824 requests, but the
+bidirectional throughput ratios are 0.9975, 0.9087 and 0.9702 against `7e4d89d`.
+There are too few blocks for acceptance-grade intervals. No repeatable target
+benefit is observed, so the additional budget accounting is removed; these
+diagnostic point estimates are not a statistically resolved regression claim.
+
+The [32-KiB Direct-window diagnostic at `04a1dc5`](../../benchmarks/evidence/releases/v2.3.0/client-direct-window-diagnostic-04a1dc5/archive-manifest.json)
+keeps 16-KiB initial delivery storage and reserves the two-record delivery window
+once at authenticated Direct. Against `7e4d89d`, its three bidirectional
+throughput block ratios are 1.0203, 1.0719 and 1.0198; median CPU/GiB is 0.8658.
+Direct-download median throughput and CPU ratios are 1.0370 and 0.8625.
+These are promising diagnostic observations, not full qualification against
+`d72abc2` or acceptance-grade intervals.
+
+A [separate retained-memory diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-direct-memory-04a1dc5/summary.json)
+uses three rotated repeats per binary, 128 persistent verified TLS 1.3 HTTPS
+connections, and two exact 1-MiB responses per connection. All 2,304 responses
+match and all nine processes recover their initial FD count. Median held
+anonymous residency is 11,248 KiB for `d72abc2`, 6,060 KiB for `7e4d89d`, and
+8,236 KiB for `04a1dc5`; after close it is 9,164, 5,836 and 7,328 KiB.
+The larger Direct window has a real capacity cost versus `7e4d89d`, while this
+workload remains below the working `d72abc2` baseline. Initial framed storage
+is unchanged. These observations are residency, not allocator counts or a
+long-term leak verdict, and do not establish timing acceptance.
+
+[Heaptrack diagnostics](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
+on `6455589` use three repeats of zero- and 128-connection controls. All 1,152
+authenticated workload connections succeed. Startup-subtracted allocation calls
+per connection are 91.16-91.33 for the original client, 88 for Chrome, and
+87-87.01 for Firefox. The ten-second launch-to-stop interval includes profiler
+startup; actual instrumented runtimes remain in the reports. Instrumented timing,
+RSS and at-exit live allocations are not performance or leak verdicts. These
+counts do not qualify the rejected candidate or the restored capacity policy.
+
+With unchanged stock Xray 26.10.29, the original and current servers complete
+860,160 connections without failure in 20 ABBA blocks. Per-concurrency rate
+intervals and aggregate server CPU per connection pass 1% non-regression;
+the CPU ratio is 0.9994 (0.9987, 1.0027). The collector retains raw server
+latency samples but does not aggregate their p99 intervals, so this result
+does not establish server-tail acceptance.
+[Server evidence](../../benchmarks/evidence/releases/v2.3.0/server-original-setup-2fb3076/archive-manifest.json)
+does not replace Native or Frozen qualification.
+
+### Firefox profile cost
+
+Chrome and Firefox on the same `2fb3076` executable complete 73,728 connections
+without failure in 12 ABBA blocks. Firefox/Chrome CPU ratios are 1.437, 1.450,
+1.448 and 1.441 at concurrency 1,8,32,64; rate ratios are 0.792, 0.858, 0.874
+and 0.876. This is measured profile cost on this implementation, not an
+implementation regression or a claim that the entire difference is unavoidable.
+Firefox's additional valid P-256 share is required and is not omitted to improve
+the result. [Profile comparison evidence](../../benchmarks/evidence/releases/v2.3.0/client-profile-cost-2fb3076/archive-manifest.json)
+retains all intervals and binary identities.
+
+## Native browser client: intermediate setup changes
+
+A same-profile implementation comparison uses Chrome 156.0.8078.74 in both
+arms: baseline `d72abc2` and candidate `acbe49c`, with fixed server `c02e488`.
+This measures the socket, buffer and connection-lifetime changes; it is not a
+comparison against the original release or a final release qualification.
+The frozen collector is `7163414`, built with Rust 1.99.1. On an Intel i5-1240P,
+processes share four physical P cores (logical CPUs 0,2,4,6). The CPU governor
+and limits are unchanged. A private loopback network namespace isolates churn
+from the host conntrack table; collector and product processes run as UID 1000.
+
+Twenty balanced ABBA blocks contain 80 slots and 960 samples, each with 128
+connections, with zero failed connections. The table reports candidate/baseline
+medians and 95% block-bootstrap intervals; each concurrency is assessed
+separately. CPU is attributed client scheduler time per connection.
+
+| Concurrency | Setup rate ratio (95% interval) | CPU ratio (95% interval) | p99 ratio (95% interval) |
+| --- | --- | --- | --- |
+| 1 | 95.597 (94.975, 95.947) | 0.1341 (0.1325, 0.1345) | 0.0121 (0.0119, 0.0125) |
+| 8 | 27.280 (27.170, 27.366) | 0.2940 (0.2910, 0.2960) | 0.0548 (0.0542, 0.0555) |
+| 32 | 7.722 (7.606, 7.868) | 0.5119 (0.5031, 0.5158) | 0.1842 (0.1815, 0.1898) |
+| 64 | 4.094 (4.002, 4.115) | 0.7910 (0.7825, 0.7942) | 0.3216 (0.3104, 0.3372) |
+
+At concurrency one, median setup latency falls from about 45.4 ms to 0.466 ms.
+This workload exposes the earlier client's socket policy; the ratio is not a
+claim of faster cryptographic primitives or Internet throughput. At 128 held
+connections, the median anonymous residency increment per connection falls from
+92.59 KiB to 38.13 KiB. All slots recover their initial descriptor count within
+the observed two-second checkpoint. Residency is not an allocation count or
+proof of long-term retention.
+
+[Raw samples, binary identities, commands and checksums](../../benchmarks/evidence/releases/v2.3.0/client-setup-ab-d72-acbe-isolated/archive-manifest.json)
+retain every slot. The preceding isolated A/A control covers 860,160 connections
+without failures; its CPU and rate intervals fit 1%, but two p99 intervals do
+not resolve 2% equivalence. That control remains explicitly unresolved in its
+[retained assessment](../../benchmarks/evidence/releases/v2.3.0/client-setup-isolated-acbe49c/archive-manifest.json).
+These results establish an intermediate setup comparison only. They do not
+establish Firefox cost, data throughput, WAN behavior or final source acceptance.
+
 ## v1.7 development: authenticated cover TCP warming
 
 The first cover-latency phase keeps the real TLS cover authoritative but moves

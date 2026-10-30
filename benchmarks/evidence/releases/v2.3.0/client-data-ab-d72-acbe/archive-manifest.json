@@ -1,0 +1,428 @@
+{
+  "schemaVersion": 1,
+  "toolSource": "7163414a9a48bde9d0b2dd7d8e9021cd69479f47",
+  "toolSha256": "11043498c571dbb6717dae797caef171ab1f19f27f715933d2ca5b1317a124a7",
+  "performanceVerdict": "FAIL",
+  "assessmentRule": "Per-cell CPU upper CI <=1.01 and throughput lower CI >=0.99 required; adverse interval wholly beyond margin fails, crossing interval remains unresolved. No offsetting CPU losses with throughput gains.",
+  "dataRows": 960,
+  "setupRows": 192,
+  "failures": 0,
+  "limitations": "Same native Chrome d72/acbe implementation comparison; not final release identity. Upload receipts validate byte counts; Direct download SHA-256 independently checked per slot. Bidi uses separate simultaneous connections.",
+  "metrics": {
+    "bidi:c1/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0591276782182613,
+      "bootstrap95": [
+        1.0329088587433033,
+        1.0873710330642905
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "bidi:c1/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0791004767269983,
+      "bootstrap95": [
+        1.0785247460894483,
+        1.080793771039987
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "bidi:c32/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.011367911778169,
+      "bootstrap95": [
+        0.992858831282598,
+        1.0218370222345703
+      ],
+      "protectedMarginVerdict": "UNRESOLVED"
+    },
+    "bidi:c32/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0473912080424,
+      "bootstrap95": [
+        1.0372439009337482,
+        1.0639874806989433
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "bidi:c64/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.029234563588522,
+      "bootstrap95": [
+        1.0238068220529173,
+        1.0447444789461757
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "bidi:c64/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0263267036041714,
+      "bootstrap95": [
+        1.0175607018268957,
+        1.0353809691556475
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "bidi:c8/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0092916757815555,
+      "bootstrap95": [
+        0.9680671053527509,
+        1.0281954080170879
+      ],
+      "protectedMarginVerdict": "UNRESOLVED"
+    },
+    "bidi:c8/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0642049508154372,
+      "bootstrap95": [
+        1.0623832257855077,
+        1.0701930322831825
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-download:c1/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 0.6982641197365179,
+      "bootstrap95": [
+        0.660421498491738,
+        0.7105925049953536
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-download:c1/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 7.922608608295703,
+      "bootstrap95": [
+        7.877936152883769,
+        7.935411799865928
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-download:c32/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0111649001097305,
+      "bootstrap95": [
+        1.0063410997511482,
+        1.02274373383962
+      ],
+      "protectedMarginVerdict": "UNRESOLVED"
+    },
+    "direct-download:c32/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.1891203398693853,
+      "bootstrap95": [
+        1.1681282991819928,
+        1.1981940902924733
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-download:c64/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.025350865048254,
+      "bootstrap95": [
+        1.0166461785274703,
+        1.0324869640117975
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "direct-download:c64/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0488319800592287,
+      "bootstrap95": [
+        1.039601420960393,
+        1.0528487664153405
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-download:c8/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 0.935270320679695,
+      "bootstrap95": [
+        0.9086440799473312,
+        0.9477764381423943
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-download:c8/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 2.2567218876085597,
+      "bootstrap95": [
+        2.1181561197807577,
+        2.413291115970977
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-upload:c1/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.282089007634625,
+      "bootstrap95": [
+        1.2149251755216555,
+        1.296962843993989
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "direct-upload:c1/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0802162133742974,
+      "bootstrap95": [
+        1.0789283009600608,
+        1.0844983219950612
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-upload:c32/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.076813652158781,
+      "bootstrap95": [
+        1.0320147606438004,
+        1.1292115179056357
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "direct-upload:c32/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0491680819596403,
+      "bootstrap95": [
+        1.0440200548047232,
+        1.062685999074254
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-upload:c64/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.1001149755834745,
+      "bootstrap95": [
+        1.0740360073914021,
+        1.1288736438794298
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "direct-upload:c64/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0367415145592023,
+      "bootstrap95": [
+        1.0256751614737154,
+        1.0452451625065806
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "direct-upload:c8/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0343216234065171,
+      "bootstrap95": [
+        1.0102157126842166,
+        1.04209035122308
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "direct-upload:c8/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0789888534861467,
+      "bootstrap95": [
+        1.0762570054268972,
+        1.0802399795918791
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-download:c1/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 0.6385743991323292,
+      "bootstrap95": [
+        0.5792054516233196,
+        0.7006435580721427
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-download:c1/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 5.42028512856523,
+      "bootstrap95": [
+        5.070750002925436,
+        5.447752256239914
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-download:c32/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0628739090323411,
+      "bootstrap95": [
+        1.0454322516244736,
+        1.0724148684735946
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "framed-download:c32/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.1377029726028152,
+      "bootstrap95": [
+        1.1304810272347692,
+        1.1460302766476724
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-download:c64/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0592447106640117,
+      "bootstrap95": [
+        1.0471501903443718,
+        1.0637711112026378
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "framed-download:c64/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0467557675126433,
+      "bootstrap95": [
+        1.0363833794332429,
+        1.049927684573038
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-download:c8/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 0.9956739363189877,
+      "bootstrap95": [
+        0.9908793138144415,
+        1.011369215323889
+      ],
+      "protectedMarginVerdict": "UNRESOLVED"
+    },
+    "framed-download:c8/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 2.060487488462143,
+      "bootstrap95": [
+        2.04385616223545,
+        2.110332242865402
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-upload:c1/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.34504825947014,
+      "bootstrap95": [
+        1.3032655997141562,
+        1.3848332089402353
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "framed-upload:c1/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0805086114823959,
+      "bootstrap95": [
+        1.0788198448198116,
+        1.0819532242005265
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-upload:c32/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.1509914790791431,
+      "bootstrap95": [
+        1.077971848987979,
+        1.1872734674810417
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "framed-upload:c32/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0456489925635093,
+      "bootstrap95": [
+        1.0383205764307117,
+        1.0491819811787586
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-upload:c64/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.1659016432131302,
+      "bootstrap95": [
+        1.1251983544047934,
+        1.2078241981086844
+      ],
+      "protectedMarginVerdict": "FAIL"
+    },
+    "framed-upload:c64/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0274849807547444,
+      "bootstrap95": [
+        1.0159140575095549,
+        1.033115493867784
+      ],
+      "protectedMarginVerdict": "PASS"
+    },
+    "framed-upload:c8/cpuSecondsPerGiB": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0177375045206456,
+      "bootstrap95": [
+        0.9634365240091896,
+        1.0512433281433617
+      ],
+      "protectedMarginVerdict": "UNRESOLVED"
+    },
+    "framed-upload:c8/mibPerSecond": {
+      "blockCount": 12,
+      "medianCandidateVsBaseline": 1.0738678575069778,
+      "bootstrap95": [
+        1.0727795497938413,
+        1.080027059428047
+      ],
+      "protectedMarginVerdict": "PASS"
+    }
+  },
+  "archiveManifests": [
+    {
+      "path": "block-01-manifest.json",
+      "sha256": "613a024db8f811d157a613f39a1cbdcffd92686f10b3a1e59f025ae88a7ddb6e"
+    },
+    {
+      "path": "block-02-manifest.json",
+      "sha256": "9b395857f1c63c71315a54a8f7cdd5a70f4ae8130cc271254a408f89ac02ffa9"
+    },
+    {
+      "path": "block-03-manifest.json",
+      "sha256": "7b47f13cfc0fc86ec731f4cb9899b4231a4109e700f41da0a3fe6711158dc47c"
+    },
+    {
+      "path": "block-04-manifest.json",
+      "sha256": "2752705b1cb68839357c69bfcd1bcfacfb54adbf424acfb678aa7c009ded0754"
+    },
+    {
+      "path": "block-05-manifest.json",
+      "sha256": "e35e9abe84cd1c12949662179bb5d1f550e6f8a7dbed480b0d46014a726bf9e9"
+    },
+    {
+      "path": "block-06-manifest.json",
+      "sha256": "9ebffdf0c8fbe121becd068d0a712aa642448db730680a0e3ff6fb7107a25420"
+    },
+    {
+      "path": "block-07-manifest.json",
+      "sha256": "edf648666b3b095911b98e65fb91e8ac1a287f046787b4dfe5deceffc5b2c1f2"
+    },
+    {
+      "path": "block-08-manifest.json",
+      "sha256": "8c87e226ad0daa3f18d65172b67b69c43cc2b1ab28b78b84eba3876906d922d7"
+    },
+    {
+      "path": "block-09-manifest.json",
+      "sha256": "c3fed69b78e8c621fc84b8b5ddd6e6ecdce9cea1ed10b2d8e8e2f052b68046dd"
+    },
+    {
+      "path": "block-10-manifest.json",
+      "sha256": "855019f96a7839c3cf6ab115437d951fcc2b0aff0799b921b2b4c14bd2837ea1"
+    },
+    {
+      "path": "block-11-manifest.json",
+      "sha256": "5b5c0331330a118462770b196957496862bdfc85dc5f774bc75bce41e57664c7"
+    },
+    {
+      "path": "block-12-manifest.json",
+      "sha256": "c07f098430d03a55a03b0316fb4714623a117ed712a9eae7560494cf6d2a2588"
+    }
+  ],
+  "compressedObservation": {
+    "path": "conntrack.jsonl.gz",
+    "decodedBytes": 563417,
+    "decodedSha256": "5b83873d871ad2f196392c4be4f43fa14640056fafa8c253c8c08cd7864e8a1e"
+  }
+}

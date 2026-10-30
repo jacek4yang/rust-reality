@@ -158,3 +158,17 @@ path = "fuzz_targets/stability_evidence.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "p256_agreement"
+path = "fuzz_targets/p256_agreement.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "browser_offer"
+path = "fuzz_targets/browser_offer.rs"
+test = false
+doc = false
+bench = false

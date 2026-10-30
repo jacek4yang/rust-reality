@@ -3,12 +3,17 @@
 [English](../../en/development/crypto-providers.md) | 简体中文
 
 v2 的实现选择已由 [ADR 0028](../../adr/0028-finalize-the-v2-crypto-provider-set.md)
-确定。具体版本由 `Cargo.lock` 锁定。下表说明各路径的实现归属；部分 AEAD
+确定；[ADR 0062](../../adr/0062-p256-for-browser-tls-key-shares.md) 为浏览器 TLS 的 P-256
+KeyShare 扩展此集合。具体版本由 `Cargo.lock` 锁定。下表说明各路径的实现归属；部分 AEAD
 路径有意保留两个成熟实现。
+
+`p256_agreement` 模糊测试使用仅限测试的固定标量，覆盖 TLS SEC1 公钥的错误长度、
+无穷远点、非曲线点及密钥交换路径；生产标量始终来自操作系统熵源。
 
 | 原语 | 生产实现 |
 | --- | --- |
 | REALITY、TLS、客户端、探测和 Handoff 的 X25519 | `rr-crypto`，固定来源版本的 s2n-bignum 汇编；x86_64 和 AArch64 运行时分派 |
+| TLS 的 P-256 KeyShare | RustCrypto `p256`，仅限 `crypto::p256_ecdh`；密钥交换消耗临时密钥所有权（ADR 0062） |
 | SHA-256/384/512 | RustCrypto `sha2`；x86_64 的 SHA-256 使用 SHA-NI，SHA-384/512 使用 AVX2 |
 | HMAC | RustCrypto `hmac` |
 | HKDF | RustCrypto `hkdf` |

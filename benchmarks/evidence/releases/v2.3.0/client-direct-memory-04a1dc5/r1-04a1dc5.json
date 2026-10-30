@@ -1,0 +1,194 @@
+{
+  "name": "r1-04a1dc5",
+  "binarySha256": "16a2e946a604d2397c6e6529266a78ddee82e629e6f3b1159f9914625d59da75",
+  "connections": 128,
+  "verifiedTransfers": 256,
+  "before": [
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338712.7055717,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 7796,
+        "RssAnon": 592,
+        "RssFile": 7204,
+        "Threads": 5,
+        "Pss": 5289,
+        "Pss_Anon": 592,
+        "Anonymous": 592
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338712.9571826,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 7796,
+        "RssAnon": 592,
+        "RssFile": 7204,
+        "Threads": 5,
+        "Pss": 5289,
+        "Pss_Anon": 592,
+        "Anonymous": 592
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338713.2092457,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 7796,
+        "RssAnon": 592,
+        "RssFile": 7204,
+        "Threads": 5,
+        "Pss": 5289,
+        "Pss_Anon": 592,
+        "Anonymous": 592
+      }
+    }
+  ],
+  "held": [
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338713.6611605,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16392,
+        "RssAnon": 8212,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 13885,
+        "Pss_Anon": 8212,
+        "Anonymous": 8212
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338713.913786,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16392,
+        "RssAnon": 8212,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 13885,
+        "Pss_Anon": 8212,
+        "Anonymous": 8212
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338714.16756,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16392,
+        "RssAnon": 8212,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 13885,
+        "Pss_Anon": 8212,
+        "Anonymous": 8212
+      }
+    }
+  ],
+  "reused": [
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338714.5160425,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16392,
+        "RssAnon": 8212,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 13885,
+        "Pss_Anon": 8212,
+        "Anonymous": 8212
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338714.7684524,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16392,
+        "RssAnon": 8212,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 13885,
+        "Pss_Anon": 8212,
+        "Anonymous": 8212
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338715.0218253,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16392,
+        "RssAnon": 8212,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 13885,
+        "Pss_Anon": 8212,
+        "Anonymous": 8212
+      }
+    }
+  ],
+  "closed": [
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338717.2808192,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 15352,
+        "RssAnon": 7172,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 12845,
+        "Pss_Anon": 7172,
+        "Anonymous": 7172
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338717.5331242,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 15352,
+        "RssAnon": 7172,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 12845,
+        "Pss_Anon": 7172,
+        "Anonymous": 7172
+      }
+    },
+    {
+      "pid": 4105781,
+      "startTicks": "180664186",
+      "unixSeconds": 1793338717.7855175,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 15352,
+        "RssAnon": 7172,
+        "RssFile": 8180,
+        "Threads": 5,
+        "Pss": 12845,
+        "Pss_Anon": 7172,
+        "Anonymous": 7172
+      }
+    }
+  ]
+}

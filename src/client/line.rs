@@ -31,7 +31,7 @@ const ALPN: &[&[u8]] = &[b"h2", b"http/1.1"];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// A compiled LINE ready to authenticate.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Line {
     tag: Option<String>,
     address: String,
@@ -40,7 +40,18 @@ pub struct Line {
     public_key: [u8; 32],
     short_id: [u8; 8],
     server_name: String,
+    fingerprint: crate::protocol::reality::BrowserFingerprint,
     allow_udp_443: bool,
+}
+
+impl std::fmt::Debug for Line {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Line")
+            .field("tag", &self.tag)
+            .field("fingerprint", &self.fingerprint)
+            .finish_non_exhaustive()
+    }
 }
 
 /// REALITY completed; VLESS Vision not yet started.
@@ -102,6 +113,7 @@ impl Line {
             public_key,
             short_id,
             server_name: config.server_name.clone(),
+            fingerprint: config.fingerprint,
             allow_udp_443: config.allow_udp_443,
         })
     }
@@ -124,7 +136,8 @@ impl Line {
             })?
             .map_err(LineError::Dial)?;
 
-        let keys = ClientKeyAgreement::generate().map_err(map_hello)?;
+        crate::transport::TcpAcceptor::configure_stream(&stream).map_err(LineError::Dial)?;
+        let keys = ClientKeyAgreement::for_profile(self.fingerprint).map_err(map_hello)?;
         let now = unix_now();
         let auth = AuthPlaintext {
             version: CLIENT_VERSION,
@@ -143,7 +156,7 @@ impl Line {
             .await
             .map_err(LineError::Dial)?;
 
-        let session = complete(&mut stream, &hello, &keys, &auth_key, ALPN)
+        let session = complete(&mut stream, &hello, keys, &auth_key, ALPN)
             .await
             .map_err(LineError::Handshake)?;
 
@@ -237,5 +250,41 @@ fn map_hello(error: crate::protocol::reality::HelloError) -> LineError {
     match error {
         crate::protocol::reality::HelloError::Entropy => LineError::Config("entropy"),
         _ => LineError::Config("client hello"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::reality::BrowserFingerprint;
+
+    #[test]
+    fn line_debug_keeps_profile_but_omits_credentials_and_endpoints() {
+        let first = Line {
+            tag: Some("line-a".to_owned()),
+            address: "private-entry.test".to_owned(),
+            port: 443,
+            user_id: UserId::new([0x11; 16]),
+            public_key: [0x22; 32],
+            short_id: [0x33; 8],
+            server_name: "private-cover.test".to_owned(),
+            fingerprint: BrowserFingerprint::Chrome,
+            allow_udp_443: false,
+        };
+        let mut second = first.clone();
+        second.user_id = UserId::new([0xa5; 16]);
+        second.short_id = [0xb6; 8];
+        second.public_key = [0xc7; 32];
+        second.address = "another-entry.test".to_owned();
+        second.server_name = "another-cover.test".to_owned();
+
+        let diagnostic = format!("{first:?}");
+        assert_eq!(diagnostic, format!("{second:?}"));
+        assert!(diagnostic.contains("line-a"));
+        assert!(diagnostic.contains("Chrome"));
+        assert!(!diagnostic.contains("private-"));
+        second.fingerprint = BrowserFingerprint::Firefox;
+        assert_ne!(diagnostic, format!("{second:?}"));
+        assert!(format!("{second:?}").contains("Firefox"));
     }
 }

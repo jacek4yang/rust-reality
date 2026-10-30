@@ -2,13 +2,19 @@
 
 English | [简体中文](../../zh-CN/development/crypto-providers.md)
 
-The v2 provider set is final in [ADR 0028](../../adr/0028-finalize-the-v2-crypto-provider-set.md).
+The v2 provider set is recorded in [ADR 0028](../../adr/0028-finalize-the-v2-crypto-provider-set.md),
+extended for browser TLS P-256 shares by [ADR 0062](../../adr/0062-p256-for-browser-tls-key-shares.md).
 Versions are locked in `Cargo.lock`; this table describes ownership, including
 paths that intentionally retain more than one AEAD implementation.
+
+The `p256_agreement` fuzz target uses a fixed fuzz-only scalar to exercise the
+TLS SEC1 public-share boundary, invalid lengths, infinity, off-curve points and
+agreement. Production scalars always come from operating-system entropy.
 
 | Primitive | Production provider |
 | --- | --- |
 | X25519 in REALITY, TLS, the client, probes and Handoff | `rr-crypto`, provenance-pinned s2n-bignum assembly; x86_64 and AArch64 runtime dispatch |
+| P-256 TLS key shares | RustCrypto `p256`, restricted to `crypto::p256_ecdh`; consuming ephemeral ownership (ADR 0062) |
 | SHA-256/384/512 | RustCrypto `sha2`; x86_64 SHA-NI for SHA-256 and AVX2 for SHA-384/512 |
 | HMAC | RustCrypto `hmac` |
 | HKDF | RustCrypto `hkdf` |

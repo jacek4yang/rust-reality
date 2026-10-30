@@ -7,7 +7,7 @@
 use std::{
     fs,
     io::{Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
+    net::{SocketAddr, TcpStream, UdpSocket},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
@@ -32,13 +32,9 @@ impl Drop for DirGuard {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
+#[path = "support/ports.rs"]
+mod ports;
+use ports::free_port;
 
 fn wait_port(port: u16, budget: Duration) {
     let deadline = Instant::now() + budget;
@@ -210,7 +206,10 @@ fn socks5_udp_round_trip(
     Ok(buf[10..n].to_vec())
 }
 
-fn start_stack(allow_udp_443: bool) -> (DirGuard, u16, u16, KillOnDrop, KillOnDrop, KillOnDrop) {
+fn start_stack(
+    allow_udp_443: bool,
+    fingerprint: &str,
+) -> (DirGuard, u16, u16, KillOnDrop, KillOnDrop, KillOnDrop) {
     let openssl = which("openssl").expect("openssl required for cover");
     let root = std::env::temp_dir().join(format!(
         "rr-client-socks5-udp-e2e-{}-{}",
@@ -318,7 +317,8 @@ fn start_stack(allow_udp_443: bool) -> (DirGuard, u16, u16, KillOnDrop, KillOnDr
     "id": "{user_id}",
     "publicKey": "{public_key}",
     "shortId": "{short_id}",
-    "serverName": "localhost"{allow_line}
+    "serverName": "localhost",
+    "fingerprint": "{fingerprint}"{allow_line}
   }}]
 }}
 "#
@@ -367,8 +367,18 @@ fn start_stack(allow_udp_443: bool) -> (DirGuard, u16, u16, KillOnDrop, KillOnDr
 
 #[test]
 fn socks5_udp_associate_echo_through_xudp() {
+    browser_udp_echo("chrome");
+}
+
+#[test]
+fn firefox_socks5_udp_associate_echo_through_xudp() {
+    browser_udp_echo("firefox");
+}
+
+fn browser_udp_echo(fingerprint: &str) {
     let (_echo_keep, echo_port, echo_thread) = spawn_udp_echo();
-    let (_guard, socks_port, _entry_port, _cover, _entry, _client) = start_stack(false);
+    let (_guard, socks_port, _entry_port, _cover, _entry, _client) =
+        start_stack(false, fingerprint);
 
     let body = socks5_udp_round_trip(socks_port, echo_port, MARKER).unwrap_or_else(|e| {
         panic!("udp associate round-trip failed: {e}");
@@ -380,7 +390,7 @@ fn socks5_udp_associate_echo_through_xudp() {
 #[test]
 fn socks5_udp_443_requires_allow_udp_443_policy() {
     // Without allowUdp443, targeting UDP/443 must fail closed on the client XUDP path.
-    let (_guard, socks_port, _entry_port, _cover, _entry, _client) = start_stack(false);
+    let (_guard, socks_port, _entry_port, _cover, _entry, _client) = start_stack(false, "chrome");
     let err = socks5_udp_round_trip(socks_port, 443, b"quic-probe").expect_err("must fail");
     assert!(
         err.contains("udp recv") || err.contains("associate") || err.contains("udp send"),

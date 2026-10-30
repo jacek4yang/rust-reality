@@ -1,0 +1,100 @@
+{
+  "slot": "block-03-slot-03-candidate",
+  "binaryIdentity": {
+    "binary": {
+      "buildId": "b80b48feabffd4952ca15963232b4756b880ce40",
+      "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+      "sha256": "dcd339bf48334c6504c37696c3f3b942f1b70778cc6cd55751f77193838148d4"
+    },
+    "block": 3,
+    "implementation": "candidate",
+    "ports": {
+      "server": 61022,
+      "socks": 61023
+    },
+    "position": 3,
+    "process": {
+      "clientPid": 3874178
+    }
+  },
+  "roles": {
+    "client": {
+      "pid": 3874178,
+      "startTicks": "180457818",
+      "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+      "tids": [
+        3874178,
+        3874183,
+        3874184,
+        3874185,
+        3874186
+      ]
+    },
+    "server": {
+      "pid": 3874177,
+      "startTicks": "180457818",
+      "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+      "tids": [
+        3874177,
+        3874179,
+        3874180,
+        3874181,
+        3874182
+      ]
+    }
+  },
+  "attachedAtUnix": 1793336695.084415,
+  "commands": [
+    [
+      "sudo",
+      "-n",
+      "env",
+      "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+      "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+      "stat",
+      "--no-inherit",
+      "--per-thread",
+      "-I",
+      "100",
+      "-x",
+      ";",
+      "-e",
+      "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+      "-t",
+      "3874178,3874183,3874184,3874185,3874186,3874177,3874179,3874180,3874181,3874182",
+      "-o",
+      "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-03-candidate.stat.csv",
+      "--",
+      "sleep",
+      "60"
+    ],
+    [
+      "sudo",
+      "-n",
+      "env",
+      "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+      "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+      "record",
+      "--no-inherit",
+      "-F",
+      "199",
+      "-e",
+      "cpu_core/cycles/",
+      "--call-graph",
+      "fp",
+      "-t",
+      "3874178,3874183,3874184,3874185,3874186,3874177,3874179,3874180,3874181,3874182",
+      "-o",
+      "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-03-candidate.perf.data",
+      "--",
+      "sleep",
+      "60"
+    ]
+  ],
+  "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+  "detachedAtUnix": 1793336719.4466355,
+  "profilerExitCodes": [
+    0,
+    -2
+  ]
+}

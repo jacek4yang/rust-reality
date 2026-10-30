@@ -26,6 +26,9 @@ pub mod smoke;
 mod smoke_receipt;
 pub mod verify_tag;
 
+#[cfg(test)]
+mod publication_tests;
+
 /// `SemVer` helpers shared across release stages.
 pub mod semver {
     /// Whether `tag` is a stable `vMAJOR.MINOR.PATCH` release tag.

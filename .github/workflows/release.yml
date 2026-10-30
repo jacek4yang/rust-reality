@@ -232,6 +232,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
 
     steps:
       - name: Restore verified release assets
@@ -239,6 +240,75 @@ jobs:
         with:
           name: release-assets-${{ env.RELEASE_TAG }}
           path: dist/
+
+      # Frozen validates native execution; this guard binds the rebuilt bytes.
+      - name: Match rebuilt archives to exact-main Frozen qualification
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          qualified_directory="$(mktemp -d)"
+          trap 'rm -rf -- "$qualified_directory"' EXIT
+          export QUALIFIED_DIRECTORY="$qualified_directory"
+          source=$(python3 - <<'PY'
+          import json, pathlib, re
+          manifest = json.loads(pathlib.Path('dist/release-manifest.json').read_text())
+          source = manifest['commit']
+          if not re.fullmatch('[0-9a-f]{40}', source):
+              raise SystemExit('Invalid release source identity')
+          print(source)
+          PY
+          )
+          export QUALIFIED_SOURCE="$source"
+          gh api "repos/$GH_REPO/actions/workflows/frozen-qualification.yml/runs?head_sha=$source&event=workflow_dispatch&per_page=100" \
+            > "$qualified_directory/runs.json"
+          run_id=$(python3 - <<'PY'
+          import json, os, pathlib
+          root = pathlib.Path(os.environ['QUALIFIED_DIRECTORY'])
+          source = os.environ['QUALIFIED_SOURCE']
+          runs = json.loads((root/'runs.json').read_text())['workflow_runs']
+          runs = [run for run in runs if run['head_sha'] == source
+                  and run['head_branch'] == 'main'
+                  and run['event'] == 'workflow_dispatch']
+          if not runs:
+              raise SystemExit('Missing exact-main Frozen qualification')
+          latest = max(runs, key=lambda run: run['id'])
+          if latest['status'] != 'completed' or latest['conclusion'] != 'success':
+              raise SystemExit('Latest exact-main Frozen qualification is not successful')
+          print(latest['id'])
+          PY
+          )
+          gh run download "$run_id" --pattern "package-receipt-$source-*" \
+            --dir "$qualified_directory/receipts"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          root = pathlib.Path(os.environ['QUALIFIED_DIRECTORY'])/'receipts'
+          source = os.environ['QUALIFIED_SOURCE']
+          tag = os.environ['RELEASE_TAG']
+          manifest = json.loads(pathlib.Path('dist/release-manifest.json').read_text())
+          expected = {item['tier']: item['artifact'] for item in manifest['artifacts']}
+          if not expected or len(expected) != len(manifest['artifacts']):
+              raise SystemExit('Invalid aggregated release matrix')
+          seen = set()
+          for path in root.rglob('receipt.json'):
+              receipt = json.loads(path.read_text())
+              tier = receipt['tier']
+              if (receipt['schema'] != 'rr-package-execution/v1'
+                  or receipt['source_commit'] != source or receipt['tag'] != tag
+                  or tier not in expected or tier in seen):
+                  raise SystemExit('Substituted or duplicate Frozen package receipt')
+              archive = f'rust-reality-{tag}-{tier}.tar.gz'
+              image = receipt['archive']
+              actual = hashlib.sha256((pathlib.Path('dist')/archive).read_bytes()).hexdigest()
+              if (expected[tier] != archive or image['path'] != archive or image['before'] != actual
+                  or image['after'] != actual):
+                  raise SystemExit(f'Rebuilt archive differs from qualified native package: {tier}')
+              seen.add(tier)
+          if seen != set(expected):
+              raise SystemExit('Incomplete Frozen native package receipt matrix')
+          PY
+          printf 'All rebuilt archives match exact-main Frozen run %s\n' "$run_id"
 
       - name: Publish GitHub Release
         env:

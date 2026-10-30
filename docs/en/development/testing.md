@@ -428,3 +428,123 @@ boundary is scheduled termination, not a transfer failure. Submitted attempts
 and partial results remain retained; missing coverage or an in-flight transfer
 finishing outside the required interval still fails. Requests started after
 restoration are never silently labelled as fault-period work.
+
+## Client relay ownership regressions
+
+The client process tests force curl through the configured proxy with
+`--noproxy ""`; ambient bypass lists must not turn them into direct-origin tests.
+Chrome and Firefox HTTP CONNECT cases verify the temporary HTTPS origin's CA
+and transfer a payload larger than a TLS record. NXR and Handoff TCP cases
+exercise 128 KiB transfers with either peer closing its write direction first.
+`client::vision_io` tests cancellation during a partial encrypted record,
+Direct-boundary read-ahead, independent uplink framing, and fragmented VLESS
+response headers. TCP and XUDP share this connection-owned decoder and the
+canonical TLS application reader/writer. Native-only ignored cases still require
+their separate Native qualification; ordinary process tests do not qualify them.
+
+## Frozen browser ClientHello comparisons
+
+The nonce-bound corpus under
+`benchmarks/evidence/browser-clienthello/windows-20261029/` retains 20 fresh
+sessions per browser from native capture run
+[40882928698](https://github.com/jacek4yang/rust-reality/actions/runs/40882928698).
+Its manifest records the actual PR merge commit executed by Actions, executable
+and archive hashes, Windows image, per-record hashes and authenticated HTTPS
+receipts. Background preconnects and resumed connections are not fixture inputs.
+The source artifact's discovery label is retained verbatim in its identity;
+fixture qualification comes from the subsequent hash and structural tests.
+
+A separate [frozen production ELF capture](../../../benchmarks/evidence/releases/v2.3.0/client-cli-fingerprint-6455589/archive-manifest.json)
+binds executable `6455589` by SHA-256 and triggers the actual `run --config`
+SOCKS5 entry point. Each sample starts a fresh process and captures its first
+bounded TLS record on loopback. Sixteen omitted-field and sixteen explicit
+Chrome samples pass the independent Chrome corpus comparison; 32 explicit
+Firefox samples pass its comparison. The endpoint closes before the server
+flight, so this is wire/default-selection evidence, not authenticated completion
+or performance acceptance. No generated private configuration enters the archive.
+
+Reproduce candidate comparison outside the source tree:
+
+```shell
+RR_BROWSER_COMPARISON_OUTPUT=/tmp/rr-browser-offers cargo test --test browser_line_capture --locked
+cargo test --manifest-path tools/Cargo.toml -p rr-fingerprint --locked
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare-corpus chrome benchmarks/evidence/browser-clienthello/windows-20261029/chrome/sample-00.tls /tmp/rr-browser-offers/chrome-*.tls
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare-corpus firefox benchmarks/evidence/browser-clienthello/windows-20261029/firefox/sample-00.tls /tmp/rr-browser-offers/firefox-*.tls
+```
+
+CI compares all 32 generated samples per profile. Corpus comparison also rejects repeated client randoms,
+session identifiers, non-GREASE key shares or ECH bodies, and requires Chrome
+extension-order and cipher GREASE diversity. This detects constant fields or
+disabled shuffling; it does not establish cryptographic RNG quality. The corpus
+command accepts 16 through 256 fresh captures. The independent decoder imports
+no production protocol code. Comparison preserves record version/boundaries,
+legacy version, session length, compression, ordered cipher/group/signature/
+version lists, ALPN, extension bodies and key-share lengths/order. It checks
+Firefox's shared hybrid X25519 component and Chrome's independent components.
+Only ephemeral random/session/public-key bytes, valid GREASE values, and valid
+ECH GREASE random fields are normalized. Chrome permits its middle extension
+permutation and four prescribed ECH payload lengths; its first/last GREASE
+extensions remain constrained. Firefox extension order and ECH length remain
+exact for the captured SNI. This corpus does not qualify alternate capture
+conditions, resumption, HRR, real ECH, or complete browser traffic behavior.
+
+Auxiliary JA3 and TCP JA4 hashes include their unhashed inputs:
+
+```shell
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- hashes benchmarks/evidence/browser-clienthello/windows-20261029/firefox/sample-00.tls
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- hashes /tmp/rr-browser-offers/firefox-00.tls
+```
+
+The algorithms follow the pinned [JA3 specification](https://github.com/salesforce/ja3/blob/502cc6395811c54743b0561419d61900a6df3ff7/README.md)
+and [JA4 specification](https://github.com/FoxIO-LLC/ja4/blob/c6469a7b0dbf8fe963810162429fbfd9d1acc4d5/technical_details/JA4.md).
+Published example vectors are regression tests. MD5 is a tooling-only JA3
+identifier, never a security primitive. Chrome's shuffled extension order
+changes JA3; JA4 sorts extensions and therefore hides that order. Both omit
+important fields, so matching hashes never replace structural comparison or
+authenticated-session qualification. The existing capture fuzz target also
+exercises these summaries, including malformed point-format vectors.
+
+Source rules were checked against Chromium 156.0.8078.74's DEPS-pinned BoringSSL
+`2ea3200c3a3ec176613ab7a0b9a4ffc6db846120` (`ssl/handshake.cc`,
+`ssl/extensions.cc`, `ssl/encrypted_client_hello.cc`) and Firefox's
+`FIREFOX_159_0_RELEASE` NSS `security/nss/lib/ssl/tls13ech.c` plus the
+100-byte `security.tls.ech.grease_size` preference. Unlike older uTLS Chrome
+presets, this native Chrome includes ML-DSA signature schemes and trust-anchor
+identifiers. A different Xray preset is not an equivalent browser capture.
+
+### Stock Xray comparison boundary
+
+The current independent reference is official Xray-core v26.10.29, commit
+`0afec66085a85191e9dd2a4a6646c7c9a94688d1`, Linux x86_64 ELF SHA-256
+`e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa`.
+Its pinned uTLS revision remains
+`aa6edf4b11af82e110eea845bb2983d30138d651`, as in the historical 26.7.28
+reference. Source aliases resolve to Chrome 133 and Firefox 148, not the native
+browser versions this release reproduces. Regenerate 20 loopback captures per
+alias with the unmodified verified ELF:
+
+```shell
+cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- capture-xray /path/to/xray /tmp/new-xray-captures
+```
+
+The collector rejects a different executable hash, uses only synthetic test
+credentials, closes after the first complete ClientHello, and records source,
+binary and capture-tool identities. This is a fingerprint observation, not an
+authenticated-session test. Separate stock-Xray ingress tests exercise the
+required authenticated direction (ADR 0059).
+
+| Field | Native Chrome 156 / Firefox 159 | Xray 26.10.29 preset |
+| --- | --- | --- |
+| Chrome signatures | GREASE and ML-DSA 44/65/87 precede traditional schemes | No signature GREASE or ML-DSA |
+| Chrome trust anchors | Extension 51764, 186-byte body | Absent |
+| Firefox ciphers | 15 suites | 17, including two older ECDHE-ECDSA CBC suites |
+| Firefox groups | Hybrid, X25519, P-256/P-384/P-521 | Also FFDHE 2048/3072 |
+| Firefox extensions | Includes session ticket and PSK modes | Neither present |
+| Firefox ECH GREASE payload | 240 bytes for the captured SNI | 239 bytes |
+
+The historical normalized summaries from reference repository commit
+`ba4d4014da4f944091c3b403be0cf0eecd67bedb` are preserved under
+`benchmarks/evidence/browser-clienthello/xray-26.7.28-normalized/` with source
+hashes. They are not raw captures, do not qualify additional production names,
+and do not excuse the reference client's documented P-256 omission. This
+implementation retains and successfully negotiates Firefox's real P-256 share.

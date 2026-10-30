@@ -29,7 +29,8 @@ destination requests are never replayed.
       "id": "11111111-1111-4111-8111-111111111111",
       "publicKey": "UWesja3AOowUwLohp5LcPtmE0gZmBSsn8I6623QczzY",
       "shortId": "0102030405060708",
-      "serverName": "www.example.com"
+      "serverName": "www.example.com",
+      "fingerprint": "chrome"
     }
   ]
 }
@@ -37,6 +38,40 @@ destination requests are never replayed.
 
 Default inbound protocol is SOCKS5 (no-auth CONNECT). Point curl or an
 application at `socks5h://127.0.0.1:10808`.
+
+## Browser ClientHello
+
+Each LINE accepts `"fingerprint": "chrome"` (default) or
+`"fingerprint": "firefox"`. These select pinned native Windows profiles:
+
+| Name | Browser version | TLS key shares |
+| --- | --- | --- |
+| `chrome` | Google Chrome Stable 156.0.8078.74 | GREASE, X25519MLKEM768, X25519 |
+| `firefox` | Mozilla Firefox 159.0 | X25519MLKEM768, X25519, P-256 |
+
+Unknown names, historical versions, Safari/iOS and randomized profile names are
+rejected during configuration loading. Selection and hedging retain each LINE's
+profile. The field is serialized by configuration formatting and appears in the
+generated current schema (`cargo dev config schema`). Browser/driver/capture
+software is tooling only and is not bundled in the production executable.
+
+The profile reproduces a fresh TCP ClientHello without resumption or real ECH.
+It preserves per-handshake entropy, Chrome extension shuffling, GREASE, and ECH
+GREASE. Firefox reuses its X25519 public share inside the hybrid share; Chrome
+uses independent keys. Every offered real key share has retained private state.
+The TLS implementation supports TLS 1.3 only and rejects HelloRetryRequest;
+advertised TLS 1.2 cover capabilities do not enable a TLS 1.2 session.
+REALITY's authenticated session ID and certificate identity remain protocol
+specific. In particular, REALITY authenticates its HMAC-bound Ed25519 identity
+and verifies Ed25519 CertificateVerify and Finished, even though the native
+browser signature lists do not advertise Ed25519. This existing REALITY
+certificate policy is not the browser's PKI or signature-negotiation policy;
+the measured equivalence claim covers the ClientHello, not a generic browser
+TLS state machine. ClientHello equivalence does not reproduce browser HTTP, QUIC, OS,
+packet timing or complete traffic behavior.
+
+See [testing](../development/testing.md) for native capture provenance and the
+independent structural comparison procedure.
 
 ## SOCKS5 UDP ASSOCIATE (XUDP)
 
@@ -63,6 +98,7 @@ unsupported outbounds fail closed with no silent Direct fallback. See
     "publicKey": "UWesja3AOowUwLohp5LcPtmE0gZmBSsn8I6623QczzY",
     "shortId": "0102030405060708",
     "serverName": "www.example.com",
+    "fingerprint": "chrome",
     "allowUdp443": true
   }]
 }
@@ -91,7 +127,8 @@ supported.
       "id": "11111111-1111-4111-8111-111111111111",
       "publicKey": "UWesja3AOowUwLohp5LcPtmE0gZmBSsn8I6623QczzY",
       "shortId": "0102030405060708",
-      "serverName": "www.example.com"
+      "serverName": "www.example.com",
+      "fingerprint": "chrome"
     }
   ]
 }
@@ -123,7 +160,8 @@ authentication faults and affects **new** sessions only.
       "id": "11111111-1111-4111-8111-111111111111",
       "publicKey": "UWesja3AOowUwLohp5LcPtmE0gZmBSsn8I6623QczzY",
       "shortId": "0102030405060708",
-      "serverName": "www.example.com"
+      "serverName": "www.example.com",
+      "fingerprint": "chrome"
     },
     {
       "tag": "b",
@@ -132,7 +170,8 @@ authentication faults and affects **new** sessions only.
       "id": "11111111-1111-4111-8111-111111111111",
       "publicKey": "UWesja3AOowUwLohp5LcPtmE0gZmBSsn8I6623QczzY",
       "shortId": "0102030405060708",
-      "serverName": "www.example.com"
+      "serverName": "www.example.com",
+      "fingerprint": "chrome"
     }
   ],
   "lineGroups": [
@@ -153,6 +192,13 @@ authentication faults and affects **new** sessions only.
 
 ## Operator bounds
 
+- SOCKS5 method negotiation plus its command, or an HTTP CONNECT head, must
+  complete within 15 seconds. LINE authentication then uses one overall
+  `selection.timeoutMs` budget, including single-LINE groups and hedged attempts.
+  Expiry closes pending candidate sockets before any destination request.
+- Local and LINE TCP sockets use the shared NODELAY and kernel keepalive policy.
+  Cancelling the client listener cancels its owned connections; completed
+  connection tasks are reaped while the listener remains active.
 - Listeners must bind loopback (`127.0.0.1` / `::1`). Non-loopback binds are
   rejected.
 - A group lists one to eight LINE tags; tags must exist and be unique in the

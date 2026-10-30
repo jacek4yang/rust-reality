@@ -1,0 +1,54 @@
+{
+  "pgid": 3733983,
+  "members": [
+    {
+      "pid": 3733983,
+      "comm": "bash",
+      "startTicks": "178503273",
+      "uid": 1000,
+      "exe": "/usr/bin/bash"
+    },
+    {
+      "pid": 3733986,
+      "comm": "python3",
+      "startTicks": "178503276",
+      "uid": 1000,
+      "exe": "/usr/bin/python3.14"
+    },
+    {
+      "pid": 3733989,
+      "comm": "rr-dev",
+      "startTicks": "178503279",
+      "uid": 1000,
+      "exe": "/home/jacek/.cache/rr-v230-client-perf-tool-38abe32/rr-dev"
+    },
+    {
+      "pid": 3734017,
+      "comm": "rr-dev",
+      "startTicks": "178503385",
+      "uid": 1000,
+      "exe": "/home/jacek/.cache/rr-v230-client-perf-tool-38abe32/rr-dev"
+    },
+    {
+      "pid": 3734018,
+      "comm": "rr-dev",
+      "startTicks": "178503387",
+      "uid": 1000,
+      "exe": "/home/jacek/.cache/rr-v230-client-perf-tool-38abe32/rr-dev"
+    },
+    {
+      "pid": 3822842,
+      "comm": "rust-reality",
+      "startTicks": "178537604",
+      "uid": 1000,
+      "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality"
+    },
+    {
+      "pid": 3822843,
+      "comm": "rust-reality",
+      "startTicks": "178537604",
+      "uid": 1000,
+      "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-38abe32/binary/rust-reality"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "status": "FAILED",
+  "phase": "first baseline slot Direct HTTPS integrity precheck",
+  "error": "curl 56: OpenSSL SSL_read unexpected EOF",
+  "baselineCommit": "eb91df613a1664a6e744a625652e84756b665c70",
+  "candidateCommit": "7ac961a139b29af48497f6d0a1aa24657f3665e3",
+  "candidateDataSlotsExecuted": 0,
+  "baselineSetupConnections": 16,
+  "baselineSetupFailures": 0,
+  "performanceVerdict": "NOT_EVALUATED",
+  "limitation": "The original client cannot serve as a data comparator for this workload. Preserve original server/setup reference and use functional same-profile d72 for client-data comparison."
+}

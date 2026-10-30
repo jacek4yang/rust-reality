@@ -17,6 +17,7 @@ mod server_hello;
 mod target_read;
 
 pub(crate) use application_io::VectoredRead;
+pub(crate) use application_io::application_halves;
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub use application_io::fuzz_key_update_fragments;

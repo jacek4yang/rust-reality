@@ -1,0 +1,1207 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "slots": 12,
+  "collectorExitCode": 0,
+  "profiles": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 1,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61002,
+          "socks": 61003
+        },
+        "position": 1,
+        "process": {
+          "clientPid": 3786340
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3786340,
+          "startTicks": "180382028",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            3786340,
+            3786342,
+            3786343,
+            3786345,
+            3786347
+          ]
+        },
+        "server": {
+          "pid": 3786339,
+          "startTicks": "180382028",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3786339,
+            3786341,
+            3786344,
+            3786346,
+            3786348
+          ]
+        }
+      },
+      "attachedAtUnix": 1793335932.1073375,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3786340,3786342,3786343,3786345,3786347,3786339,3786341,3786344,3786346,3786348",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-01-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3786340,3786342,3786343,3786345,3786347,3786339,3786341,3786344,3786346,3786348",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-01-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793335955.4879465,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "b80b48feabffd4952ca15963232b4756b880ce40",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "sha256": "dcd339bf48334c6504c37696c3f3b942f1b70778cc6cd55751f77193838148d4"
+        },
+        "block": 1,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61004,
+          "socks": 61005
+        },
+        "position": 2,
+        "process": {
+          "clientPid": 3795103
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3795103,
+          "startTicks": "180389447",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "tids": [
+            3795103,
+            3795108,
+            3795109,
+            3795110,
+            3795111
+          ]
+        },
+        "server": {
+          "pid": 3795102,
+          "startTicks": "180389447",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3795102,
+            3795104,
+            3795105,
+            3795106,
+            3795107
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336008.1737568,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3795103,3795108,3795109,3795110,3795111,3795102,3795104,3795105,3795106,3795107",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-02-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3795103,3795108,3795109,3795110,3795111,3795102,3795104,3795105,3795106,3795107",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-02-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336031.2619517,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "b80b48feabffd4952ca15963232b4756b880ce40",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "sha256": "dcd339bf48334c6504c37696c3f3b942f1b70778cc6cd55751f77193838148d4"
+        },
+        "block": 1,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61006,
+          "socks": 61007
+        },
+        "position": 3,
+        "process": {
+          "clientPid": 3803909
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3803909,
+          "startTicks": "180396472",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "tids": [
+            3803909,
+            3803914,
+            3803915,
+            3803916,
+            3803917
+          ]
+        },
+        "server": {
+          "pid": 3803908,
+          "startTicks": "180396472",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3803908,
+            3803910,
+            3803911,
+            3803912,
+            3803913
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336079.833656,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3803909,3803914,3803915,3803916,3803917,3803908,3803910,3803911,3803912,3803913",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-03-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3803909,3803914,3803915,3803916,3803917,3803908,3803910,3803911,3803912,3803913",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-03-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336104.2548661,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-01-slot-04-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 1,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61008,
+          "socks": 61009
+        },
+        "position": 4,
+        "process": {
+          "clientPid": 3812703
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3812703,
+          "startTicks": "180403774",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            3812703,
+            3812708,
+            3812709,
+            3812710,
+            3812711
+          ]
+        },
+        "server": {
+          "pid": 3812702,
+          "startTicks": "180403774",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3812702,
+            3812704,
+            3812705,
+            3812706,
+            3812707
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336154.485424,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3812703,3812708,3812709,3812710,3812711,3812702,3812704,3812705,3812706,3812707",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-04-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3812703,3812708,3812709,3812710,3812711,3812702,3812704,3812705,3812706,3812707",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-01-slot-04-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336179.6408978,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-02-slot-01-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "b80b48feabffd4952ca15963232b4756b880ce40",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "sha256": "dcd339bf48334c6504c37696c3f3b942f1b70778cc6cd55751f77193838148d4"
+        },
+        "block": 2,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61010,
+          "socks": 61011
+        },
+        "position": 1,
+        "process": {
+          "clientPid": 3821471
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3821471,
+          "startTicks": "180411866",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "tids": [
+            3821471,
+            3821475,
+            3821477,
+            3821478,
+            3821479
+          ]
+        },
+        "server": {
+          "pid": 3821470,
+          "startTicks": "180411866",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3821470,
+            3821472,
+            3821473,
+            3821474,
+            3821476
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336233.2293124,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3821471,3821475,3821477,3821478,3821479,3821470,3821472,3821473,3821474,3821476",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-01-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3821471,3821475,3821477,3821478,3821479,3821470,3821472,3821473,3821474,3821476",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-01-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336256.8287385,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-02-slot-02-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 2,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61012,
+          "socks": 61013
+        },
+        "position": 2,
+        "process": {
+          "clientPid": 3830251
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3830251,
+          "startTicks": "180419030",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            3830251,
+            3830255,
+            3830257,
+            3830258,
+            3830259
+          ]
+        },
+        "server": {
+          "pid": 3830250,
+          "startTicks": "180419030",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3830250,
+            3830252,
+            3830253,
+            3830254,
+            3830256
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336307.9193647,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3830251,3830255,3830257,3830258,3830259,3830250,3830252,3830253,3830254,3830256",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-02-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3830251,3830255,3830257,3830258,3830259,3830250,3830252,3830253,3830254,3830256",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-02-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336332.5872142,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-02-slot-03-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 2,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61014,
+          "socks": 61015
+        },
+        "position": 3,
+        "process": {
+          "clientPid": 3839093
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3839093,
+          "startTicks": "180427159",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            3839093,
+            3839098,
+            3839099,
+            3839100,
+            3839101
+          ]
+        },
+        "server": {
+          "pid": 3839092,
+          "startTicks": "180427159",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3839092,
+            3839094,
+            3839095,
+            3839096,
+            3839097
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336387.4397187,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3839093,3839098,3839099,3839100,3839101,3839092,3839094,3839095,3839096,3839097",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-03-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3839093,3839098,3839099,3839100,3839101,3839092,3839094,3839095,3839096,3839097",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-03-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336412.3643668,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-02-slot-04-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "b80b48feabffd4952ca15963232b4756b880ce40",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "sha256": "dcd339bf48334c6504c37696c3f3b942f1b70778cc6cd55751f77193838148d4"
+        },
+        "block": 2,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61016,
+          "socks": 61017
+        },
+        "position": 4,
+        "process": {
+          "clientPid": 3847882
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3847882,
+          "startTicks": "180435141",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "tids": [
+            3847882,
+            3847887,
+            3847888,
+            3847889,
+            3847890
+          ]
+        },
+        "server": {
+          "pid": 3847881,
+          "startTicks": "180435141",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3847881,
+            3847883,
+            3847884,
+            3847885,
+            3847886
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336465.988334,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3847882,3847887,3847888,3847889,3847890,3847881,3847883,3847884,3847885,3847886",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-04-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3847882,3847887,3847888,3847889,3847890,3847881,3847883,3847884,3847885,3847886",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-02-slot-04-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336490.2639513,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-03-slot-01-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 3,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61018,
+          "socks": 61019
+        },
+        "position": 1,
+        "process": {
+          "clientPid": 3856632
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3856632,
+          "startTicks": "180442372",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            3856632,
+            3856637,
+            3856638,
+            3856639,
+            3856640
+          ]
+        },
+        "server": {
+          "pid": 3856631,
+          "startTicks": "180442372",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3856631,
+            3856633,
+            3856634,
+            3856635,
+            3856636
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336541.5686686,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3856632,3856637,3856638,3856639,3856640,3856631,3856633,3856634,3856635,3856636",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-01-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3856632,3856637,3856638,3856639,3856640,3856631,3856633,3856634,3856635,3856636",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-01-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336566.8421366,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-03-slot-02-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "b80b48feabffd4952ca15963232b4756b880ce40",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "sha256": "dcd339bf48334c6504c37696c3f3b942f1b70778cc6cd55751f77193838148d4"
+        },
+        "block": 3,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61020,
+          "socks": 61021
+        },
+        "position": 2,
+        "process": {
+          "clientPid": 3865395
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3865395,
+          "startTicks": "180450587",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "tids": [
+            3865395,
+            3865399,
+            3865401,
+            3865402,
+            3865403
+          ]
+        },
+        "server": {
+          "pid": 3865394,
+          "startTicks": "180450587",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3865394,
+            3865396,
+            3865397,
+            3865398,
+            3865400
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336620.5972574,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3865395,3865399,3865401,3865402,3865403,3865394,3865396,3865397,3865398,3865400",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-02-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3865395,3865399,3865401,3865402,3865403,3865394,3865396,3865397,3865398,3865400",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-02-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336644.7278814,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-03-slot-03-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "b80b48feabffd4952ca15963232b4756b880ce40",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "sha256": "dcd339bf48334c6504c37696c3f3b942f1b70778cc6cd55751f77193838148d4"
+        },
+        "block": 3,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61022,
+          "socks": 61023
+        },
+        "position": 3,
+        "process": {
+          "clientPid": 3874178
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3874178,
+          "startTicks": "180457818",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-7e4d89d/binary/rust-reality",
+          "tids": [
+            3874178,
+            3874183,
+            3874184,
+            3874185,
+            3874186
+          ]
+        },
+        "server": {
+          "pid": 3874177,
+          "startTicks": "180457818",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3874177,
+            3874179,
+            3874180,
+            3874181,
+            3874182
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336695.084415,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3874178,3874183,3874184,3874185,3874186,3874177,3874179,3874180,3874181,3874182",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-03-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3874178,3874183,3874184,3874185,3874186,3874177,3874179,3874180,3874181,3874182",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-03-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336719.4466355,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-03-slot-04-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 3,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61024,
+          "socks": 61025
+        },
+        "position": 4,
+        "process": {
+          "clientPid": 3882921
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 3882921,
+          "startTicks": "180465292",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            3882921,
+            3882926,
+            3882927,
+            3882928,
+            3882929
+          ]
+        },
+        "server": {
+          "pid": 3882920,
+          "startTicks": "180465292",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            3882920,
+            3882922,
+            3882923,
+            3882924,
+            3882925
+          ]
+        }
+      },
+      "attachedAtUnix": 1793336771.0427425,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "3882921,3882926,3882927,3882928,3882929,3882920,3882922,3882923,3882924,3882925",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-04-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "3882921,3882926,3882927,3882928,3882929,3882920,3882922,3882923,3882924,3882925",
+          "-o",
+          "/home/jacek/.cache/rr-v230-bidi-profile-d72-7e4d89d-v2/block-03-slot-04-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Bidi c64 phase: attach after final Direct-upload sample, detach after final Bidi sample. Includes the Bidi warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793336796.144702,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    }
+  ]
+}

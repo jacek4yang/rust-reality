@@ -458,16 +458,37 @@ pub fn resume_application_halves<R, W>(
     key_update_response_pending: bool,
 ) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
     let (client_records, server_records) = tls.into_record_layers();
+    application_halves(
+        reader,
+        pending_ciphertext,
+        writer,
+        client_records,
+        server_records,
+        key_update_response_pending,
+        SOCKET_BUFFER_CAPACITY,
+    )
+}
+
+/// Attaches owned traffic directions without assuming which peer is the server.
+pub(crate) fn application_halves<R, W>(
+    reader: R,
+    pending_ciphertext: Vec<u8>,
+    writer: W,
+    read_records: super::Tls13RecordLayer,
+    write_records: super::Tls13RecordLayer,
+    key_update_response_pending: bool,
+    initial_read_capacity: usize,
+) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
     let buffered_end = pending_ciphertext.len();
     let mut socket_buffer = pending_ciphertext;
     // Best-effort headroom for the first refill; the grow-on-demand refill
     // policy stays correct even when this reservation fails.
-    let _ignored = socket_buffer.try_reserve(SOCKET_BUFFER_CAPACITY);
+    let _ignored = socket_buffer.try_reserve(initial_read_capacity);
     let key_update_coordination = Arc::new(KeyUpdateCoordination::new(key_update_response_pending));
     (
         TlsApplicationReader {
             io: reader,
-            records: client_records,
+            records: read_records,
             socket_buffer,
             buffered_start: 0,
             buffered_end,
@@ -477,7 +498,7 @@ pub fn resume_application_halves<R, W>(
         },
         TlsApplicationWriter {
             io: writer,
-            records: server_records,
+            records: write_records,
             write_record: Vec::new(),
             idle: IdleDeadline::new(),
             key_update_coordination,
@@ -792,15 +813,20 @@ where
             self.buffered_end = buffered;
         }
         if self.buffered_end == self.socket_buffer.len() {
-            // Unreachable for validated record lengths (one record never
-            // exceeds a quarter of the buffer): a single record larger than
-            // the whole buffer grows the storage once, following the same
-            // reserve-then-zero-fill pattern as the initial allocation.
+            // A client starts with a smaller idle-session window. Its first
+            // large record promotes storage to the normal batching capacity.
+            // Server readers already have that capacity; validated records
+            // never require growth beyond it.
+            let growth = SOCKET_BUFFER_CAPACITY.saturating_sub(self.socket_buffer.len());
+            if growth == 0 {
+                return Err(TlsApplicationIoError::Record(
+                    Tls13RecordError::InvalidLength,
+                ));
+            }
             self.socket_buffer
-                .try_reserve_exact(SOCKET_BUFFER_CAPACITY)
+                .try_reserve_exact(growth)
                 .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
-            self.socket_buffer
-                .resize(self.socket_buffer.len() + SOCKET_BUFFER_CAPACITY, 0);
+            self.socket_buffer.resize(SOCKET_BUFFER_CAPACITY, 0);
         }
         self.idle
             .reset(timeout)
@@ -848,6 +874,8 @@ where
                 .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
             buffer.resize(SOCKET_BUFFER_CAPACITY, 0);
             self.socket_buffer = buffer;
+        } else if self.socket_buffer.is_empty() {
+            self.socket_buffer.resize(self.socket_buffer.capacity(), 0);
         }
         Ok(())
     }

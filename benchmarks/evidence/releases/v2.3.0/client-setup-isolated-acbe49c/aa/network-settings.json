@@ -1,0 +1,16 @@
+{
+  "observedUnixSeconds": 1793306695.8480074,
+  "namespace": "net:[4026533291]",
+  "settings": {
+    "net/ipv4/ip_local_port_range": "32768\t60999",
+    "net/ipv4/tcp_rmem": "4096\t131072\t33554432",
+    "net/ipv4/tcp_wmem": "4096\t16384\t4194304",
+    "net/ipv4/tcp_congestion_control": "bbr",
+    "net/ipv4/tcp_fin_timeout": "60",
+    "net/ipv4/tcp_tw_reuse": "2",
+    "net/ipv4/tcp_tw_reuse_delay": "1000",
+    "net/core/somaxconn": "4096",
+    "net/netfilter/nf_conntrack_count": "0",
+    "net/netfilter/nf_conntrack_max": "262144"
+  }
+}

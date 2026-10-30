@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "kind": "historical normalized summaries; not raw TLS records or native browser evidence",
+  "referenceRepository": "https://github.com/jacek4yang/rust-reality-client",
+  "referenceCommit": "ba4d4014da4f944091c3b403be0cf0eecd67bedb",
+  "sourceDirectory": "tests/fixtures/clienthello",
+  "xrayVersion": "26.7.28",
+  "xrayCommitPrefix": "5ca6f4b",
+  "asset": "Xray-windows-64.zip",
+  "binarySha256": "1d9674327972a21afd4c906a7a72bb0856935aa9e0227c87f34f03d11a88bddf",
+  "utlsCommit": "aa6edf4b11af82e110eea845bb2983d30138d651",
+  "files": [
+    {
+      "file": "hello360_11_0.txt",
+      "sha256": "4215229f150126c56f7647207a5e3f91846a559523b16275dce490a63137bf3e"
+    },
+    {
+      "file": "hellochrome_120.txt",
+      "sha256": "e94ca89f7ef734b41e8b459b3f4877d054987ac1d18010671cf80dbdcf876fc4"
+    },
+    {
+      "file": "hellochrome_131.txt",
+      "sha256": "9caa2bc42160b857c01fe948e319ce4411c9094c2185f9d5b7f41fcb5ffa72a4"
+    },
+    {
+      "file": "hellochrome_133.txt",
+      "sha256": "28c5015d1be513af021df80b58c7c06a90fce33a8052a0ea734852e3252da6b8"
+    },
+    {
+      "file": "helloedge_106.txt",
+      "sha256": "dd3904eba560689d362961d05b08edbc6e7f690ec80a324d473a0d63a176b7b0"
+    },
+    {
+      "file": "helloedge_85.txt",
+      "sha256": "4c3a57962099b9fc12aa675e9c805693ed6d592f995ef9379138b18c6f6e4f4b"
+    },
+    {
+      "file": "hellofirefox_120.txt",
+      "sha256": "d983cadc9dfcf508c395fd266cac109d9d813a25dcaa5c417b8551b1e6a3f654"
+    },
+    {
+      "file": "hellofirefox_148.txt",
+      "sha256": "9b5871aaf6fe71efc819781de7f69ae8bb41461b0a0b835e330cbef003ed2d44"
+    },
+    {
+      "file": "helloios_13.txt",
+      "sha256": "e54398049b9cb8f80b83ff47643fca7c90c51a77b6a26e3d9c0dade0e690cee3"
+    },
+    {
+      "file": "helloios_14.txt",
+      "sha256": "ba81e758350f16dcc7a213425828b0d646ca93b26862cfd410ae211110d0eef4"
+    },
+    {
+      "file": "helloqq_11_1.txt",
+      "sha256": "87de3a708463e25e132d51394fb4d4658338e59e8131121956863ced8f5e451d"
+    },
+    {
+      "file": "hellosafari_26_3.txt",
+      "sha256": "08013e5b6ec00e79c4e71040f02a2c8ca6502349db7c76c6d757243f04004ddb"
+    }
+  ]
+}
