@@ -116,8 +116,7 @@ impl VisionIo {
             response: Some(Vec::new()),
             encoder,
             decoder: VisionDecoder::new(user_id),
-            // Reserve a full plaintext record once. The retained capacity also
-            // bounds raw socket reads after Direct, without transition growth.
+            // Keep idle delivery storage to one full plaintext record.
             readable: Vec::with_capacity(MAX_PLAINTEXT_LEN),
             readable_at: 0,
             activity,
@@ -190,6 +189,11 @@ impl VisionIo {
         };
         let (pending, reader) = reader.into_inner_with_pending();
         self.readable.extend_from_slice(&pending);
+        // Match the two-record delivery window used by buffered TLS reads.
+        // Reserve once at the authenticated transition, not on each raw read.
+        self.readable
+            .try_reserve_exact((2 * MAX_PLAINTEXT_LEN).saturating_sub(self.readable.len()))
+            .map_err(|_| VisionTunnelError::Io(io::ErrorKind::OutOfMemory.into()))?;
         self.reader = ReadDirection::Raw { reader };
         // Directions transition independently. An authenticated downlink Direct
         // does not authorize removing the uplink's Vision or TLS framing.
@@ -282,10 +286,6 @@ impl VisionIo {
             if let Some(plan) = second {
                 self.encoder.commit(&plan);
                 offset += next;
-                // Batching removes the second frame's socket write, but not
-                // its work. Preserve a cooperative scheduling point; this
-                // yields only when the task has exhausted its budget.
-                tokio::task::consume_budget().await;
             }
         }
         Ok(())
@@ -700,8 +700,8 @@ mod tests {
             .unwrap();
         assert!(matches!(io.reader, ReadDirection::Raw { .. }));
         assert!(
-            io.readable.capacity() >= MAX_PLAINTEXT_LEN,
-            "Direct must preserve the bulk read capacity established by connect"
+            io.readable.capacity() >= 2 * MAX_PLAINTEXT_LEN,
+            "Direct must retain the bounded two-record delivery window"
         );
         let mut received = io.readable.clone();
         io.readable_at = io.readable.len();
@@ -711,6 +711,35 @@ mod tests {
             io.readable_at = io.readable.len();
         }
         assert_eq!(received, b"boundarypipelined raw bytes");
+        let bulk = vec![0x5a; 2 * MAX_PLAINTEXT_LEN];
+        for _ in 0..2 {
+            peer.write_all(&bulk).await.unwrap();
+            let mut received = Vec::with_capacity(bulk.len());
+            while received.len() < bulk.len() {
+                let ReadDirection::Raw { reader } = &io.reader else {
+                    panic!("Direct must keep its authenticated read owner");
+                };
+                reader.as_ref().readable().await.unwrap();
+                let allocations = {
+                    use std::{
+                        future::Future,
+                        task::{Context, Poll, Waker},
+                    };
+                    let next = io.read_and_open_record();
+                    tokio::pin!(next);
+                    allocation_counter::measure(|| {
+                        assert!(matches!(
+                            next.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                            Poll::Ready(Ok(()))
+                        ));
+                    })
+                };
+                assert_eq!(allocations.count_total, 0);
+                received.extend_from_slice(&io.readable);
+                io.readable_at = io.readable.len();
+            }
+            assert_eq!(received, bulk);
+        }
         io.write_application(b"uplink remains framed")
             .await
             .unwrap();

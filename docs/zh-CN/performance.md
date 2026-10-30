@@ -89,6 +89,12 @@ EOF，其[失败证据](../../benchmarks/evidence/releases/v2.3.0/client-data-ab
 不能证明因果关系。带探针的计时不作为验收；原始计数、帧指针采样以及被否决的
 首次控制器调用均保留，不采集负载内容或原始用户栈。
 
+[`234c38d` 的协作预算实验](../../benchmarks/evidence/releases/v2.3.0/client-budget-diagnostic-234c38d/archive-manifest.json)
+为合并的第二个帧补计一次调度预算。三个区块的并发 64 诊断完成 180 个批次、
+13,824 次请求，但相对 `7e4d89d` 的双向吞吐比值分别为 0.9975、0.9087、0.9702。
+区块数量不足以形成验收级区间；目标场景没有重复收益，因此删除额外预算计数。
+这些诊断点估计不作为统计上已确定的回退结论。
+
 针对 `6455589` 的 [Heaptrack 诊断](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
 使用三轮零连接及 128 连接对照，全部 1,152 次已认证负载连接成功。扣除启动基线后，
 每连接分配调用次数为原始客户端 91.16–91.33、Chrome 88、Firefox 87–87.01。

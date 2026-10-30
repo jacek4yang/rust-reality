@@ -108,6 +108,14 @@ removed by batched writes, but do not prove causality. Instrumented timing is
 not acceptance. Raw counters, frame-pointer samples and the rejected first
 controller invocation are retained; no payload or raw user stack is captured.
 
+The [cooperative-budget experiment at `234c38d`](../../benchmarks/evidence/releases/v2.3.0/client-budget-diagnostic-234c38d/archive-manifest.json)
+adds a scheduling budget unit for the second batched frame. Its three-block
+concurrency-64 diagnostic completes 180 batches and 13,824 requests, but the
+bidirectional throughput ratios are 0.9975, 0.9087 and 0.9702 against `7e4d89d`.
+There are too few blocks for acceptance-grade intervals. No repeatable target
+benefit is observed, so the additional budget accounting is removed; these
+diagnostic point estimates are not a statistically resolved regression claim.
+
 [Heaptrack diagnostics](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
 on `6455589` use three repeats of zero- and 128-connection controls. All 1,152
 authenticated workload connections succeed. Startup-subtracted allocation calls
