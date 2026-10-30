@@ -32,13 +32,31 @@ already shows lower absolute held anonymous residency with full delivery
 capacity: 9,790 versus 10,012 KiB at 128 held connections. Its larger increment
 above the post-churn baseline is not a total-memory regression or a leak.
 
+The [Direct-window diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-direct-window-diagnostic-04a1dc5/archive-manifest.json)
+instead retains 16-KiB initial capacity and reserves 32 KiB once at Direct.
+All three concurrency-64 bidirectional throughput block ratios improve over
+`7e4d89d`, with median CPU/GiB ratio 0.8658. This follows PMU evidence of the
+remaining socket-call cost, rather than another reduction of idle capacity.
+The [matched HTTPS residency observations](../../benchmarks/evidence/releases/v2.3.0/client-direct-memory-04a1dc5/summary.json)
+show the capacity tradeoff: 8,236 KiB held anonymous residency versus 6,060 KiB
+for `7e4d89d`, but below the working `d72abc2` baseline of 11,248 KiB. All nine
+runs recover FD counts. Three diagnostic blocks are not release qualification.
+
 ## Decision
 
 Retain one full TLS plaintext record of delivery capacity at client connection
-construction. Remove the experimental Direct-specific capacity promotion.
+construction. Do not reintroduce the rejected 8-KiB initial capacity or its
+8-to-16-KiB Direct promotion.
 Keep the canonical cancellation-safe TLS reader, bounded buffered-record batches,
 and direct reads into retained delivery storage. No timeout, security check,
 resource ceiling, or performance threshold changes.
+
+At authenticated Direct, reserve at least the two-record delivery window already
+used by buffered TLS delivery, rather than the rejected 8-to-16-KiB promotion.
+The reservation happens once, preserves pending bytes, and fails closed on
+allocation failure. Steady reads reuse that storage without allocation or an
+extra scratch copy. The explicit capacity cost is justified only together with
+the unchanged full performance and resource qualification requirements.
 
 Reject both smaller-initial-capacity variants rather than accepting a protected
 throughput regression for idle-memory savings. Preserve all failed measurements.

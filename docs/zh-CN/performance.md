@@ -95,6 +95,21 @@ EOF，其[失败证据](../../benchmarks/evidence/releases/v2.3.0/client-data-ab
 区块数量不足以形成验收级区间；目标场景没有重复收益，因此删除额外预算计数。
 这些诊断点估计不作为统计上已确定的回退结论。
 
+[`04a1dc5` 的 32 KiB Direct 窗口诊断](../../benchmarks/evidence/releases/v2.3.0/client-direct-window-diagnostic-04a1dc5/archive-manifest.json)
+保留 16 KiB 初始交付容量，仅在认证后的 Direct 切换时预留两条记录的交付窗口。
+相对 `7e4d89d`，三个双向吞吐区块比值为 1.0203、1.0719、1.0198，CPU/GiB
+中位比值为 0.8658；Direct 下载吞吐与 CPU 中位比值为 1.0370、0.8625。
+这些是值得继续验证的诊断观察，不是相对 `d72abc2` 的完整资格或验收级区间。
+
+独立的[驻留内存诊断](../../benchmarks/evidence/releases/v2.3.0/client-direct-memory-04a1dc5/summary.json)
+对每个二进制轮换运行三次，持有 128 条验证过证书的 TLS 1.3 HTTPS 长连接，
+每条连接两次校验精确的 1 MiB 响应。全部 2,304 次响应正确，九次进程均恢复
+初始 FD 数。持有阶段匿名驻留内存中位数为：`d72abc2` 11,248 KiB、
+`7e4d89d` 6,060 KiB、`04a1dc5` 8,236 KiB；关闭后分别为 9,164、5,836、
+7,328 KiB。较大的 Direct 窗口相对 `7e4d89d` 有真实容量成本，但本负载仍低于
+工作基线 `d72abc2`，初始分帧容量不变。这些是驻留观察，不是分配次数、长期
+无泄漏证明或计时验收。
+
 针对 `6455589` 的 [Heaptrack 诊断](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
 使用三轮零连接及 128 连接对照，全部 1,152 次已认证负载连接成功。扣除启动基线后，
 每连接分配调用次数为原始客户端 91.16–91.33、Chrome 88、Firefox 87–87.01。

@@ -116,6 +116,25 @@ There are too few blocks for acceptance-grade intervals. No repeatable target
 benefit is observed, so the additional budget accounting is removed; these
 diagnostic point estimates are not a statistically resolved regression claim.
 
+The [32-KiB Direct-window diagnostic at `04a1dc5`](../../benchmarks/evidence/releases/v2.3.0/client-direct-window-diagnostic-04a1dc5/archive-manifest.json)
+keeps 16-KiB initial delivery storage and reserves the two-record delivery window
+once at authenticated Direct. Against `7e4d89d`, its three bidirectional
+throughput block ratios are 1.0203, 1.0719 and 1.0198; median CPU/GiB is 0.8658.
+Direct-download median throughput and CPU ratios are 1.0370 and 0.8625.
+These are promising diagnostic observations, not full qualification against
+`d72abc2` or acceptance-grade intervals.
+
+A [separate retained-memory diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-direct-memory-04a1dc5/summary.json)
+uses three rotated repeats per binary, 128 persistent verified TLS 1.3 HTTPS
+connections, and two exact 1-MiB responses per connection. All 2,304 responses
+match and all nine processes recover their initial FD count. Median held
+anonymous residency is 11,248 KiB for `d72abc2`, 6,060 KiB for `7e4d89d`, and
+8,236 KiB for `04a1dc5`; after close it is 9,164, 5,836 and 7,328 KiB.
+The larger Direct window has a real capacity cost versus `7e4d89d`, while this
+workload remains below the working `d72abc2` baseline. Initial framed storage
+is unchanged. These observations are residency, not allocator counts or a
+long-term leak verdict, and do not establish timing acceptance.
+
 [Heaptrack diagnostics](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
 on `6455589` use three repeats of zero- and 128-connection controls. All 1,152
 authenticated workload connections succeed. Startup-subtracted allocation calls
