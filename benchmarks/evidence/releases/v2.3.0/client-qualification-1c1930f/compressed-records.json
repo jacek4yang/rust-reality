@@ -1,0 +1,30 @@
+{
+  "reason": "Preserve exact raw tool output, including trailing whitespace, without violating the Git whitespace gate.",
+  "records": [
+    {
+      "file": "code-direct-transition.asm.gz",
+      "decodedBytes": 9771,
+      "decodedSha256": "fe9481533d12f4c61292fd6d97645d67557f7345243e4a50bffa2612f6bd607f"
+    },
+    {
+      "file": "code-read-record.asm.gz",
+      "decodedBytes": 15945,
+      "decodedSha256": "d30925e7b2cd5484061e3e8042e60bb383673a25d4cc6cd0f74710b1db8a5d9b"
+    },
+    {
+      "file": "stock-ingress-xudp_handoff_e2e.log.gz",
+      "decodedBytes": 558,
+      "decodedSha256": "f44ae5b4eefcfc731e84f4a243b47283113789fe31663e5a0dc583fef94a452a"
+    },
+    {
+      "file": "stock-ingress-xudp_nxr_e2e.log.gz",
+      "decodedBytes": 542,
+      "decodedSha256": "1c3918d14aff3a5723b34f14ec8c20fb14b5eb80327955f76f6926e17f2738ea"
+    },
+    {
+      "file": "stock-ingress-xudp_stock_xray_interop.log.gz",
+      "decodedBytes": 1896,
+      "decodedSha256": "b00c991119f9f8787783f591c9d15e2cc76ce39bd636911390a5069a711690b1"
+    }
+  ]
+}
