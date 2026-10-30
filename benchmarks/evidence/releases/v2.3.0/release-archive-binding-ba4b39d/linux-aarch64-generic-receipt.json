@@ -1,0 +1,147 @@
+{
+  "schema": "rr-package-execution/v1",
+  "source_commit": "ba4b39d9f936ea178b9713c96043014a5172d636",
+  "tag": "v2.2.0",
+  "tier": "linux-aarch64-generic",
+  "assets_directory": "/home/runner/work/rust-reality/rust-reality/dist",
+  "output_directory": "/home/runner/work/_temp/package-receipt-linux-aarch64-generic",
+  "archive": {
+    "path": "rust-reality-v2.2.0-linux-aarch64-generic.tar.gz",
+    "before": "3314b76bbff8a4a449f1ead8b79c4d04390678098b0a4ad5c61528a012c4175d",
+    "after": "3314b76bbff8a4a449f1ead8b79c4d04390678098b0a4ad5c61528a012c4175d"
+  },
+  "binary": {
+    "path": "rust-reality",
+    "before": "cac90af0f32b97adf1a816a61562ca482794da140afe090244e07617e7308ed9",
+    "after": "cac90af0f32b97adf1a816a61562ca482794da140afe090244e07617e7308ed9"
+  },
+  "harness": {
+    "path": "rr-dev",
+    "before": "924e1d10a6bd2727d71abe9b3e4465b26d45d23cb1327577d41bd5e80cf410e2",
+    "after": "924e1d10a6bd2727d71abe9b3e4465b26d45d23cb1327577d41bd5e80cf410e2"
+  },
+  "host_architecture": "aarch64",
+  "host_kernel": "6.8.0-1070-azure",
+  "host_boot_id": "e27226f9-c3c8-4474-9eda-e0eb6acf9e89",
+  "host_cpuinfo_sha256": "e439512b1a062ed95dff17c7acf5386f3b02e4f4c6a24646527cfb60dc26df9b",
+  "runner": [],
+  "cover_target": "127.0.0.1:44443",
+  "cover_server_name": "localhost",
+  "commands": [
+    {
+      "argv": [
+        "--version"
+      ],
+      "pid": 14833,
+      "start_ticks": 98858,
+      "started_unix_ms": 1793311940021,
+      "completed_unix_ms": 1793311940032,
+      "exit_code": 0,
+      "stdout": "rust-reality 2.2.0\ncommit: ba4b39d9f936ea178b9713c96043014a5172d636\n",
+      "stderr": "",
+      "stdout_sha256": "0a63542fb4e8ee194fa4ba8b2bfed70076fc51bd431ecf76fddabd0f33d4c790",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    },
+    {
+      "argv": [
+        "--help"
+      ],
+      "pid": 14836,
+      "start_ticks": 98859,
+      "started_unix_ms": 1793311940032,
+      "completed_unix_ms": 1793311940042,
+      "exit_code": 0,
+      "stdout": "Linux-focused VLESS + REALITY + Vision proxy\n\nUsage: rust-reality <COMMAND>\n\nCommands:\n  run          Serve traffic until SIGINT or SIGTERM\n  check        Check that a configuration is internally valid. Never touches the network, binds a port, or downloads anything\n  doctor       Check that a configuration will work on this machine and network\n  explain      Report what a configuration resolves to here: chosen defaults, derived limits, detected machine, and the listeners that would be bound\n  format       Rewrite a configuration in the canonical, validated form\n  check-cover  Check whether a host is usable as a REALITY cover target\n  generate     Generate cryptographic and identity material\n  help         Print this message or the help of the given subcommand(s)\n\nOptions:\n  -h, --help     Print help\n  -V, --version  Print version\n",
+      "stderr": "",
+      "stdout_sha256": "7c999fc1a4f17d7383a207cef4b3ace51921b6e2a779547c878995b07e13b343",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    },
+    {
+      "argv": [
+        "generate",
+        "x25519",
+        "--json"
+      ],
+      "pid": 14839,
+      "start_ticks": 98860,
+      "started_unix_ms": 1793311940042,
+      "completed_unix_ms": 1793311940053,
+      "exit_code": 0,
+      "stdout": null,
+      "stderr": null,
+      "stdout_sha256": "a17daca2d31586fe4eb2b6cfc97a3a5ed9b678e49d206e283f3b0b19dd2f30a7",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    },
+    {
+      "argv": [
+        "generate",
+        "uuid"
+      ],
+      "pid": 14842,
+      "start_ticks": 98861,
+      "started_unix_ms": 1793311940053,
+      "completed_unix_ms": 1793311940063,
+      "exit_code": 0,
+      "stdout": null,
+      "stderr": null,
+      "stdout_sha256": "6327e8686e77a97ece233df528c75b27a9370057cc86575c79f77e72a7c5a2c5",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    },
+    {
+      "argv": [
+        "generate",
+        "short-id"
+      ],
+      "pid": 14845,
+      "start_ticks": 98862,
+      "started_unix_ms": 1793311940063,
+      "completed_unix_ms": 1793311940074,
+      "exit_code": 0,
+      "stdout": null,
+      "stderr": null,
+      "stdout_sha256": "f074e03f9375959b9eba25c09d0c28379e5141125be92990baef35a4191dca09",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    },
+    {
+      "argv": [
+        "check",
+        "--config",
+        "/tmp/rust-reality-release-smoke-14807-1793311939923476150/linux-aarch64-generic/config/standalone.json"
+      ],
+      "pid": 14848,
+      "start_ticks": 98864,
+      "started_unix_ms": 1793311940074,
+      "completed_unix_ms": 1793311940085,
+      "exit_code": 0,
+      "stdout": "/tmp/rust-reality-release-smoke-14807-1793311939923476150/linux-aarch64-generic/config/standalone.json is a valid entry node\n",
+      "stderr": "",
+      "stdout_sha256": "d1c03436dcef83e529b9bbf0ca95388a29e49010af3a8abee1bd9bf69c3b4442",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    },
+    {
+      "argv": [
+        "doctor",
+        "--config",
+        "/tmp/rust-reality-release-smoke-14807-1793311939923476150/linux-aarch64-generic/config/standalone.json"
+      ],
+      "pid": 14851,
+      "start_ticks": 98865,
+      "started_unix_ms": 1793311940085,
+      "completed_unix_ms": 1793311940095,
+      "exit_code": 0,
+      "stdout": "{\n  \"assets\": {\n    \"domainLabels\": 0,\n    \"domainSources\": 0,\n    \"generation\": 0,\n    \"ipLabels\": 0,\n    \"ipSources\": 0\n  },\n  \"configuration\": \"ok\",\n  \"cover\": [\n    {\n      \"cipherSuite\": \"TLS_AES_128_GCM_SHA256\",\n      \"compatible\": true,\n      \"connectMillis\": 0,\n      \"keyExchangeGroup\": \"X25519\",\n      \"serverHelloMillis\": 1,\n      \"serverName\": \"localhost\",\n      \"target\": \"127.0.0.1:44443\",\n      \"totalMillis\": 1\n    }\n  ],\n  \"role\": \"entry\",\n  \"routing\": \"ok\"\n}\n",
+      "stderr": "",
+      "stdout_sha256": "b6bf7189cd984e200c7d2525c739f55af94561b4fdff2bdcd5dfcbca1f262ec4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "error": null
+    }
+  ],
+  "primary_error": null,
+  "finalization_errors": []
+}

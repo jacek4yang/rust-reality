@@ -146,6 +146,14 @@ name. Exact-head source and candidate digests are checked before running restore
 No tag, GitHub release, deployment or write-capable repository permission is part of
 qualification. A candidate version is still not a published version.
 
+Before publishing, the Release workflow selects the latest explicitly dispatched
+Frozen run on `main` for the exact release source. It requires that run to be
+complete and successful, downloads its native package receipts, and compares
+every rebuilt archive's SHA-256 with the receipt's before/after identity. A
+missing receipt, substituted source, duplicate tier or different rebuild stops
+publication. An older successful run cannot override a newer failed or pending
+qualification. The aggregated manifest supplies the canonical expected matrix.
+
 After packaging each supported tier, run
 `cargo dev release smoke TAG TIER ASSETS --receipt-dir FRESH_DIRECTORY` to retain
 its package-bound execution proof. Keep this directory outside the assets being
