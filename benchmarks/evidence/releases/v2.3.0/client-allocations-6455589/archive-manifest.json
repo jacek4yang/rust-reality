@@ -1,0 +1,342 @@
+{
+  "scope": "Allocation-call diagnostic only; no timing, residency, leak or release acceptance. This candidate fails its separate bidirectional throughput requirement.",
+  "archive": "observations.tar.gz",
+  "sha256": "56d6ec1ce352c0473a9f022f213f1f670b77d4abbeace95d34c8e9fdb0b296d2",
+  "members": [
+    {
+      "name": "allocation-summary.json",
+      "bytes": 2116,
+      "sha256": "122b8108359cb17abf9a90530a6507583fc49df0f986f405eba9cb5ccb8184cd"
+    },
+    {
+      "name": "completion.json",
+      "bytes": 34688,
+      "sha256": "2f2a67236dd0bc5179f6c6fefd19a705af4816bd13f91f1a10d88a70d3cd17e1"
+    },
+    {
+      "name": "host-lock.json",
+      "bytes": 188,
+      "sha256": "2c25b0cb60db82014afd86c78cd4b76e941ec2fd9ebc9eb1ce5fcb6d4392c54a"
+    },
+    {
+      "name": "invocation.json",
+      "bytes": 1318,
+      "sha256": "52cb899331bb2d35e8cdb639e4536c6253abc28366cbfbb638cce9e3da77f8ff"
+    },
+    {
+      "name": "r1-chrome-n0-allocations.txt",
+      "bytes": 597,
+      "sha256": "bf7c104a0f7ddb18a5033d1d035ee37ad9ddcccb6de4276693ae8521afa6a157"
+    },
+    {
+      "name": "r1-chrome-n0-identity.json",
+      "bytes": 1461,
+      "sha256": "f1e926e28ec24e6201ebb6999da80ec0e76bf2102193144ce389bee3d0a90a4d"
+    },
+    {
+      "name": "r1-chrome-n0.zst",
+      "bytes": 9361,
+      "sha256": "b29b1a0d72c9568e3b0eedd9bd21e9187562669c479c82165f0b16ec4f2d1100"
+    },
+    {
+      "name": "r1-chrome-n128-allocations.txt",
+      "bytes": 609,
+      "sha256": "8f4bafa5b9cdf1ac9f49ad0ac5ca2b863e6ac28e12e6c4edde411dfcb995e177"
+    },
+    {
+      "name": "r1-chrome-n128-identity.json",
+      "bytes": 1948,
+      "sha256": "36f72b14006c50e8d8cc951ba42640350eaea4d54daf83d3083601e327c981cf"
+    },
+    {
+      "name": "r1-chrome-n128-samples.json",
+      "bytes": 334,
+      "sha256": "7fb290b6b1cbb89ec65ca8a51ff1ac14901e2768e6fb4f88da2faef6c6801ea8"
+    },
+    {
+      "name": "r1-chrome-n128.zst",
+      "bytes": 22084,
+      "sha256": "0a0b75ddabe91bc976f77a59344148e013c0624d1bede7e12802b3ca8ca51bda"
+    },
+    {
+      "name": "r1-firefox-n0-allocations.txt",
+      "bytes": 599,
+      "sha256": "f4facb9439b1517aa39171063574cf6aa8ba13c8ab3a628952aebf0cf1e8ba62"
+    },
+    {
+      "name": "r1-firefox-n0-identity.json",
+      "bytes": 1468,
+      "sha256": "5bc90424aef8725e9c3699e75a9f448ab14e42dd21c4fbd4b1912f14d910059b"
+    },
+    {
+      "name": "r1-firefox-n0.zst",
+      "bytes": 9219,
+      "sha256": "8298a31493e0311f8ccb32d20def5f08bdcc6a81c432854e0f3b45bc1137d456"
+    },
+    {
+      "name": "r1-firefox-n128-allocations.txt",
+      "bytes": 611,
+      "sha256": "4bbf242fd065efda2518c0aacf1a416273ae8862a3fd08c66b44a84f3c8ff64d"
+    },
+    {
+      "name": "r1-firefox-n128-identity.json",
+      "bytes": 1955,
+      "sha256": "dad11e1406700a3316994e28d18f1a8f7de8180a58a049e9617463abacc4a390"
+    },
+    {
+      "name": "r1-firefox-n128-samples.json",
+      "bytes": 335,
+      "sha256": "f7c8bda359c5ca0b93f334ebf9440cac87de6c880cc9db2f18e73de59d26a318"
+    },
+    {
+      "name": "r1-firefox-n128.zst",
+      "bytes": 14691,
+      "sha256": "22df5b5867d7d28e78ae26be5702dd62cc7dd3671944f02e56fcce6bf855f502"
+    },
+    {
+      "name": "r1-original-n0-allocations.txt",
+      "bytes": 585,
+      "sha256": "2265d3cca4e81da90c9e18ce734a44dfca4dabf9d1eaebf276de2fc9375eff47"
+    },
+    {
+      "name": "r1-original-n0-identity.json",
+      "bytes": 1458,
+      "sha256": "88dadb86f3bba15ea5cc73ce69c54e8facd1984f23ebb61ff5232c6d45d7a22d"
+    },
+    {
+      "name": "r1-original-n0.zst",
+      "bytes": 9157,
+      "sha256": "e811afc238a7b4515d7e18d4f24df4fe5d0f8b117866fbea1e5b2e13f9e102e7"
+    },
+    {
+      "name": "r1-original-n128-allocations.txt",
+      "bytes": 597,
+      "sha256": "834498b70137ae3820b785c514f93b676e5f7bbc6322dacc6bd1033af0076ac6"
+    },
+    {
+      "name": "r1-original-n128-identity.json",
+      "bytes": 1950,
+      "sha256": "0d563cdfff29eb090d9adc64ccbebef0e253f741cafd457037cf3f8a7744ce5b"
+    },
+    {
+      "name": "r1-original-n128-samples.json",
+      "bytes": 338,
+      "sha256": "909f8852b585c3539868431ac65f9b3cc9f7fc4d539b96b7132fe9a6667a916b"
+    },
+    {
+      "name": "r1-original-n128.zst",
+      "bytes": 26746,
+      "sha256": "fe37cc77873da8e296eed71a823507c2595f0d85331c3de277afc8f66a05d71e"
+    },
+    {
+      "name": "r2-chrome-n0-allocations.txt",
+      "bytes": 597,
+      "sha256": "3baa902092e92a5dbe69190d12953c816e4f77aac3f93e9f28b8546d377c872d"
+    },
+    {
+      "name": "r2-chrome-n0-identity.json",
+      "bytes": 1460,
+      "sha256": "576b70302ef60bebad68866a0ad70277f94bf989c296abc410a038984cd3e899"
+    },
+    {
+      "name": "r2-chrome-n0.zst",
+      "bytes": 9266,
+      "sha256": "6bd8e29a8ad632eff676344190e72286207f3f4a3a369803e318245d2ea2c272"
+    },
+    {
+      "name": "r2-chrome-n128-allocations.txt",
+      "bytes": 609,
+      "sha256": "a9c8254f5f330111efd32c914c66afaaf51efba4abaaac47890ae0c3c9e41094"
+    },
+    {
+      "name": "r2-chrome-n128-identity.json",
+      "bytes": 1948,
+      "sha256": "366ec48a72f6ef661cebb08f17e01bcf7ff53cb0260781dc7293a875d36eb386"
+    },
+    {
+      "name": "r2-chrome-n128-samples.json",
+      "bytes": 334,
+      "sha256": "458f51c6f969b4b5c3ea71ad695110ac7a52a3255414b1fe47434bd86e2d80e0"
+    },
+    {
+      "name": "r2-chrome-n128.zst",
+      "bytes": 21930,
+      "sha256": "eeb119f20db8ef9461ba41572fe18ee01ed8742473744e84113cdf4650d89206"
+    },
+    {
+      "name": "r2-firefox-n0-allocations.txt",
+      "bytes": 599,
+      "sha256": "34ac5c08063ae10bc0b7ac67b6e0f126f785d6be3198111d88f3b234f6cbe5fb"
+    },
+    {
+      "name": "r2-firefox-n0-identity.json",
+      "bytes": 1468,
+      "sha256": "30c64e190c4112bd49ecc42698d77ee91d45ad4682dd8304ec7bb9afbaa4f9c0"
+    },
+    {
+      "name": "r2-firefox-n0.zst",
+      "bytes": 9138,
+      "sha256": "35f23a199edcf476bfe4918c35743bb4599b35d542e82640d7a98db6d6e75868"
+    },
+    {
+      "name": "r2-firefox-n128-allocations.txt",
+      "bytes": 611,
+      "sha256": "e41020e607cf72ca5f4e9a3636290d228125eafc7402f3da2c888fda2b826283"
+    },
+    {
+      "name": "r2-firefox-n128-identity.json",
+      "bytes": 1956,
+      "sha256": "0e6387f9b5b0878317505e73db9dd40878ea831bea58e4cbfeecea4d2ffe0afe"
+    },
+    {
+      "name": "r2-firefox-n128-samples.json",
+      "bytes": 336,
+      "sha256": "ab2b077961eccf7ae52418af57f2a561d268badf91ab2f6fa4bd0ef152befc58"
+    },
+    {
+      "name": "r2-firefox-n128.zst",
+      "bytes": 14773,
+      "sha256": "898dca9a5caf345d951b324bdea9fd09fec8a2859450800cd7f0150f8a30e2fc"
+    },
+    {
+      "name": "r2-original-n0-allocations.txt",
+      "bytes": 585,
+      "sha256": "ca72fe8be8e3dec09a6fd896484128c8c88786c03bb715715294ed1664f07fc4"
+    },
+    {
+      "name": "r2-original-n0-identity.json",
+      "bytes": 1459,
+      "sha256": "976707221ffefa3b3e895fe6a5ae7636f10062c5c4f46192efc57866e2f09c19"
+    },
+    {
+      "name": "r2-original-n0.zst",
+      "bytes": 9293,
+      "sha256": "1b635c231cc225b9dac994d3c845f12202dc1ce4a7b5a73e2f3b1a1f2436f423"
+    },
+    {
+      "name": "r2-original-n128-allocations.txt",
+      "bytes": 597,
+      "sha256": "eb848c61cb8a5b0c2ca56294b26e4ffd7150207fd26f53e3c3bea7b262da4cdb"
+    },
+    {
+      "name": "r2-original-n128-identity.json",
+      "bytes": 1950,
+      "sha256": "c3a987b2f32d3117d9fc36d1a2d9b3581a2ca5178d206166112b0b49263e0922"
+    },
+    {
+      "name": "r2-original-n128-samples.json",
+      "bytes": 337,
+      "sha256": "5bb266074be5b571a083e4b9968eff857df0d0401609cc8b20ae905ace1a0696"
+    },
+    {
+      "name": "r2-original-n128.zst",
+      "bytes": 26718,
+      "sha256": "eae7a1be1913e16c797949267376063b1aadcb61477aabbc763af4949b8fcce6"
+    },
+    {
+      "name": "r3-chrome-n0-allocations.txt",
+      "bytes": 597,
+      "sha256": "1a17fce36a6931dac8dc52fca35da02de589e72fa7409ba386582fb1c860870c"
+    },
+    {
+      "name": "r3-chrome-n0-identity.json",
+      "bytes": 1460,
+      "sha256": "0f4b344fc31894c2e751abdf27cf1a9e84bf848e2bdc7a6a468dd43f03fcca23"
+    },
+    {
+      "name": "r3-chrome-n0.zst",
+      "bytes": 9286,
+      "sha256": "f773545d3e665b193ec2550a3670fdca24dd8a1921b9f3c0747be5defd69f290"
+    },
+    {
+      "name": "r3-chrome-n128-allocations.txt",
+      "bytes": 609,
+      "sha256": "770147f6b8b8f536228bb941aa1a2a58261c58edc7a4cb907fdcf832b3765b63"
+    },
+    {
+      "name": "r3-chrome-n128-identity.json",
+      "bytes": 1948,
+      "sha256": "265123aa289ba8ccba9fe2a2645a3cd903b2cf6ac1af0038388716408b5ea97d"
+    },
+    {
+      "name": "r3-chrome-n128-samples.json",
+      "bytes": 332,
+      "sha256": "bf072eba06a27fe4442949a453beb364188ea5054a751a93a255952ffe090d2a"
+    },
+    {
+      "name": "r3-chrome-n128.zst",
+      "bytes": 22108,
+      "sha256": "37d81b4c146131f91b04024b2aab7eabf8a55fc9dc05b87c60f071628eaef46c"
+    },
+    {
+      "name": "r3-firefox-n0-allocations.txt",
+      "bytes": 599,
+      "sha256": "b752ef34c2fd3bfd233faa4166526e11effc882baf58f5b43dc9b685d6f995bb"
+    },
+    {
+      "name": "r3-firefox-n0-identity.json",
+      "bytes": 1468,
+      "sha256": "a90afcf22a4fef08454a90a78cedfadb27d30bf0cb05d98884bad96b9eb2926b"
+    },
+    {
+      "name": "r3-firefox-n0.zst",
+      "bytes": 9366,
+      "sha256": "93134b91e977cad5b7ca94211303e98e6006a24104ec5711372baa0161119398"
+    },
+    {
+      "name": "r3-firefox-n128-allocations.txt",
+      "bytes": 611,
+      "sha256": "40783ab7e5e1779808befe7d4fe378cbe17a85f16a1fc5a88f852aca8cea1727"
+    },
+    {
+      "name": "r3-firefox-n128-identity.json",
+      "bytes": 1957,
+      "sha256": "7b3ef30964ad383761a644a5f8a4cd197656541f9368fda6fb5e729eec7ad050"
+    },
+    {
+      "name": "r3-firefox-n128-samples.json",
+      "bytes": 336,
+      "sha256": "bdcd1baa727c9768a720b5fbb6c65e77cb47ccf4e81e5d020808e25e23b4f717"
+    },
+    {
+      "name": "r3-firefox-n128.zst",
+      "bytes": 14752,
+      "sha256": "8ad06eee5c8fd46304470214cad1e743ca968f62d49c8b1e72ee53741fabda8f"
+    },
+    {
+      "name": "r3-original-n0-allocations.txt",
+      "bytes": 585,
+      "sha256": "1e9a5dd269268c51e5e56d05bd862be0c5c2b69c713f7b390fe067a056bc9f8a"
+    },
+    {
+      "name": "r3-original-n0-identity.json",
+      "bytes": 1458,
+      "sha256": "dab97e020b3e0632760e414d8a6fa3a05b19a8e2462a1c0c02b73039c693715a"
+    },
+    {
+      "name": "r3-original-n0.zst",
+      "bytes": 9240,
+      "sha256": "4db15b2e2cf4a4bdbbb400fcdb73cb316367cd842a147bf44b6994a4cfcaf838"
+    },
+    {
+      "name": "r3-original-n128-allocations.txt",
+      "bytes": 597,
+      "sha256": "556773202586ac082fe9403dc813d0ec63913933e0c3c5ec8a4052eb6cd03a02"
+    },
+    {
+      "name": "r3-original-n128-identity.json",
+      "bytes": 1950,
+      "sha256": "fade460540b591e9e6a0ea703a172c42447ba572e01e82349a3a02b52ee461c0"
+    },
+    {
+      "name": "r3-original-n128-samples.json",
+      "bytes": 338,
+      "sha256": "a39fe2a0a6ccf0ee0065549f1bcdd62596ae953f95d161ddad8db7bc4d5967c6"
+    },
+    {
+      "name": "r3-original-n128.zst",
+      "bytes": 26887,
+      "sha256": "530887cb3a5ab59d1743e6542dfcbed9f9e129eec89e9cf426dca21fb8e73b7e"
+    }
+  ]
+}

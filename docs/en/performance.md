@@ -28,8 +28,9 @@ WAN throughput. Ratios are candidate/baseline; intervals are the collector's
 
 Baseline `d72abc2` and candidate `2fb3076` use Chrome 156.0.8078.74 against
 fixed server `c02e488`. Twelve balanced ABBA blocks contain 48 slots and 960
-successful 16-MiB transfers across concurrency 1,8,32,64 and Direct upload,
-Direct download, framed upload, framed download and bidirectional traffic.
+successful workload batches (30,240 requests, 16 MiB each) across concurrency
+1,8,32,64 and Direct upload, Direct download, framed upload, framed download
+and bidirectional traffic.
 All 40 CPU/GiB and throughput intervals pass the predeclared 1% non-regression
 limits. At concurrency 64:
 
@@ -80,8 +81,24 @@ not allocator-byte or allocation-count observations. Its
 [data comparison fails](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-119b37d/archive-manifest.json):
 seven assessments fail and two are unresolved. Direct retains the smaller
 socket-read capacity after the transition, increasing high-concurrency download
-CPU by about 25-30%. Framed download does not show that regression. The correction
-promotes delivery capacity at Direct; it requires a fresh matched comparison.
+CPU by about 25-30%. Framed download does not show that regression.
+
+The `6455589` follow-up promotes capacity once at Direct. Its
+[16-block, three-sample comparison](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-6455589/archive-manifest.json)
+completes 3,840 batches and 120,960 requests without errors. Direct download CPU
+passes, but concurrency-64 bidirectional throughput fails: ratio 0.9754 with
+95% interval [0.9592, 0.9885], below the 0.99 limit. The other 39 assessments
+pass. Both capacity-reduction variants are rejected; the client retains full
+16-KiB initial delivery capacity under [ADR 0064](../adr/0064-retain-full-client-delivery-capacity.md).
+
+[Heaptrack diagnostics](../../benchmarks/evidence/releases/v2.3.0/client-allocations-6455589/archive-manifest.json)
+on `6455589` use three repeats of zero- and 128-connection controls. All 1,152
+authenticated workload connections succeed. Startup-subtracted allocation calls
+per connection are 91.16-91.33 for the original client, 88 for Chrome, and
+87-87.01 for Firefox. The ten-second launch-to-stop interval includes profiler
+startup; actual instrumented runtimes remain in the reports. Instrumented timing,
+RSS and at-exit live allocations are not performance or leak verdicts. These
+counts do not qualify the rejected candidate or the restored capacity policy.
 
 With unchanged stock Xray 26.10.29, the original and current servers complete
 860,160 connections without failure in 20 ABBA blocks. Per-concurrency rate

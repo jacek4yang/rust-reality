@@ -454,6 +454,15 @@ receipts. Background preconnects and resumed connections are not fixture inputs.
 The source artifact's discovery label is retained verbatim in its identity;
 fixture qualification comes from the subsequent hash and structural tests.
 
+A separate [frozen production ELF capture](../../../benchmarks/evidence/releases/v2.3.0/client-cli-fingerprint-6455589/archive-manifest.json)
+binds executable `6455589` by SHA-256 and triggers the actual `run --config`
+SOCKS5 entry point. Each sample starts a fresh process and captures its first
+bounded TLS record on loopback. Sixteen omitted-field and sixteen explicit
+Chrome samples pass the independent Chrome corpus comparison; 32 explicit
+Firefox samples pass its comparison. The endpoint closes before the server
+flight, so this is wire/default-selection evidence, not authenticated completion
+or performance acceptance. No generated private configuration enters the archive.
+
 Reproduce candidate comparison outside the source tree:
 
 ```shell

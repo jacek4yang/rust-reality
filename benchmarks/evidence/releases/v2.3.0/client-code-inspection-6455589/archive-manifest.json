@@ -1,0 +1,32 @@
+{
+  "scope": "Assembly mechanism inspection bound by full .text byte equality to the frozen executable. Not performance acceptance.",
+  "archive": "observations.tar.gz",
+  "sha256": "7d57c35d285e17b5527533c864a53c8d95002b19a3330bab7fc1c7d04c146b65",
+  "members": [
+    {
+      "name": "identity.json",
+      "bytes": 401,
+      "sha256": "e0bb677506c3f9785cbbfbc4088b331577f460639b4acd687ebc69085ab06d13"
+    },
+    {
+      "name": "inspection.json",
+      "bytes": 1562,
+      "sha256": "b30508e6c2fc35dbdce0cafaf4a89602b922be8be959c0df4d13fc2a16232ca9"
+    },
+    {
+      "name": "read-assembly.txt",
+      "bytes": 15467,
+      "sha256": "98272fa9d838cc1b5d8d2094d31bf3196953205a3d88d023df991d539a87f39a"
+    },
+    {
+      "name": "transition-assembly.txt",
+      "bytes": 8399,
+      "sha256": "75da53e3f063186dd3c759195afa6850799fb4beba740debd0e1ef5ef05a465c"
+    },
+    {
+      "name": "upload-assembly.txt",
+      "bytes": 11210,
+      "sha256": "24d31a8aa8654bd0d9c7cb8fc1905f397e9bfb5a65e742eae2b2881844300b3d"
+    }
+  ]
+}

@@ -321,6 +321,13 @@ ACK 早于普查的形状以 Class B 夹具缺陷 fail-closed。 同一套 Class
 可执行文件散列、系统镜像、每条记录 SHA-256 和 HTTPS 回执；不包含后台预连接或恢复会话。
 原始 identity 的 discovery 标签保留，后续散列和结构测试负责固定证据验证。
 
+另有[冻结生产 ELF 的采集记录](../../../benchmarks/evidence/releases/v2.3.0/client-cli-fingerprint-6455589/archive-manifest.json)，
+以 SHA-256 绑定 `6455589` 可执行文件，通过实际 `run --config` SOCKS5 入口触发握手。
+每条样本启动新进程，并在回环上捕获首条有界 TLS 记录。省略字段的 16 条 Chrome
+样本及显式 Chrome 的 16 条样本通过独立 Chrome 语料比较；32 条显式 Firefox
+样本通过对应比较。采集端在服务端握手消息前关闭连接，因此这只证明线路结构及
+默认选择，不证明已认证会话完成或性能验收。归档不包含生成的私有配置。
+
 设置 `RR_BROWSER_COMPARISON_OUTPUT=/tmp/rr-browser-offers` 后运行
 `cargo test --test browser_line_capture --locked`，
 再通过 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- compare-corpus chrome`
