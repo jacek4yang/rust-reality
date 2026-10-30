@@ -1,0 +1,9 @@
+{
+  "observedAt": "2026-10-30T08:38:32.658761+00:00",
+  "scope": "Post-campaign host inspection, not a trace of contention during the completed campaign. Cannot attribute prior unresolved or failed cells solely to this observation.",
+  "finding": "Independent development agent, Cargo compiler children, and rust-analyzer for another project have CPU affinity 0-15. Benchmark affinity 0,2,4,6 is not exclusive. No unrelated process stopped or reconfigured.",
+  "action": "Keep the unresolved verdict. Request an exclusive measurement window before further timing acceptance. Do not change production batching solely on unresolved timing evidence.",
+  "loadavg": "5.57 11.81 23.34 8/1063 2735883",
+  "cpuPressure": "some avg10=2.87 avg60=1.11 avg300=16.40 total=36521658437\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+  "packageThrottleCount": "21774049"
+}
