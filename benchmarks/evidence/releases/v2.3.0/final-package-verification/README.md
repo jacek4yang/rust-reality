@@ -34,3 +34,12 @@ They have matching compiler, CPU target and default features. Rates include
 connection setup on the recorded loopback hardware and are not WAN throughput
 claims. CPU policies were restored exactly after collection. Raw private
 configuration, credentials and process logs are excluded.
+
+Frozen run 41242900924 attempt 1 ended cancelled: the Handoff ordinary TCP
+job exceeded its two-hour limit. The other seven VM cells and four native
+package jobs passed, but the two dependent aggregate jobs were skipped.
+`frozen-attempt1-annotations.json` retains GitHub's timeout annotation;
+`frozen-attempt1-terminal.json` retains exact-source job outcomes. The terminal
+job log was unavailable (HTTP 404 / BlobNotFound). This does not establish a
+product root cause or a passing aggregate. A same-source failed-job rerun leaves
+all deadlines and contract checks unchanged.
