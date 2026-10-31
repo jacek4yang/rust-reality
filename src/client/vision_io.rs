@@ -576,21 +576,26 @@ mod tests {
             activity: Arc::new(crate::io_activity::SessionActivity::default()),
         };
         let mut received = Vec::new();
-        // Exercise the bulk boundary, a partial second frame, and the next
-        // record's sequence number. A full local read must cost one record.
-        for length in [16374, 8190, 1, 16374] {
+        // Exercise full one- and two-record reads, a partial second frame,
+        // and the next record's sequence number without splitting a frame.
+        for length in [16374, 8190, 1, 32748, 32749, 16374] {
             let payload: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
             io.write_application(&payload).await.unwrap();
-            let mut wire = read_tls_record(&mut peer, Duration::from_secs(1))
-                .await
-                .unwrap()
-                .into_wire();
-            let opened = uplink.open_in_place(&mut wire).unwrap();
-            assert!(opened.plaintext().len() <= MAX_PLAINTEXT_LEN);
             received.clear();
-            io.decoder
-                .decode_append(opened.plaintext(), &mut received)
-                .unwrap();
+            let mut records = 0;
+            while received.len() < payload.len() {
+                let mut wire = read_tls_record(&mut peer, Duration::from_secs(1))
+                    .await
+                    .unwrap()
+                    .into_wire();
+                let opened = uplink.open_in_place(&mut wire).unwrap();
+                assert!(opened.plaintext().len() <= MAX_PLAINTEXT_LEN);
+                io.decoder
+                    .decode_append(opened.plaintext(), &mut received)
+                    .unwrap();
+                records += 1;
+            }
+            assert_eq!(records, payload.len().div_ceil(16374));
             assert_eq!(received, payload);
             assert_eq!(io.decoder.mode(), VisionMode::Framed);
         }
