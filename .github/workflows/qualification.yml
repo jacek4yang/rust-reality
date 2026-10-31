@@ -83,12 +83,12 @@ jobs:
           mapfile -t stock_xray < <(python3 - "$GITHUB_WORKSPACE/tools/fixtures/stock-xray.json" <<'PYXRAY'
           import json, sys
           reference = json.load(open(sys.argv[1]))
-          values = [reference[key] for key in ('version', 'archiveUrl', 'archiveSha256', 'binarySha256')]
+          values = [reference[key] for key in ('version', 'archiveUrl', 'archiveSha256', 'binarySha256', 'sourceCommit')]
           assert all(isinstance(value, str) and '\n' not in value for value in values)
           print('\n'.join(values))
           PYXRAY
           )
-          [[ "${#stock_xray[@]}" == 4 ]]
+          [[ "${#stock_xray[@]}" == 5 ]]
           printf 'XRAY_REFERENCE_VERSION=%s\n' "${stock_xray[0]}" >> "$GITHUB_ENV"
           curl --fail --location --retry 3 --max-time 180 \
             "${stock_xray[1]}" -o xray.zip
@@ -96,6 +96,9 @@ jobs:
           unzip -q xray.zip xray LICENSE -d xray
           printf '%s  xray/xray\n' "${stock_xray[3]}" | sha256sum --check -
           chmod +x xray/xray
+          xray/xray version > xray/version.txt
+          grep -F "Xray ${stock_xray[0]} " xray/version.txt
+          grep -F "${stock_xray[4]:0:7}" xray/version.txt
           curl --fail --location --retry 3 --max-time 180 \
             https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz -o openssl.tar.gz
           echo 'deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  openssl.tar.gz' | sha256sum --check -
