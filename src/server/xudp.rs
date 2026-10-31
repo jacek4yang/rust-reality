@@ -627,7 +627,10 @@ impl<'a> XudpNxrAssociation<'a> {
             return Err(XudpSessionError::MissingNewDestination);
         }
         if !packet.payload.is_empty() || dest_for_frame.is_some() {
-            let seq = self.seq_out.next_out();
+            let seq = self
+                .seq_out
+                .next_out()
+                .map_err(XudpSessionError::NxrCarrier)?;
             let mut wire = Vec::new();
             encode_frame(
                 &self.session,
@@ -723,18 +726,18 @@ impl<'a> XudpNxrAssociation<'a> {
     }
 
     pub async fn close(mut self, now: Instant) {
-        let seq = self.seq_out.next_out();
         let mut wire = Vec::new();
-        if encode_frame(
-            &self.session,
-            DIR_LINE_TO_LANDING,
-            FRAME_TYPE_CLOSE,
-            seq,
-            None,
-            &[],
-            &mut wire,
-        )
-        .is_ok()
+        if let Ok(seq) = self.seq_out.next_out()
+            && encode_frame(
+                &self.session,
+                DIR_LINE_TO_LANDING,
+                FRAME_TYPE_CLOSE,
+                seq,
+                None,
+                &[],
+                &mut wire,
+            )
+            .is_ok()
         {
             let _ = self.stream.write_all(&wire).await;
         }

@@ -226,8 +226,8 @@ mod tests {
         assert_eq!(inbound.accept_in(2), Err(NxrUdpError::Sequence));
         inbound.accept_in(1).unwrap();
         let mut outbound = NxrUdpSeq::new();
-        assert_eq!(outbound.next_out(), 0);
-        assert_eq!(outbound.next_out(), 1);
+        assert_eq!(outbound.next_out(), Ok(0));
+        assert_eq!(outbound.next_out(), Ok(1));
     }
 
     #[test]

@@ -42,7 +42,7 @@ impl fmt::Display for NxrUdpError {
             Self::Payload => formatter.write_str("NXR UDP payload exceeds bound"),
             Self::FrameType => formatter.write_str("NXR UDP frame type is invalid"),
             Self::Direction => formatter.write_str("NXR UDP frame direction is invalid"),
-            Self::Sequence => formatter.write_str("NXR UDP frame sequence is invalid"),
+            Self::Sequence => formatter.write_str("NXR UDP frame sequence is invalid or exhausted"),
         }
     }
 }

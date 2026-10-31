@@ -297,7 +297,7 @@ impl NxrLandingHandler {
                         return Err(NxrLandingError::UdpProtocol(NxrUdpError::Payload));
                     }
                     let payload = &udp_buf[..n];
-                    let seq = seq_out.next_out();
+                    let seq = seq_out.next_out().map_err(NxrLandingError::UdpProtocol)?;
                     encode_frame(
                         &session,
                         DIR_LANDING_TO_LINE,
@@ -782,7 +782,7 @@ mod udp_association_tests {
             &session,
             DIR_LINE_TO_LANDING,
             FRAME_TYPE_DATAGRAM,
-            seq_out.next_out(),
+            seq_out.next_out().unwrap(),
             Some(&dest),
             b"hello-nxr-udp",
             &mut frame,

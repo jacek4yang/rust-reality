@@ -24,7 +24,9 @@ All notable user-facing changes to this project are documented in this file.
 - Preserve actual delayed UDP reply sources independently of authorized uplink
   destinations in Direct, NXR and Handoff. NXR peers must upgrade together:
   downlink source metadata is mandatory and missing metadata fails closed.
-  Reject oversized NXR replies and unknown authenticated frame flags.
+  Reject oversized NXR replies and unknown authenticated frame flags. Close
+  NXR UDP associations when their frame sequence space is exhausted instead of
+  wrapping and allowing old authenticated sequence values to repeat.
 - Reuse bounded upload storage across Vision framing and TLS sealing. Retain
   complete measured performance comparisons, rejected experiments and binary
   identities in the performance reference; ClientHello matching is not a

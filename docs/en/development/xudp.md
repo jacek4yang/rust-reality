@@ -37,6 +37,11 @@ Handoff authorize as themselves and must never be silently remapped to Direct.
 
 XUDP datagrams ride inside the existing REALITY + Vision stream. This is not a second public wire protocol and not native QUIC transport.
 
+NXR frames use each 32-bit sequence value at most once per association and
+direction. Exhausting the sequence space closes the association; it never wraps
+to zero under the same session key. Even a previously valid MAC cannot authorize
+a repeated sequence. A new association requires a fresh authenticated open.
+
 ## Client SOCKS5 UDP ASSOCIATE
 
 The unified client accepts loopback SOCKS5 UDP ASSOCIATE and carries datagrams
