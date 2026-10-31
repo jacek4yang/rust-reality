@@ -20,7 +20,7 @@ use crate::protocol::{
     },
 };
 
-use super::{session::VisionTunnelError, vision_io::VisionIo};
+use super::vision_io::{VisionIo, VisionTunnelError};
 
 /// Client-side XUDP association bound to one authenticated LINE.
 pub struct XudpTunnel {
