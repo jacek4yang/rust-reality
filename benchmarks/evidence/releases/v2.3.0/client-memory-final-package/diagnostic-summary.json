@@ -1,0 +1,212 @@
+{
+  "scope": "Eight matched ABBA process runs; 128 persistent TLS 1.3 connections per run, 3072 verified 1-MiB transfers including 1024 distinct verified PUT receipts. Residency diagnostic, not allocation count, timing acceptance or long-term leak proof.",
+  "sourceCommit": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "variants": {
+    "baseline": {
+      "before": {
+        "Anonymous": [
+          576,
+          576,
+          576,
+          576
+        ],
+        "Pss": [
+          4437,
+          4373,
+          4444,
+          4359
+        ],
+        "VmRSS": [
+          7004,
+          6916,
+          6964,
+          6912
+        ]
+      },
+      "held": {
+        "Anonymous": [
+          10392,
+          10088,
+          10028,
+          10068
+        ],
+        "Pss": [
+          15285,
+          15029,
+          14936,
+          14939
+        ],
+        "VmRSS": [
+          17852,
+          17572,
+          17456,
+          17492
+        ]
+      },
+      "reused": {
+        "Anonymous": [
+          10392,
+          10088,
+          10028,
+          10068
+        ],
+        "Pss": [
+          15285,
+          15029,
+          14936,
+          14939
+        ],
+        "VmRSS": [
+          17852,
+          17572,
+          17456,
+          17492
+        ]
+      },
+      "uploaded": {
+        "Anonymous": [
+          10928,
+          10920,
+          10760,
+          10760
+        ],
+        "Pss": [
+          15821,
+          15861,
+          15668,
+          15631
+        ],
+        "VmRSS": [
+          18388,
+          18404,
+          18188,
+          18184
+        ]
+      },
+      "closed": {
+        "Anonymous": [
+          9340,
+          9264,
+          9504,
+          9580
+        ],
+        "Pss": [
+          14233,
+          14205,
+          14412,
+          14451
+        ],
+        "VmRSS": [
+          16800,
+          16748,
+          16932,
+          17004
+        ]
+      },
+      "fdRecovery": "4/4 exact baseline FD count"
+    },
+    "candidate": {
+      "before": {
+        "Anonymous": [
+          592,
+          580,
+          580,
+          580
+        ],
+        "Pss": [
+          5020,
+          4960,
+          5192,
+          4382
+        ],
+        "VmRSS": [
+          7580,
+          7500,
+          7732,
+          6936
+        ]
+      },
+      "held": {
+        "Anonymous": [
+          8788,
+          8808,
+          8812,
+          8752
+        ],
+        "Pss": [
+          14112,
+          14404,
+          14256,
+          13706
+        ],
+        "VmRSS": [
+          16672,
+          16944,
+          16796,
+          16260
+        ]
+      },
+      "reused": {
+        "Anonymous": [
+          8788,
+          8808,
+          8812,
+          8752
+        ],
+        "Pss": [
+          14112,
+          14404,
+          14256,
+          13706
+        ],
+        "VmRSS": [
+          16672,
+          16944,
+          16796,
+          16260
+        ]
+      },
+      "uploaded": {
+        "Anonymous": [
+          10220,
+          10252,
+          10252,
+          10184
+        ],
+        "Pss": [
+          15544,
+          15848,
+          15696,
+          15138
+        ],
+        "VmRSS": [
+          18104,
+          18388,
+          18236,
+          17692
+        ]
+      },
+      "closed": {
+        "Anonymous": [
+          9232,
+          7904,
+          9228,
+          8400
+        ],
+        "Pss": [
+          14556,
+          13500,
+          14672,
+          13354
+        ],
+        "VmRSS": [
+          17116,
+          16040,
+          17212,
+          15908
+        ]
+      },
+      "fdRecovery": "4/4 exact baseline FD count"
+    }
+  }
+}

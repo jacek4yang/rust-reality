@@ -1,0 +1,597 @@
+{
+  "sourceCommit": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "binarySha256": "ee7e0092849a6e8b35fe1ac31544bad9d254d7a78cef40d8c02818e1588881ed",
+  "comparisonToolSha256": "2efd22d23544e8437042ed7c0d1d3bff1fea5f6aa8139591edbca7d73e153b9f",
+  "comparisonToolSourceCommit": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "controllerSha256": "267ccde75bad633fb487245b9ec9ca9ddb8ef0aa7e892e43d7c9f3d0783d2f62",
+  "uid": 1000,
+  "netns": "net:[4026533291]",
+  "conditions": {
+    "serverName": "browser-capture.test",
+    "freshProcessPerSample": true,
+    "transport": "loopback SOCKS5 CONNECT triggers actual production CLI LINE handshake; bounded first TLS record retained before capture peer closes",
+    "authentication": "Synthetic credentials; capture stops before server flight. Not an authenticated-session verdict.",
+    "chromeConfiguration": "First 16 samples omit fingerprint; remaining 16 explicitly select chrome.",
+    "firefoxConfiguration": "All 32 explicitly select firefox."
+  },
+  "samples": [
+    {
+      "file": "chrome/sample-00.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "4c5d7baf841392dcf6e561cbfc4c54108761f3e1260c0884cef70b95d37adb03",
+      "bytes": 1928,
+      "clientPid": 675955,
+      "configurationSha256": "af4a99c3a45305c33c40dc6fb3d24db0cbbb8c83368de72f7993abaa3252165e"
+    },
+    {
+      "file": "chrome/sample-01.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "2309528b67067713c2806ddf650f48046931f6368e989c144650ef60d4cb1352",
+      "bytes": 1992,
+      "clientPid": 675972,
+      "configurationSha256": "6fd00c93fedf2ef36bfdd9c7e91651deea36b1f12bc805bfedd1d8ff0da50157"
+    },
+    {
+      "file": "chrome/sample-02.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "018124396faa8951405649264cab13a15a67b87be9b0fee36232ea0aa460397b",
+      "bytes": 1992,
+      "clientPid": 675989,
+      "configurationSha256": "3b8cc26e3fa6eba6d1a378a72f4376921aa65c0bedbf21e2b329fc4b3ea9e3f5"
+    },
+    {
+      "file": "chrome/sample-03.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "b46f460756786e77bcfb3605496cea90ad0d6a35c0a003efcd9f285cff6b37d4",
+      "bytes": 1960,
+      "clientPid": 676006,
+      "configurationSha256": "c3be36c667872cd56541a2ec243dc8fb6992e9eb3227321a3b5ddc82316797e5"
+    },
+    {
+      "file": "chrome/sample-04.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "7729d3ac54e891ce18edd73e1d3d8257727b52396ba97d45ab1992d6df4d937b",
+      "bytes": 1928,
+      "clientPid": 676023,
+      "configurationSha256": "bea0923973d1951b8afd149bbf0c04499af6f428d514aaa867b4aa63553112de"
+    },
+    {
+      "file": "chrome/sample-05.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "195f4338ba478cd7972ae39958feea149c7959744e7373ed71fd7157e43b1193",
+      "bytes": 1960,
+      "clientPid": 676040,
+      "configurationSha256": "7affd60582c64f6eec1ef4b3921b2844da79071e0acd42b288be592c91f32eda"
+    },
+    {
+      "file": "chrome/sample-06.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "868e11a3c921848cff363e981b54b398435bee907120d121a24d17e543c50bf1",
+      "bytes": 1992,
+      "clientPid": 676057,
+      "configurationSha256": "3a32b3d90dd78030cca449bd0fb11677333f9b4ed7b2b00299e96089da27f18b"
+    },
+    {
+      "file": "chrome/sample-07.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "46fdceed452aab9601916435779e042820ce351b34e734b7e8f6c7543493ebc8",
+      "bytes": 1992,
+      "clientPid": 676074,
+      "configurationSha256": "19074bd1912357fa32d862196a3206c00dc3b7eb01bd71ee77a73b6b2e00c0b3"
+    },
+    {
+      "file": "chrome/sample-08.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "7cc27f8b0525bba96f0963b289721f535aac6346e0bfcbd9454de95a8ca51e01",
+      "bytes": 1928,
+      "clientPid": 676091,
+      "configurationSha256": "c4bd01d154de4a2e34a8feb9154ce1e023f1f0280b55934f23d51e096692d5a2"
+    },
+    {
+      "file": "chrome/sample-09.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "834f8314e530808b760e107c2c91e475c4b9617765e19fa84d7bfd87513b7bd2",
+      "bytes": 1928,
+      "clientPid": 676108,
+      "configurationSha256": "15cb4a554a5e3e28baec7769d304d9137f852d89f70416e8f9c9f0d383e4b43a"
+    },
+    {
+      "file": "chrome/sample-10.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "1ce8b54c5426954dd3b0e7f71aabffe1e1a22b0acff6e0710675d7db217105ea",
+      "bytes": 2024,
+      "clientPid": 676125,
+      "configurationSha256": "20b86c8ce44bc6ee05d63edab21bdde8cb891baad3ee51ce3ef555ee16206297"
+    },
+    {
+      "file": "chrome/sample-11.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "9eb8e85d0b81da9be30fdcc4909dd5982623d559cd3b134cf12a1d834a3f48cd",
+      "bytes": 1928,
+      "clientPid": 676142,
+      "configurationSha256": "17e52c09cfb33478c52c80a0cd529b9e1628fda77710639048550264017d97ea"
+    },
+    {
+      "file": "chrome/sample-12.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "f9def4177f8162e9826ec842c70d075609537d60cf58a057a8f7c9aa291ea4c2",
+      "bytes": 1928,
+      "clientPid": 676166,
+      "configurationSha256": "aca91bb9b8987c268d1406f1d8bc532735a4c379e4b2720aab7c5ea102403838"
+    },
+    {
+      "file": "chrome/sample-13.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "6ed2d7458cea6b92d54a16c3c5384185e34cf34cb7267dadc543f2ec2768c8e4",
+      "bytes": 2024,
+      "clientPid": 676183,
+      "configurationSha256": "23590d890703940ff833c42554b383454027f1c0edcac63885cdbc092abf47ca"
+    },
+    {
+      "file": "chrome/sample-14.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "acfa84e5e76ccb11d19946da62143b07499b01a4b085bfaf632d38c87a9e4a56",
+      "bytes": 1960,
+      "clientPid": 676200,
+      "configurationSha256": "0d930c7a53643196a372a2fe2a4f94b755b810f30ea40fdfc649849c039c5522"
+    },
+    {
+      "file": "chrome/sample-15.tls",
+      "profile": "chrome",
+      "explicitFingerprint": false,
+      "sha256": "a607466f8147804926ae600fdc096375b9347eec67085260e6f2fbbf12b7f593",
+      "bytes": 1928,
+      "clientPid": 676217,
+      "configurationSha256": "da4167bdeebf85a40d5ce407516616bd8b7499a96e45adc9296a6664e25ac8db"
+    },
+    {
+      "file": "chrome/sample-16.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "6cdb3ca19570e9b51186b360e0120872b6bc2e43b5942ae8e2caf4f354140263",
+      "bytes": 1928,
+      "clientPid": 676234,
+      "configurationSha256": "586337da821e1c9e01d64b10890c14ec50bba2e03bc789178e0f7fc19a9016ab"
+    },
+    {
+      "file": "chrome/sample-17.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "df6f4b2786b42d5b1b3baf1348bbe3a599653029083e0c01918a9ca686a37769",
+      "bytes": 1928,
+      "clientPid": 676251,
+      "configurationSha256": "23504c792f8a38e9c637c1c730bbaf59b00e26f2f43c7edafb86b19ec7adbd61"
+    },
+    {
+      "file": "chrome/sample-18.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "94a9611a9aabd06d96f765c2aee98b10077698bba88eb36fd59f5f7fb96f6e6f",
+      "bytes": 1960,
+      "clientPid": 676268,
+      "configurationSha256": "97ad8fdbd0f26d7881337dc7c15875e06d2cafd157b519e473d29b10891b2963"
+    },
+    {
+      "file": "chrome/sample-19.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "6994a0eeb3426332812d3c1772f0a0cb07965e7bcf166394a42630665d32e313",
+      "bytes": 1960,
+      "clientPid": 676285,
+      "configurationSha256": "0d5badece7c100f92e8f139d907c0e83c32f175a6f12a96aa99688c56db31756"
+    },
+    {
+      "file": "chrome/sample-20.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "dab89279b265d3eeff87d382d4a5f62cd761ad4ef00457ea5a786171a7f3f5ef",
+      "bytes": 1960,
+      "clientPid": 676302,
+      "configurationSha256": "8bcc6e359452f3906a80bd96675cce9c82531c7eb84bd13cbaba586562e5e73b"
+    },
+    {
+      "file": "chrome/sample-21.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "53ed10607718fcddb66e795ccaf774dc8dd85de636f7ce74b53ead58b911f7e0",
+      "bytes": 1928,
+      "clientPid": 676320,
+      "configurationSha256": "ca8a3fc4634d31a323606f4976c8b19177f2c8570e76e20b0dac36a719ee540b"
+    },
+    {
+      "file": "chrome/sample-22.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "8a33e47c5895867584789fa633c6e224da8ecb2e6ff1e0ee589760adbd1027de",
+      "bytes": 2024,
+      "clientPid": 676337,
+      "configurationSha256": "7765cc5e17570dd9e9709557dbf9ffaba5a389c97f248506e0c2b5b6e4746858"
+    },
+    {
+      "file": "chrome/sample-23.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "3fe645c5a241a40a77b638d1141aed30ee378d2b42c35104490ac921db3ec6d1",
+      "bytes": 1960,
+      "clientPid": 676354,
+      "configurationSha256": "56211e78cd99421538032c87b3b33723ded081dfa856a36d81ed1248a4dcf0d8"
+    },
+    {
+      "file": "chrome/sample-24.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "e14ff90c1b2185768d273ea11d855fdc58070e3b156be2f21c9e428b591cdcf0",
+      "bytes": 1960,
+      "clientPid": 676371,
+      "configurationSha256": "cfc00dae5c2dac8851c8df1911a0d08f4da071ae2d2f90087998539c43ce9d49"
+    },
+    {
+      "file": "chrome/sample-25.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "f8a461aea87068cc5af38d619b1bbab277f4a0bee8888051703ef35ef9c4892a",
+      "bytes": 1992,
+      "clientPid": 676388,
+      "configurationSha256": "04c426e1193c208f1caef2b1e856b86ebe8c5e524c7e9bf60fe7649543b01f4a"
+    },
+    {
+      "file": "chrome/sample-26.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "f0400e259771206add846caf5946407083d8f59b1d3155c619842cf6e9e1db43",
+      "bytes": 1960,
+      "clientPid": 676405,
+      "configurationSha256": "0f990d324c758323059088af51172ae19623aff6dfa636a2b41cea35a4620abf"
+    },
+    {
+      "file": "chrome/sample-27.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "ad491ee6a717c3d69d30226ef788868a28a520636bbaf32d02b043788effdfb1",
+      "bytes": 1928,
+      "clientPid": 676422,
+      "configurationSha256": "67843d330a00f4c65f13546ed3d58d864a061dc464ade0d90de089a5f7f29f85"
+    },
+    {
+      "file": "chrome/sample-28.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "7e8005247f067dc2be4c5e3b07914e63d54175d1bdea0233f1b1341d3c0c1b04",
+      "bytes": 2024,
+      "clientPid": 676439,
+      "configurationSha256": "c2b2d6f0081fcb0ddef3f5f8548a33854ad51ae2e30d150cdfcfaa7b8e57976a"
+    },
+    {
+      "file": "chrome/sample-29.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "94baff8671187e5c4d2f1eb4d8f05287d8b2e7a8a380839f11ec634d04aca80e",
+      "bytes": 1992,
+      "clientPid": 676456,
+      "configurationSha256": "896c0482950111cc838a63ec741be972e3cd3bb10fabfb268975420b198aed3b"
+    },
+    {
+      "file": "chrome/sample-30.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "685b88a37a878b65d43bb772eeb860a085fbea4f9e01bd84a5f790521dbb42e6",
+      "bytes": 1960,
+      "clientPid": 676473,
+      "configurationSha256": "7a98c1c9dac0649305fb6cad1eca29ca5676d41e9edfc7dedfc8ef70ea20233d"
+    },
+    {
+      "file": "chrome/sample-31.tls",
+      "profile": "chrome",
+      "explicitFingerprint": true,
+      "sha256": "5ee8c58b4219a272230b5f584eff0ad07c6b78c9359f2da5fac7eb946af51ba4",
+      "bytes": 1960,
+      "clientPid": 676490,
+      "configurationSha256": "c8a72796c20188feb0ca59f14ca3642f307032570798eb1440bf7fb537fb8432"
+    },
+    {
+      "file": "firefox/sample-00.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "0933c619f53d12e0ee3712453d2c3eef0249726ad283d6c2be30f9b816cd9568",
+      "bytes": 1898,
+      "clientPid": 676508,
+      "configurationSha256": "8ff80c79da9298f73a0bbeda4b71ac633283ca932bfc7d7ad73597b30ffb9fe3"
+    },
+    {
+      "file": "firefox/sample-01.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "55b9f6b583e9f88e9cd6ee43cf6bb085c3547871f5ca521a184d3a1acb95197d",
+      "bytes": 1898,
+      "clientPid": 676525,
+      "configurationSha256": "46ce86b85ac65878272e2b202736ef6c5da22a33ce488acb506612e7570ecb81"
+    },
+    {
+      "file": "firefox/sample-02.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "28c0ac3bd42edc704ee687a18adb27a1901df92c2866275b03f17947e6357cfd",
+      "bytes": 1898,
+      "clientPid": 676542,
+      "configurationSha256": "ae84ea9e8ba211be9c078f1a38f4769d8518901f95135d20b2305a50e061ad4b"
+    },
+    {
+      "file": "firefox/sample-03.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "e2f2b0977552c270e7be09e5c0e2e190b512b7d02e81b56db137fc5d5c87a124",
+      "bytes": 1898,
+      "clientPid": 676559,
+      "configurationSha256": "c7a335fdb923f26b8ac72177bbc271028840d3ed0d294f0a794a7a53337b594d"
+    },
+    {
+      "file": "firefox/sample-04.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "0b0253f6947a4a838259513daf2fc52c11d89605837fed7da9a3101998be813e",
+      "bytes": 1898,
+      "clientPid": 676576,
+      "configurationSha256": "6d53b0f3b6f12d76f6ddcb142039354beb6be72bc4abb822918934122f6ebccf"
+    },
+    {
+      "file": "firefox/sample-05.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "7908f2173d9384d9b2bdfe089bafc98c2a586d6edb9e875a9033a53420d6fc01",
+      "bytes": 1898,
+      "clientPid": 676593,
+      "configurationSha256": "3cf8c1e92165e71361ecc8f322827090dba0a6e12a09ff7312092b9e694e1b2c"
+    },
+    {
+      "file": "firefox/sample-06.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "0106e9cab822a207d0d45541c2335ecbfb8ec5dedd3cc1dbd847ad3e226c66ef",
+      "bytes": 1898,
+      "clientPid": 676610,
+      "configurationSha256": "0042717303008854baa9914332a2963eb80179a6a6011e1ee78a0d5d3a312bb3"
+    },
+    {
+      "file": "firefox/sample-07.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "364e48d2c80ef849d6a76201d83a4cbdf6650f596fd0a89fcad66e0b3031faa0",
+      "bytes": 1898,
+      "clientPid": 676627,
+      "configurationSha256": "798d6ce7e559ad3b5345a11d81627a1d3ca850a345f1408bf2be3e11c34dfd36"
+    },
+    {
+      "file": "firefox/sample-08.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "627596441a61c1f832d8bb3f583f7b443c90cde75532da9cdf6b2bb427dd2b7d",
+      "bytes": 1898,
+      "clientPid": 676644,
+      "configurationSha256": "03ec2ff93da42696ed3edea3cc2b4c8915703ae8db5ab19a7f94b39c2e6047a6"
+    },
+    {
+      "file": "firefox/sample-09.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "3daeeca950409063e20f3e82ecb7b254af22e5573e185f57f10d221ed8ab6229",
+      "bytes": 1898,
+      "clientPid": 676663,
+      "configurationSha256": "cf4fe23ccef423d652eb63b0fa889be77241c4037dd43da1f03da7559387c2d4"
+    },
+    {
+      "file": "firefox/sample-10.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "e13f6e392cc3058b04dd185fb161fffcde7cb2a2c9cd43db2e3614cbea9b344d",
+      "bytes": 1898,
+      "clientPid": 676681,
+      "configurationSha256": "339bc2e62ab011aff096f7e47619f5c38d52d98a5798588b3b424de96ec4d5b9"
+    },
+    {
+      "file": "firefox/sample-11.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "e165803ec1f2fc7ff8209836ec58482372cb65d7036d5782fd5b00bbaf2ee0da",
+      "bytes": 1898,
+      "clientPid": 676698,
+      "configurationSha256": "bcda9fcda3bfcfba5fffe589fb82c3494ec7e3e50f982902e409c4628815de10"
+    },
+    {
+      "file": "firefox/sample-12.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "3e19cee644c6988d6b7a52a0951c3490a66eabec00855dff00cf2ea18b466a6a",
+      "bytes": 1898,
+      "clientPid": 676715,
+      "configurationSha256": "7c41bc41b762c2ade0fb03de2a61e20f0c4657676815b638642f6908faf312a7"
+    },
+    {
+      "file": "firefox/sample-13.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "5376170fa2d2bcba962ee91c6d203089e6380e03d25141be0e769a0dd17f15cb",
+      "bytes": 1898,
+      "clientPid": 676732,
+      "configurationSha256": "f08dbeaaf096693af7122d316b2513e692ff2a2bc51f56a278acf5990baf211b"
+    },
+    {
+      "file": "firefox/sample-14.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "92b3aec12aa51f8dfcd5ed862681b693ecf7796f68001d122e682c9c6bb1d39e",
+      "bytes": 1898,
+      "clientPid": 676749,
+      "configurationSha256": "9e1ebdb064242d2fb4aa6c256d60538920999f88009f767728ca754b662840f9"
+    },
+    {
+      "file": "firefox/sample-15.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "4ed4b32ee3353ecef2c15de176fb30923d2c807e190bfc53f74eaa86af0fceee",
+      "bytes": 1898,
+      "clientPid": 676766,
+      "configurationSha256": "6d8a29d43f1baf8476476923af207ce5ffc9f17bc1c727637d4bdedcbb42067c"
+    },
+    {
+      "file": "firefox/sample-16.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "d43cb67a10b35f723cd896b49b4121b3a31cbb9622d8f44d84c577746788864f",
+      "bytes": 1898,
+      "clientPid": 676783,
+      "configurationSha256": "9c3312fe9819b4babe9324a3dc2c3932266804955f0633eb030e79c2481f8566"
+    },
+    {
+      "file": "firefox/sample-17.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "78757c973c312d2b48edbf90c2e92e3121a7859e329b1e2dfc0eb1f45a7a319b",
+      "bytes": 1898,
+      "clientPid": 676800,
+      "configurationSha256": "40f738e52ee3b3863175a02acd384a7f295478601032a65c5eac33e53b2f5f15"
+    },
+    {
+      "file": "firefox/sample-18.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "d73d696e37051cfcd98f592bef23a33a6e413a71a396c241181538b9e8f486f8",
+      "bytes": 1898,
+      "clientPid": 676817,
+      "configurationSha256": "17825051b7ed20d270fa8b27a162887b6ba426e5d93d8b411d99ee3cd22884f8"
+    },
+    {
+      "file": "firefox/sample-19.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "34099339fc329ff6b9aa35161cfbca34687361956fcb1ccf0b2de7ba1aa727de",
+      "bytes": 1898,
+      "clientPid": 676834,
+      "configurationSha256": "fce8c58ade245855795310cb1e65336792894fac47869d3e818c600f89974476"
+    },
+    {
+      "file": "firefox/sample-20.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "010904b26365720d2289e6d7d9498cbe8fbd3e6786ac78d0531ab3a03619432a",
+      "bytes": 1898,
+      "clientPid": 676851,
+      "configurationSha256": "eee892f76e424dd2c0990c88da63228370a87728c1c0160ab8a82a12ae9b7da2"
+    },
+    {
+      "file": "firefox/sample-21.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "2bed14f4c26a32ab12714c78a4438198c8bdc6839ab3c11953b8d8821cd0c6ac",
+      "bytes": 1898,
+      "clientPid": 676868,
+      "configurationSha256": "0fd076e421212d9ad5cf25d6e0657ca33395da005e24153fb5a8945938d33e8d"
+    },
+    {
+      "file": "firefox/sample-22.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "e09e6ce383b26789fa6d4ceb4289ae86d6b22f75e3d92874dff12c18a5eabbdd",
+      "bytes": 1898,
+      "clientPid": 676885,
+      "configurationSha256": "7514d6a25484f144b188efde065eb4eadc574fba6b3c6ef241bcc10fbd2080a2"
+    },
+    {
+      "file": "firefox/sample-23.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "dc09230b09095e9f990659f5d6b38128ded6f7809f04ff5d1ab523113d99ebb4",
+      "bytes": 1898,
+      "clientPid": 676902,
+      "configurationSha256": "c46137c37345650b78f1f2db7f2f69ed5ab0f300be69b781612db9ff00da19cc"
+    },
+    {
+      "file": "firefox/sample-24.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "934a0d5a870b29e2b0d4999420d5c678ae79af874678b0f1d8b04f2d79eedf66",
+      "bytes": 1898,
+      "clientPid": 676919,
+      "configurationSha256": "2b8f8885919223d981e7c043cfcddd3a2ef8020aa8eafc11522bde208d4912fe"
+    },
+    {
+      "file": "firefox/sample-25.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "c514f7ef0ae04a33c2cf7a7db3835323ef0c3b36536d79b87230ef3b72425c52",
+      "bytes": 1898,
+      "clientPid": 676936,
+      "configurationSha256": "1155d196fcceaf1fe6234b36885c3a8be41eb975d3e30eccd68013719b23014b"
+    },
+    {
+      "file": "firefox/sample-26.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "10c1e46cb44fda32e939333e67a8415ff9774ed6a5f6f462b08abb7906ddb2cc",
+      "bytes": 1898,
+      "clientPid": 676953,
+      "configurationSha256": "9d1105ff40d5783ec49bf639b4e287dab59dfac415c32ea87aeb615d78cf0384"
+    },
+    {
+      "file": "firefox/sample-27.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "6e2063bc6bef05f65d2cf29ae6337fb2c36e79a2b8c794342d64bc9dcf6057b3",
+      "bytes": 1898,
+      "clientPid": 676970,
+      "configurationSha256": "629d7168cf2e49f58de394b83f3949a8ee56f69b18afc7b41caa7fd84df29746"
+    },
+    {
+      "file": "firefox/sample-28.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "51f9ea72eb4a752da21aad3487c1bdf2857a09312679ab782b0fe1efbb24f013",
+      "bytes": 1898,
+      "clientPid": 676987,
+      "configurationSha256": "9a0e72e41f01bb190ad6f9379615de9ae74ae4d8299093f17a8e6032a559ae2f"
+    },
+    {
+      "file": "firefox/sample-29.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "a95b0128e437da34d87ab313b1e2bd63af1abd80deb611a40ed29cf091013ca2",
+      "bytes": 1898,
+      "clientPid": 677004,
+      "configurationSha256": "13781b6d112b05457e548c9d5cbd21d8f48d7a7b31a1df26e7a15903366dd623"
+    },
+    {
+      "file": "firefox/sample-30.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "1ec214ede16c6572530941e6a8f7bec2f46abe03e22fd66be83193a71111f614",
+      "bytes": 1898,
+      "clientPid": 677021,
+      "configurationSha256": "8856cff5457a8186779a2a27b117168c31202d2ac3bbac479945261660b404ba"
+    },
+    {
+      "file": "firefox/sample-31.tls",
+      "profile": "firefox",
+      "explicitFingerprint": true,
+      "sha256": "59c4ca229e097ccaf27734635d32e24901667ce2969e740248ee857f6824061f",
+      "bytes": 1898,
+      "clientPid": 677038,
+      "configurationSha256": "0e0af97d5d9ca42c12ea613dbec593cd15a26a91c08b972c56052c75c49e4497"
+    }
+  ],
+  "status": "COMPLETE",
+  "comparisonVerdict": "PASS"
+}

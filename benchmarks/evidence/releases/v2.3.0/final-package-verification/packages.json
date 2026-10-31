@@ -1,0 +1,54 @@
+{
+  "tag": "v2.3.0",
+  "sourceCommit": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "manifestSha256": "fb8a6c188cf4a0809a955483f92c3779b2bf2e7ebb5242a3b61bd2cc646c927c",
+  "sha256sumsSha256": "bbcc1a6a084873928b7a5e87e65e65abd66d64223b7b308b261eeea965b0a7a6",
+  "assets": [
+    {
+      "asset": "rust-reality-v2.3.0-linux-x86_64-generic.tar.gz",
+      "archiveSha256": "02ac7027859da698de2c98987e392536497e0f7b537ae11e9c4dbf77a64e1b78",
+      "binarySha256": "ee7e0092849a6e8b35fe1ac31544bad9d254d7a78cef40d8c02818e1588881ed",
+      "buildId": "45c3678f26067b3f1251d0a1da223712c04ead5d",
+      "archiveMembers": 157,
+      "sourceFileContents": "PASS: exact file catalog and all document/service bytes match final Git source",
+      "nativeReceiptSha256": "5a185de75a0dc701d6438b0a4c523b85f2c5638cb0d296d62f2cb597b2670328",
+      "nativePackageCommands": "PASS: seven successful commands on matching native architecture, exact archive and executable digests",
+      "localVersionExecution": "PASS"
+    },
+    {
+      "asset": "rust-reality-v2.3.0-linux-x86_64-musl.tar.gz",
+      "archiveSha256": "8df862be0aa393e8e5bc458139c5abc6ae36b5e954d90b677f092af95356390f",
+      "binarySha256": "67a1a735a380e317094a099a905d01286c70d21d2bebbc77e31b413078c9442a",
+      "buildId": "d2cd8a42360fa645d32f556aa2b64047ed48e0b5",
+      "archiveMembers": 157,
+      "sourceFileContents": "PASS: exact file catalog and all document/service bytes match final Git source",
+      "nativeReceiptSha256": "e34a45efb7c336d36393a3c3b20aae3e60fa4d61873c0232476247d1af7e3f86",
+      "nativePackageCommands": "PASS: seven successful commands on matching native architecture, exact archive and executable digests",
+      "localVersionExecution": "PASS"
+    },
+    {
+      "asset": "rust-reality-v2.3.0-linux-x86_64-v3.tar.gz",
+      "archiveSha256": "c6dcf26597bcdff017511947e3e6d3ed72f3f2078e070e4d2029d87c5f5e6a7e",
+      "binarySha256": "35a5805eabec1fabcf5818229e61e7a3dd7d49c666afd79ba8f7322215fcba52",
+      "buildId": "674bdcafd6bf6aa92176d1bc9a20a910a52f55fa",
+      "archiveMembers": 157,
+      "sourceFileContents": "PASS: exact file catalog and all document/service bytes match final Git source",
+      "nativeReceiptSha256": "d9e8e1bf1fd1c19bcf7f1cece2639841590ec8b9c69e581c74293cca2231db1d",
+      "nativePackageCommands": "PASS: seven successful commands on matching native architecture, exact archive and executable digests",
+      "localVersionExecution": "PASS"
+    },
+    {
+      "asset": "rust-reality-v2.3.0-linux-aarch64-generic.tar.gz",
+      "archiveSha256": "0af34bfe3a28761d3d5c6deb59fdc854598f62f169f798257d1b6e7c10107a02",
+      "binarySha256": "705ddae91f56bd6641a0531a79def2c0648c9e0a534a0044db975a7699c00d42",
+      "buildId": "9108b0485787b1d1e9afc1148008670c174a755e",
+      "archiveMembers": 157,
+      "sourceFileContents": "PASS: exact file catalog and all document/service bytes match final Git source",
+      "nativeReceiptSha256": "02cb6c99eacfa0b81ed72183e9ca914e9c2d91a202b372cca74cb5d8203f875d",
+      "nativePackageCommands": "PASS: seven successful commands on matching native architecture, exact archive and executable digests",
+      "localVersionExecution": "NOT_RUN_ARCHITECTURE_MISMATCH"
+    }
+  ],
+  "verdict": "PASS",
+  "stage": "FROZEN_CANDIDATE_NOT_PUBLISHED"
+}

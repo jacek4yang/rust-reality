@@ -1,0 +1,241 @@
+{
+  "name": "r3-candidate",
+  "binarySha256": "ee7e0092849a6e8b35fe1ac31544bad9d254d7a78cef40d8c02818e1588881ed",
+  "connections": 128,
+  "verifiedTransfers": 384,
+  "before": [
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482396.8720796,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 7732,
+        "RssAnon": 580,
+        "RssFile": 7152,
+        "Threads": 5,
+        "Pss": 5192,
+        "Pss_Anon": 580,
+        "Anonymous": 580
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482397.1242309,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 7732,
+        "RssAnon": 580,
+        "RssFile": 7152,
+        "Threads": 5,
+        "Pss": 5192,
+        "Pss_Anon": 580,
+        "Anonymous": 580
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482397.3762932,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 7732,
+        "RssAnon": 580,
+        "RssFile": 7152,
+        "Threads": 5,
+        "Pss": 5192,
+        "Pss_Anon": 580,
+        "Anonymous": 580
+      }
+    }
+  ],
+  "held": [
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482399.1324205,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16796,
+        "RssAnon": 8812,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14256,
+        "Pss_Anon": 8812,
+        "Anonymous": 8812
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482399.3859646,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16796,
+        "RssAnon": 8812,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14256,
+        "Pss_Anon": 8812,
+        "Anonymous": 8812
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482399.639379,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16796,
+        "RssAnon": 8812,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14256,
+        "Pss_Anon": 8812,
+        "Anonymous": 8812
+      }
+    }
+  ],
+  "reused": [
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482401.2935538,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16796,
+        "RssAnon": 8812,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14256,
+        "Pss_Anon": 8812,
+        "Anonymous": 8812
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482401.5469873,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16796,
+        "RssAnon": 8812,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14256,
+        "Pss_Anon": 8812,
+        "Anonymous": 8812
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482401.8000875,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 16796,
+        "RssAnon": 8812,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14256,
+        "Pss_Anon": 8812,
+        "Anonymous": 8812
+      }
+    }
+  ],
+  "uploaded": [
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482403.4522269,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 18236,
+        "RssAnon": 10252,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 15696,
+        "Pss_Anon": 10252,
+        "Anonymous": 10252
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482403.7047985,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 18236,
+        "RssAnon": 10252,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 15696,
+        "Pss_Anon": 10252,
+        "Anonymous": 10252
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482403.9582546,
+      "fdCount": 266,
+      "values": {
+        "VmRSS": 18236,
+        "RssAnon": 10252,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 15696,
+        "Pss_Anon": 10252,
+        "Anonymous": 10252
+      }
+    }
+  ],
+  "closed": [
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482406.2176418,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 17212,
+        "RssAnon": 9228,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14672,
+        "Pss_Anon": 9228,
+        "Anonymous": 9228
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482406.4696288,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 17212,
+        "RssAnon": 9228,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14672,
+        "Pss_Anon": 9228,
+        "Anonymous": 9228
+      }
+    },
+    {
+      "pid": 678447,
+      "startTicks": "195032603",
+      "unixSeconds": 1793482406.7219727,
+      "fdCount": 10,
+      "values": {
+        "VmRSS": 17212,
+        "RssAnon": 9228,
+        "RssFile": 7984,
+        "Threads": 5,
+        "Pss": 14672,
+        "Pss_Anon": 9228,
+        "Anonymous": 9228
+      }
+    }
+  ]
+}
