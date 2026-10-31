@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "0c5b1dcfc2eb8c8ae01f8c7b0d6fa7011a17fa41",
+  "frozenSha256": "9dfc9d72d5b76282b1a6bd72121c3703d5d960764e7a1f98e993285e19679b6b",
+  "symbolizedSha256": "c87d4347e2114d6313f4b2ef95496c97660cc3300f0de8d679e0ed896fe8a599",
+  "textSha256": "0f0b85678cccd85fb9e38d0ed9354391abb31cbf00b456fb30fd011ee20903e7",
+  "textBytes": 5832694,
+  "textByteIdentical": true,
+  "inspection": {
+    "relay": "0x48b6c0",
+    "initialReserveBound": "0x802c at 0x48b73d",
+    "initialInitializedLength": "0x4016 at 0x48b75f",
+    "canonicalBatchCall": "0x48c73c to 0x4e7650",
+    "scope": "Source invariant plus pointer/capacity tests verify no second retained upload buffer; full statistical performance qualification remains separate."
+  }
+}
