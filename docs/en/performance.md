@@ -143,8 +143,19 @@ at 1.0554 (1.0200-1.0785), but framed-upload CPU remains unresolved at 1.0140
 (0.9978-1.0500). The earlier passing framed-upload interval does not replace
 this unresolved result. No release acceptance follows. Host observations are
 retained; periodic compiler detection is not proof of exclusive physical CPUs
-or of the cause of historical variance. Framed-upload PMU profiling is the next
-discriminating investigation, not another unchanged acceptance retry.
+or of the cause of historical variance.
+
+The [framed-upload diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-framed-upload-hotspot-1c1930f/archive-manifest.json)
+profiles three balanced ABBA blocks at c64 with 64-MiB payloads. Client median
+cycle, instruction and send-call ratios are 0.9683, 0.9165 and 0.3413;
+server cycle and instruction ratios are 0.9580 and 0.8957. Client task-clock
+block ratios are 1.0553, 0.9495 and 0.9631. Effective client cycles/task-clock
+varies from 2.53 to 3.42 GHz across slots. This supports controlling frequency
+in the next matched measurement, but does not prove the cause of earlier
+variance or establish acceptance. Instrumented timings remain diagnostic.
+Raw counters and profiles are retained; selected normal reports decode with
+zero lost samples, while one header-only command warns about event metadata.
+No application-symbol hotspot claim is inferred from stripped executables.
 
 The [full comparison at `1c1930f`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
 uses the same 32-KiB Direct-window implementation against `d72abc2`: 16 ABBA
