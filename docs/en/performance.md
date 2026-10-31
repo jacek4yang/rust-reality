@@ -39,6 +39,44 @@ These are development-binary measurements, not final release qualification or
 WAN throughput. Ratios are candidate/baseline; intervals are the collector's
 95% block bootstrap. Failed and cancelled earlier experiments remain retained.
 
+### Complete fixed-frequency comparison for the reserved upload buffer
+
+Candidate `0c5b1dc` versus working Chrome baseline `d72abc2` completes 20 ABBA
+blocks (80 slots), five samples per cell, concurrency 1/8/32/64 and all five
+16-MiB traffic shapes. The immutable collector is `38abe32`, the shared server
+is `c02e488`, and both arms use the same 2.4-GHz policy on CPUs 0/2/4/6.
+All 8,000 data batches (252,000 verified requests) and 1,600 setup batches
+complete without failure. Periodic host observations detect no compiler;
+all modified frequency policies are restored exactly after collection.
+
+All 40 data CPU/rate intervals and all 16 setup CPU/rate/p50/p99 intervals
+pass their unchanged limits: CPU and p50 at most 1.01, rate at least 0.99,
+and setup p99 at most 1.02. Ratios below compare candidate with baseline;
+parentheses contain the qualified collector's 95% block-bootstrap interval.
+
+| Shape and concurrency | CPU/GiB ratio | Throughput ratio |
+| --- | --- | --- |
+| direct-upload, c1 | 0.9872 (0.9748, 0.9935) | 6.2562 (6.2300, 6.2763) |
+| direct-download, c1 | 0.9162 (0.9094, 0.9230) | 4.9782 (4.9750, 4.9820) |
+| framed-upload, c1 | 0.8057 (0.7941, 0.8097) | 6.9135 (6.9069, 6.9365) |
+| framed-download, c1 | 0.9848 (0.9765, 0.9925) | 4.9376 (4.9309, 4.9431) |
+| bidi, c1 | 0.7498 (0.7418, 0.7541) | 4.2705 (3.9762, 4.6528) |
+| direct-upload, c64 | 0.7293 (0.7263, 0.7327) | 1.0860 (1.0824, 1.0888) |
+| direct-download, c64 | 0.8287 (0.8243, 0.8337) | 1.0712 (1.0653, 1.0750) |
+| framed-upload, c64 | 0.8204 (0.8103, 0.8249) | 1.0885 (1.0831, 1.0948) |
+| framed-download, c64 | 0.9756 (0.9656, 0.9843) | 1.0702 (1.0664, 1.0788) |
+| bidi, c64 | 0.7732 (0.7718, 0.7756) | 1.0780 (1.0752, 1.0806) |
+
+[All cells, original samples, per-member hashes and binary identities](../../benchmarks/evidence/releases/v2.3.0/client-data-fixed-frequency-0c5b1dc/archive-manifest.json)
+are retained, including the intermediate concurrency cells. The data workloads
+include connection setup: large low-concurrency rate differences include the
+baseline's socket/handshake delays, not just bulk record processing. These
+results establish the measured source's local fixed-clock comparison, not WAN
+speed, arbitrary hardware behavior, data-transfer p99, or qualification of
+later XUDP source changes. Earlier failures remain separate evidence; no
+samples were pooled or thresholds relaxed. Final-main Native/Frozen and
+package qualification remain required.
+
 ### Data transfers with the same Chrome profile
 
 Baseline `d72abc2` and candidate `2fb3076` use Chrome 156.0.8078.74 against

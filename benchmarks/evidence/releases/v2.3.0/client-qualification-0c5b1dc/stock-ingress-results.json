@@ -1,0 +1,77 @@
+{
+  "sourceCommit": "0c5b1dcfc2eb8c8ae01f8c7b0d6fa7011a17fa41",
+  "features": "--all-features (distinct from default-feature performance ELF)",
+  "xrayVersion": "Xray 26.10.31 (Xray, Penetrates Everything.) a4a3dff (go1.27.3 linux/amd64)\nA unified platform for anti-censorship.\n",
+  "xraySha256": "cc4b84d3069569f297a61f04b914f2bb37e9d202fd7b84cb50def1fc30fd40e1",
+  "controllerSha256": "1ff3191365bf1af1b0b0d2d01b47ee7596cf90bfc73a16ad2b0466ca146ba0eb",
+  "tests": [
+    {
+      "target": "xudp_stock_xray_interop",
+      "test": "stock_xray_client_udp_echo_via_rust_reality_entry",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--all-features",
+        "--test",
+        "xudp_stock_xray_interop",
+        "stock_xray_client_udp_echo_via_rust_reality_entry",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--ignored"
+      ],
+      "returncode": 0,
+      "elapsedSeconds": 75.23716174485162,
+      "binarySha256": "b851c7f9cdb22f94a7f64994f7975b9ee24c9bd39840290979c4fce5f5dbf44f",
+      "binaryVersion": "rust-reality 2.2.0\ncommit: 0c5b1dcfc2eb8c8ae01f8c7b0d6fa7011a17fa41\n"
+    },
+    {
+      "target": "xudp_nxr_e2e",
+      "test": "stock_xray_client_nxr_udp_echo_landing_is_sender",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--all-features",
+        "--test",
+        "xudp_nxr_e2e",
+        "stock_xray_client_nxr_udp_echo_landing_is_sender",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--ignored"
+      ],
+      "returncode": 0,
+      "elapsedSeconds": 3.880845751846209,
+      "binarySha256": "b851c7f9cdb22f94a7f64994f7975b9ee24c9bd39840290979c4fce5f5dbf44f",
+      "binaryVersion": "rust-reality 2.2.0\ncommit: 0c5b1dcfc2eb8c8ae01f8c7b0d6fa7011a17fa41\n"
+    },
+    {
+      "target": "xudp_handoff_e2e",
+      "test": "stock_xray_client_handoff_udp_echo_landing_is_sender",
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--all-features",
+        "--test",
+        "xudp_handoff_e2e",
+        "stock_xray_client_handoff_udp_echo_landing_is_sender",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--ignored"
+      ],
+      "returncode": 0,
+      "elapsedSeconds": 3.7825967939570546,
+      "binarySha256": "b851c7f9cdb22f94a7f64994f7975b9ee24c9bd39840290979c4fce5f5dbf44f",
+      "binaryVersion": "rust-reality 2.2.0\ncommit: 0c5b1dcfc2eb8c8ae01f8c7b0d6fa7011a17fa41\n"
+    }
+  ],
+  "scope": "Supplemental unmodified latest-stable Xray ingress; does not replace required pinned Native qualification.",
+  "verdict": "PASS"
+}

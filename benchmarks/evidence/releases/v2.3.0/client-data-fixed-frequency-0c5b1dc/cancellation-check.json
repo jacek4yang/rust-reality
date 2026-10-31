@@ -1,0 +1,4 @@
+{
+  "verdict": "PASS",
+  "case": "Extracted controller cleanup terminates and reaps its own isolated sleep child on SIGINT and is idempotent; no other process group targeted."
+}
