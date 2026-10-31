@@ -39,6 +39,44 @@ These are development-binary measurements, not final release qualification or
 WAN throughput. Ratios are candidate/baseline; intervals are the collector's
 95% block bootstrap. Failed and cancelled earlier experiments remain retained.
 
+### Complete fixed-frequency comparison for the reserved upload buffer
+
+Candidate `0c5b1dc` versus working Chrome baseline `d72abc2` completes 20 ABBA
+blocks (80 slots), five samples per cell, concurrency 1/8/32/64 and all five
+16-MiB traffic shapes. The immutable collector is `38abe32`, the shared server
+is `c02e488`, and both arms use the same 2.4-GHz policy on CPUs 0/2/4/6.
+All 8,000 data batches (252,000 verified requests) and 1,600 setup batches
+complete without failure. Periodic host observations detect no compiler;
+all modified frequency policies are restored exactly after collection.
+
+All 40 data CPU/rate intervals and all 16 setup CPU/rate/p50/p99 intervals
+pass their unchanged limits: CPU and p50 at most 1.01, rate at least 0.99,
+and setup p99 at most 1.02. Ratios below compare candidate with baseline;
+parentheses contain the qualified collector's 95% block-bootstrap interval.
+
+| Shape and concurrency | CPU/GiB ratio | Throughput ratio |
+| --- | --- | --- |
+| direct-upload, c1 | 0.9872 (0.9748, 0.9935) | 6.2562 (6.2300, 6.2763) |
+| direct-download, c1 | 0.9162 (0.9094, 0.9230) | 4.9782 (4.9750, 4.9820) |
+| framed-upload, c1 | 0.8057 (0.7941, 0.8097) | 6.9135 (6.9069, 6.9365) |
+| framed-download, c1 | 0.9848 (0.9765, 0.9925) | 4.9376 (4.9309, 4.9431) |
+| bidi, c1 | 0.7498 (0.7418, 0.7541) | 4.2705 (3.9762, 4.6528) |
+| direct-upload, c64 | 0.7293 (0.7263, 0.7327) | 1.0860 (1.0824, 1.0888) |
+| direct-download, c64 | 0.8287 (0.8243, 0.8337) | 1.0712 (1.0653, 1.0750) |
+| framed-upload, c64 | 0.8204 (0.8103, 0.8249) | 1.0885 (1.0831, 1.0948) |
+| framed-download, c64 | 0.9756 (0.9656, 0.9843) | 1.0702 (1.0664, 1.0788) |
+| bidi, c64 | 0.7732 (0.7718, 0.7756) | 1.0780 (1.0752, 1.0806) |
+
+[All cells, original samples, per-member hashes and binary identities](../../benchmarks/evidence/releases/v2.3.0/client-data-fixed-frequency-0c5b1dc/archive-manifest.json)
+are retained, including the intermediate concurrency cells. The data workloads
+include connection setup: large low-concurrency rate differences include the
+baseline's socket/handshake delays, not just bulk record processing. These
+results establish the measured source's local fixed-clock comparison, not WAN
+speed, arbitrary hardware behavior, data-transfer p99, or qualification of
+later XUDP source changes. Earlier failures remain separate evidence; no
+samples were pooled or thresholds relaxed. Final-main Native/Frozen and
+package qualification remain required.
+
 ### Data transfers with the same Chrome profile
 
 Baseline `d72abc2` and candidate `2fb3076` use Chrome 156.0.8078.74 against
@@ -138,6 +176,73 @@ throughput block ratios are 1.0203, 1.0719 and 1.0198; median CPU/GiB is 0.8658.
 Direct-download median throughput and CPU ratios are 1.0370 and 0.8625.
 These are promising diagnostic observations, not full qualification against
 `d72abc2` or acceptance-grade intervals.
+
+The [predeclared high-concurrency follow-up](../../benchmarks/evidence/releases/v2.3.0/client-data-precision-c64-1c1930f/archive-manifest.json)
+uses 20 ABBA blocks and nine samples per cell, retaining all five workloads at
+concurrency 64. All 276,480 data requests succeed. Nine of ten metric cells
+pass, but bidirectional throughput remains unresolved: ratio 1.0850, 95% interval
+0.9764-1.1642. Framed-upload CPU now passes at 0.9180 (0.8182-1.0061).
+The follow-up does not pool samples with the earlier concurrency schedule and
+does not establish release acceptance. Its initially requested 32-block run was
+rejected by the collector before measurement; the retained invocation failure
+preceded the corrected, predeclared 20-block campaign. No collector limit or
+acceptance threshold was changed.
+
+The [monitored idle-host repeat](../../benchmarks/evidence/releases/v2.3.0/client-data-idle-c64-1c1930f/archive-manifest.json)
+retains another complete 20-block, nine-sample c64 campaign without pooling
+prior samples. All 276,480 data requests succeed, and periodic monitoring finds
+no compiler processes. Nine metrics pass. Bidirectional throughput now passes
+at 1.0554 (1.0200-1.0785), but framed-upload CPU remains unresolved at 1.0140
+(0.9978-1.0500). The earlier passing framed-upload interval does not replace
+this unresolved result. No release acceptance follows. Host observations are
+retained; periodic compiler detection is not proof of exclusive physical CPUs
+or of the cause of historical variance.
+
+The [framed-upload diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-framed-upload-hotspot-1c1930f/archive-manifest.json)
+profiles three balanced ABBA blocks at c64 with 64-MiB payloads. Client median
+cycle, instruction and send-call ratios are 0.9683, 0.9165 and 0.3413;
+server cycle and instruction ratios are 0.9580 and 0.8957. Client task-clock
+block ratios are 1.0553, 0.9495 and 0.9631. Effective client cycles/task-clock
+varies from 2.53 to 3.42 GHz across slots. This supports controlling frequency
+in the next matched measurement, but does not prove the cause of earlier
+variance or establish acceptance. Instrumented timings remain diagnostic.
+Raw counters and profiles are retained; selected normal reports decode with
+zero lost samples, while one header-only command warns about event metadata.
+No application-symbol hotspot claim is inferred from stripped executables.
+
+The [fixed-frequency full comparison](../../benchmarks/evidence/releases/v2.3.0/client-data-fixed-frequency-1c1930f/archive-manifest.json)
+uses 20 ABBA blocks, five samples per cell, all five 16-MiB workloads and
+concurrency 1/8/32/64. Both binaries use the same 2.4-GHz P-core policy; original
+CPU policy fields are restored exactly afterward. All 252,000 data requests
+succeed. The result is 38 PASS, one FAIL and one UNRESOLVED, not acceptance.
+Direct-upload c1 CPU is 1.0197 (1.0116-1.0371), exceeding the 1% limit;
+framed-upload c1 CPU is unresolved at 1.0104 (1.0046-1.0162). All ten c64
+metrics pass, including framed-upload CPU 0.9630 (0.9537-0.9728) and
+bidirectional throughput 1.0444 (1.0421-1.0486). Earlier passing c1 results do
+not override this failure. Failed preflights and all raw samples remain retained.
+
+A [mapped leaf profile](../../benchmarks/evidence/releases/v2.3.0/client-framed-upload-hotspot-1c1930f/candidate-symbol-leaves.json)
+uses the exact recorded mmap and a symbol twin with byte-identical executable
+text and matching section addresses. In that one c64 diagnostic client slot,
+74.25% of sampled cycles are in the kernel and 13.46% in AES-GCM assembly.
+This supports investigating local-read syscall amortization; it is not a
+low-concurrency root-cause proof or a performance acceptance result.
+
+The [full comparison at `1c1930f`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
+uses the same 32-KiB Direct-window implementation against `d72abc2`: 16 ABBA
+blocks, three samples, 3,840 batches and 120,960 requests, without workload
+errors. Thirty-eight assessments pass; two remain unresolved. At concurrency
+64, bidirectional throughput is 0.9865 [0.9535, 1.0009], which does not establish
+the 0.99 lower bound. Framed-upload CPU/GiB is 0.9918 [0.9736, 1.0271], which
+does not establish the 1.01 upper bound. Bidirectional CPU passes at 0.9062
+[0.9022, 0.9513]; Direct-download CPU is 0.8628 [0.8598, 0.8659] and throughput
+is 1.0665 [1.0598, 1.0715]. CPU savings do not waive throughput uncertainty.
+Here bidirectional means simultaneous separate upload and download connections,
+not two directions on one socket. These unresolved cells prevent performance
+acceptance and require increased precision under the existing contract.
+[Local checks and code inspection](../../benchmarks/evidence/releases/v2.3.0/client-qualification-1c1930f/scope.json)
+retain the full 19-stage pass, the preceding transient execution failure, and
+three supplemental stock Xray 26.10.29 UDP ingress passes with exact identities.
 
 A [separate retained-memory diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-direct-memory-04a1dc5/summary.json)
 uses three rotated repeats per binary, 128 persistent verified TLS 1.3 HTTPS
@@ -357,6 +462,18 @@ that is the consensus rule working, and relaxing it is a separate decision.
 
 The before/after binaries were built from the same tree with only
 `src/protocol/reality/tls13/cover_profile.rs` differing.
+
+## v2.3.0 release evidence
+
+v2.3.0 retains the complete client comparisons above with their original
+source revisions, executable hashes, traffic shapes and statistical limits.
+The passing reserved-upload comparison is scoped to `0c5b1dc`; later source
+changes and final package identities are not silently substituted. Native
+browser profile cost is distinct from implementation regression. Current
+stock-Xray compatibility is qualified with the pinned official reference in
+`tools/fixtures/stock-xray.json`; the older Xray tables below remain historical
+comparisons. Final publication requires exact-main qualification and verified
+package execution, and does not establish production-WAN behavior.
 
 ## v2.2.0 release evidence
 

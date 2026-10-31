@@ -1,0 +1,99 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "reason": "Held and post-upload residency are lower than d72 in all three rotated observations. Compared with intermediate 1c, held residency is higher and post-upload residency lower; retain this tradeoff explicitly. FD recovery succeeds in all nine runs. Three repeats do not establish a long-term leak or full release verdict.",
+  "rows": [
+    {
+      "variant": "d72abc2",
+      "anonymousKiB": {
+        "before": [
+          580,
+          580,
+          580
+        ],
+        "held": [
+          9940,
+          9880,
+          9852
+        ],
+        "reused": [
+          9940,
+          9880,
+          9852
+        ],
+        "uploaded": [
+          10632,
+          10708,
+          10484
+        ],
+        "closed": [
+          8756,
+          7408,
+          8900
+        ]
+      },
+      "fdRecovery": true
+    },
+    {
+      "variant": "1c1930f",
+      "anonymousKiB": {
+        "before": [
+          580,
+          592,
+          588
+        ],
+        "held": [
+          8184,
+          8084,
+          8152
+        ],
+        "reused": [
+          8184,
+          8084,
+          8152
+        ],
+        "uploaded": [
+          10364,
+          10308,
+          10368
+        ],
+        "closed": [
+          7824,
+          8060,
+          7892
+        ]
+      },
+      "fdRecovery": true
+    },
+    {
+      "variant": "0c5b1dc",
+      "anonymousKiB": {
+        "before": [
+          592,
+          580,
+          588
+        ],
+        "held": [
+          8636,
+          8792,
+          8780
+        ],
+        "reused": [
+          8636,
+          8792,
+          8780
+        ],
+        "uploaded": [
+          10072,
+          10236,
+          10224
+        ],
+        "closed": [
+          8464,
+          8932,
+          8772
+        ]
+      },
+      "fdRecovery": true
+    }
+  ]
+}

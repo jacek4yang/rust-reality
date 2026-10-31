@@ -1,0 +1,62 @@
+{
+  "scope": "Source-specific regression and correction evidence. Partial/cancelled overall workflows are not declared passing; job/test outcomes are scoped explicitly. This is not final-main release qualification.",
+  "records": [
+    {
+      "file": "rr-v230-xudp-regression-sanitizer-69ada51.log.gz",
+      "sourceCommit": "69ada5197fc450a045bac362959528a0cd8b034e",
+      "githubJobId": 124625858652,
+      "verdict": "FAIL: authorized uplink destination changed after reply",
+      "decodedSha256": "adac2ed45cee3ecc7b0f415b83e669136879858ada7aabe8de4ad04a7b2442aa",
+      "decodedBytes": 310111
+    },
+    {
+      "file": "rr-v230-xudp-fixed-sanitizer-31e15eb.log.gz",
+      "sourceCommit": "31e15ebf9f1f2bca28bd71f195c8345b68c19ae0",
+      "githubJobId": 124627061374,
+      "verdict": "PASS: source separation and delayed replies",
+      "decodedSha256": "acae457b54ad63d3fb6f7da396ba18ece9e0b741941e2647a34ad338e7af2cc1",
+      "decodedBytes": 314667
+    },
+    {
+      "file": "rr-v230-xudp-lifetime-regression-69fd07d.log.gz",
+      "sourceCommit": "69fd07d06338ced0b04b38aca8c678161a6eebc8",
+      "githubJobId": 124636160310,
+      "verdict": "FAIL: three GlobalID lifetime regressions",
+      "decodedSha256": "44021c2833aa6573c9b74865a2f345e6f6a9632a185c2084b97fd3681c5e714a",
+      "decodedBytes": 309321
+    },
+    {
+      "file": "rr-v230-xudp-lifetime-fixed-c2833f5.log.gz",
+      "sourceCommit": "c2833f5578afe166d2c61630306ce0cebceee7ee",
+      "githubJobId": 124636998879,
+      "verdict": "PASS: lifecycle suite 19/19",
+      "decodedSha256": "187afb64c9c170b52420a0097cf966ef916be188227036dbd52f21798f89975f",
+      "decodedBytes": 315299
+    },
+    {
+      "file": "rr-v230-nxr-flags-quality-798cf5d.log.gz",
+      "sourceCommit": "798cf5d0be4effe8285a9bc9d2d3ff1548a1f2bc",
+      "githubJobId": 124639694229,
+      "verdict": "FAIL: test-expression clippy precedence; corrected by 3302147",
+      "decodedSha256": "4f1f72b620597c0a1450b1185d68f4bf506385f1a8408c232158563aa0500913",
+      "decodedBytes": 33584
+    },
+    {
+      "file": "rr-v230-xudp-focused-3302147.log.gz",
+      "sourceCommit": "3302147d135dd0ce234ec8e4fdbc29acc3d50e55",
+      "githubJobId": null,
+      "verdict": "PASS: XUDP units 41, NXR UDP units 7, adversarial lifecycle 19",
+      "decodedSha256": "010fae32d42eef418c05b9f65e82ba481a3d57fcebf7ec737417b22f8d428726",
+      "decodedBytes": 6498
+    },
+    {
+      "file": "local-full-3302147.log.gz",
+      "sourceCommit": "3302147d135dd0ce234ec8e4fdbc29acc3d50e55",
+      "githubJobId": null,
+      "verdict": "PASS: authoritative cargo dev check --all 19/19 in 594.5 seconds",
+      "receiptDirectory": "target/rr-dev/check/1793477168369-504631",
+      "decodedSha256": "2d858739985664a4d75535b7307e33cb23365ebf879bab41a976ead90c9ee9e0",
+      "decodedBytes": 1637
+    }
+  ]
+}

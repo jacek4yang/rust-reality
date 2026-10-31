@@ -51,7 +51,7 @@ fn xray_bin() -> Option<PathBuf> {
 /// so a missing Native pin cannot register as a silent green pass.
 fn require_stock_xray_bin() -> PathBuf {
     let path = xray_bin().unwrap_or_else(|| {
-        panic!("XRAY_BIN must point to an executable unmodified stock Xray-core binary (Native pin: XTLS/Xray-core v26.9.9 linux-64); missing fixture is FAIL, not skip")
+        panic!("XRAY_BIN must point to an executable unmodified stock Xray-core binary (Native pin: tools/fixtures/stock-xray.json); missing fixture is FAIL, not skip")
     });
     assert!(
         path.is_file(),

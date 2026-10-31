@@ -37,6 +37,11 @@ Handoff authorize as themselves and must never be silently remapped to Direct.
 
 XUDP datagrams ride inside the existing REALITY + Vision stream. This is not a second public wire protocol and not native QUIC transport.
 
+NXR frames use each 32-bit sequence value at most once per association and
+direction. Exhausting the sequence space closes the association; it never wraps
+to zero under the same session key. Even a previously valid MAC cannot authorize
+a repeated sequence. A new association requires a fresh authenticated open.
+
 ## Client SOCKS5 UDP ASSOCIATE
 
 The unified client accepts loopback SOCKS5 UDP ASSOCIATE and carries datagrams
@@ -86,13 +91,14 @@ Directional contract (AGENTS.md §6, ADR 0059):
   Exact-head Native qualification.
 - **UDP via XUDP — mandatory proven:** unmodified stock Xray SOCKS client
   (`udp: true`, flow `xtls-rprx-vision-udp443`) → rust-reality entry Direct UDP
-  echo. Exact-head Native downloads pinned Xray v26.9.9, verifies the zip
-  SHA-256, exports `XRAY_BIN`, and runs
+  echo. Native and QEMU qualification share the current pin in
+  `tools/fixtures/stock-xray.json` (Xray v26.10.31). They verify both archive and
+  executable SHA-256. Exact-head Native exports `XRAY_BIN` and runs
   `stock_xray_client_udp_echo_via_rust_reality_entry` with `--ignored --exact`
   (`tests/xudp_stock_xray_interop.rs`). The test panics if `XRAY_BIN` is missing;
   the workflow also fails on skip markers, zero matched cases, or any result
   other than exactly one pass. Local loopback single-datagram RTT samples
-  (warm path) are diagnostic only — **not** a throughput claim.
+  (including fresh association setup) are diagnostic only, not a throughput claim.
 - **UDP via XUDP — historical / ignored (not a release blocker):** rust-reality
   unified client → stock Xray VLESS+REALITY server. Past failure evidence
   (Go ClientHello parse, inbound `SetFlushNext` response ordering, freedom
@@ -136,7 +142,10 @@ Rust Client → stock Xray Server remains **not required** (ADR 0059).
 
 `tests/xudp_udp_performance.rs` records loopback single-datagram RTT through
 rust↔rust SOCKS5 UDP ASSOCIATE → XUDP, plus an A/A median ratio as noise
-characterisation. Exact-head Native may retain the receipt. These numbers are
+characterisation. Each timed call opens a new SOCKS/REALITY/XUDP association;
+the initial untimed exchange primes shared caches but does not remove setup
+from subsequent samples. This is not persistent-association datagram latency.
+Exact-head Native may retain the receipt. These numbers are
 **not** Internet throughput, **not** a capacity claim, and **not** a universal
 speedup claim. Optional stock Xray Client→RR samples (when `XRAY_BIN` is set in
 other suites) remain diagnostic; rust-reality Client→Xray Server is never required.

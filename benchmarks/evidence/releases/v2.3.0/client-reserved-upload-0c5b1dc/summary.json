@@ -1,0 +1,970 @@
+{
+  "cells": {
+    "1": {
+      "blockCount": 3,
+      "blockRatioSpread": {
+        "max": 1.0096575385434106,
+        "min": 0.9948823505264299,
+        "standardDeviation": 0.008261815363339404
+      },
+      "blocks": [
+        {
+          "baseline": 1465.1050039964018,
+          "candidate": 1479.2543120426408,
+          "candidateVsBaseline": 1.0096575385434106
+        },
+        {
+          "baseline": 1482.4679495269793,
+          "candidate": 1474.881198205498,
+          "candidateVsBaseline": 0.9948823505264299
+        },
+        {
+          "baseline": 1483.6119380183231,
+          "candidate": 1477.4749063717604,
+          "candidateVsBaseline": 0.9958634522348478
+        }
+      ],
+      "bootstrap95Unresolved": [
+        0.9948823505264299,
+        1.0096575385434106
+      ],
+      "medianCandidateVsBaseline": 0.9958634522348478,
+      "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    "64": {
+      "blockCount": 3,
+      "blockRatioSpread": {
+        "max": 1.0122036452259604,
+        "min": 0.9889273631946761,
+        "standardDeviation": 0.012140884336635075
+      },
+      "blocks": [
+        {
+          "baseline": 3698.256121812634,
+          "candidate": 3743.3883274779714,
+          "candidateVsBaseline": 1.0122036452259604
+        },
+        {
+          "baseline": 3823.305982403537,
+          "candidate": 3780.971903864761,
+          "candidateVsBaseline": 0.9889273631946761
+        },
+        {
+          "baseline": 3821.6873526125096,
+          "candidate": 3846.7353796846055,
+          "candidateVsBaseline": 1.0065541800678628
+        }
+      ],
+      "bootstrap95Unresolved": [
+        0.9889273631946761,
+        1.0122036452259604
+      ],
+      "medianCandidateVsBaseline": 1.0065541800678628,
+      "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    }
+  },
+  "clientCpuPerConcurrency": {
+    "1": {
+      "blockCount": 3,
+      "blockRatioSpread": {
+        "max": 1.011226016052097,
+        "min": 1.0038255090964294,
+        "standardDeviation": 0.004071906765603388
+      },
+      "blocks": [
+        {
+          "baseline": 411.38258723958336,
+          "candidate": 415.6895611979167,
+          "candidateVsBaseline": 1.0104695096290621
+        },
+        {
+          "baseline": 409.62208723958327,
+          "candidate": 411.1891002604167,
+          "candidateVsBaseline": 1.0038255090964294
+        },
+        {
+          "baseline": 402.14274739583334,
+          "candidate": 406.6572083333333,
+          "candidateVsBaseline": 1.011226016052097
+        }
+      ],
+      "bootstrap95Unresolved": [
+        1.0038255090964294,
+        1.011226016052097
+      ],
+      "medianCandidateVsBaseline": 1.0104695096290621,
+      "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+      "unit": "microsecondsPerConnection"
+    },
+    "64": {
+      "blockCount": 3,
+      "blockRatioSpread": {
+        "max": 1.018445302741888,
+        "min": 1.01054349489871,
+        "standardDeviation": 0.004544203037767781
+      },
+      "blocks": [
+        {
+          "baseline": 411.70006249999994,
+          "candidate": 419.2939947916667,
+          "candidateVsBaseline": 1.018445302741888
+        },
+        {
+          "baseline": 411.2326575520833,
+          "candidate": 415.56848697916666,
+          "candidateVsBaseline": 1.01054349489871
+        },
+        {
+          "baseline": 412.1816197916667,
+          "candidate": 416.5531770833333,
+          "candidateVsBaseline": 1.0106059006073007
+        }
+      ],
+      "bootstrap95Unresolved": [
+        1.01054349489871,
+        1.018445302741888
+      ],
+      "medianCandidateVsBaseline": 1.0106059006073007,
+      "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+      "unit": "microsecondsPerConnection"
+    }
+  },
+  "clientCpuPerConnection": {
+    "blockCount": 3,
+    "blockRatioSpread": {
+      "max": 1.014458944376686,
+      "min": 1.007191092559762,
+      "standardDeviation": 0.0036342739754539866
+    },
+    "blocks": [
+      {
+        "baseline": 411.54132486979165,
+        "candidate": 417.4917779947916,
+        "candidateVsBaseline": 1.014458944376686
+      },
+      {
+        "baseline": 410.42737239583334,
+        "candidate": 413.37879361979174,
+        "candidateVsBaseline": 1.007191092559762
+      },
+      {
+        "baseline": 407.16218359375,
+        "candidate": 411.6051927083334,
+        "candidateVsBaseline": 1.0109121359831796
+      }
+    ],
+    "bootstrap95Unresolved": [
+      1.007191092559762,
+      1.014458944376686
+    ],
+    "medianCandidateVsBaseline": 1.0109121359831796,
+    "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+    "unit": "microsecondsPerConnection"
+  },
+  "clientData": {
+    "bidi:c1": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.9568947874254724,
+          "min": 0.8981969330721166,
+          "standardDeviation": 0.029445518821752715
+        },
+        "blocks": [
+          {
+            "baseline": 0.606450256,
+            "candidate": 0.54471176,
+            "candidateVsBaseline": 0.8981969330721166
+          },
+          {
+            "baseline": 0.5874367039999999,
+            "candidate": 0.5621151200000001,
+            "candidateVsBaseline": 0.9568947874254724
+          },
+          {
+            "baseline": 0.597852944,
+            "candidate": 0.5520683200000001,
+            "candidateVsBaseline": 0.9234182511611084
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.8981969330721166,
+          0.9568947874254724
+        ],
+        "medianCandidateVsBaseline": 0.9234182511611084,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0171914215915905,
+          "min": 1.0129691104239438,
+          "standardDeviation": 0.002113049858687028
+        },
+        "blocks": [
+          {
+            "baseline": 762.0635704983345,
+            "candidate": 771.9468570941922,
+            "candidateVsBaseline": 1.0129691104239438
+          },
+          {
+            "baseline": 763.7748603076432,
+            "candidate": 776.90523593225,
+            "candidateVsBaseline": 1.0171914215915905
+          },
+          {
+            "baseline": 767.8191276001681,
+            "candidate": 779.5170077451239,
+            "candidateVsBaseline": 1.0152352028289757
+          }
+        ],
+        "bootstrap95Unresolved": [
+          1.0129691104239438,
+          1.0171914215915905
+        ],
+        "medianCandidateVsBaseline": 1.0152352028289757,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "bidi:c64": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.91349149651222,
+          "min": 0.8741780899957514,
+          "standardDeviation": 0.021466885650548273
+        },
+        "blocks": [
+          {
+            "baseline": 0.68022175425,
+            "candidate": 0.62137678825,
+            "candidateVsBaseline": 0.91349149651222
+          },
+          {
+            "baseline": 0.70159008075,
+            "candidate": 0.61331467675,
+            "candidateVsBaseline": 0.8741780899957514
+          },
+          {
+            "baseline": 0.68760100775,
+            "candidate": 0.6248772245,
+            "candidateVsBaseline": 0.9087788084324547
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.8741780899957514,
+          0.91349149651222
+        ],
+        "medianCandidateVsBaseline": 0.9087788084324547,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0474258103550944,
+          "min": 1.024161484118023,
+          "standardDeviation": 0.013286976888973154
+        },
+        "blocks": [
+          {
+            "baseline": 1137.3286435764517,
+            "candidate": 1164.8081915351968,
+            "candidateVsBaseline": 1.024161484118023
+          },
+          {
+            "baseline": 1119.4778397424825,
+            "candidate": 1172.5699834668403,
+            "candidateVsBaseline": 1.0474258103550944
+          },
+          {
+            "baseline": 1131.4676482439145,
+            "candidate": 1159.3822734388455,
+            "candidateVsBaseline": 1.0246711651351725
+          }
+        ],
+        "bootstrap95Unresolved": [
+          1.024161484118023,
+          1.0474258103550944
+        ],
+        "medianCandidateVsBaseline": 1.0246711651351725,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "direct-download:c1": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0150020981399595,
+          "min": 0.9826771785843093,
+          "standardDeviation": 0.01631318572314447
+        },
+        "blocks": [
+          {
+            "baseline": 0.543490912,
+            "candidate": 0.551644416,
+            "candidateVsBaseline": 1.0150020981399595
+          },
+          {
+            "baseline": 0.5523128,
+            "candidate": 0.5427451839999999,
+            "candidateVsBaseline": 0.9826771785843093
+          },
+          {
+            "baseline": 0.556060512,
+            "candidate": 0.557546144,
+            "candidateVsBaseline": 1.002671709225776
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9826771785843093,
+          1.0150020981399595
+        ],
+        "medianCandidateVsBaseline": 1.002671709225776,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0030434850539898,
+          "min": 1.0001439794116624,
+          "standardDeviation": 0.0015572154803297432
+        },
+        "blocks": [
+          {
+            "baseline": 516.5207426928594,
+            "candidate": 518.0927658533208,
+            "candidateVsBaseline": 1.0030434850539898
+          },
+          {
+            "baseline": 516.9536872638265,
+            "candidate": 518.2865586011476,
+            "candidateVsBaseline": 1.0025783186582453
+          },
+          {
+            "baseline": 517.5344388562564,
+            "candidate": 517.608953160278,
+            "candidateVsBaseline": 1.0001439794116624
+          }
+        ],
+        "bootstrap95Unresolved": [
+          1.0001439794116624,
+          1.0030434850539898
+        ],
+        "medianCandidateVsBaseline": 1.0025783186582453,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "direct-download:c64": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0042922243021248,
+          "min": 0.9990615681345116,
+          "standardDeviation": 0.0026249712268012716
+        },
+        "blocks": [
+          {
+            "baseline": 0.532248417,
+            "candidate": 0.5333481769999999,
+            "candidateVsBaseline": 1.00206625320973
+          },
+          {
+            "baseline": 0.539391662,
+            "candidate": 0.5417068519999999,
+            "candidateVsBaseline": 1.0042922243021248
+          },
+          {
+            "baseline": 0.5452921185,
+            "candidate": 0.544780399,
+            "candidateVsBaseline": 0.9990615681345116
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9990615681345116,
+          1.0042922243021248
+        ],
+        "medianCandidateVsBaseline": 1.00206625320973,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.9980744551597927,
+          "min": 0.9892438134968552,
+          "standardDeviation": 0.004744675243522638
+        },
+        "blocks": [
+          {
+            "baseline": 1362.6983714545595,
+            "candidate": 1348.0409336236626,
+            "candidateVsBaseline": 0.9892438134968552
+          },
+          {
+            "baseline": 1350.8371116422745,
+            "candidate": 1346.3355348302425,
+            "candidateVsBaseline": 0.996667565043013
+          },
+          {
+            "baseline": 1344.8811759091518,
+            "candidate": 1342.291546900188,
+            "candidateVsBaseline": 0.9980744551597927
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9892438134968552,
+          0.9980744551597927
+        ],
+        "medianCandidateVsBaseline": 0.996667565043013,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "direct-upload:c1": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.9826049449933522,
+          "min": 0.9391384761029048,
+          "standardDeviation": 0.022017849738631103
+        },
+        "blocks": [
+          {
+            "baseline": 0.932124672,
+            "candidate": 0.875394144,
+            "candidateVsBaseline": 0.9391384761029048
+          },
+          {
+            "baseline": 0.93194272,
+            "candidate": 0.90117344,
+            "candidateVsBaseline": 0.9669837219180166
+          },
+          {
+            "baseline": 0.926037888,
+            "candidate": 0.909929408,
+            "candidateVsBaseline": 0.9826049449933522
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9391384761029048,
+          0.9826049449933522
+        ],
+        "medianCandidateVsBaseline": 0.9669837219180166,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0018261761137939,
+          "min": 0.99452794160491,
+          "standardDeviation": 0.0037142344683803834
+        },
+        "blocks": [
+          {
+            "baseline": 517.6399795988951,
+            "candidate": 514.8074234028968,
+            "candidateVsBaseline": 0.99452794160491
+          },
+          {
+            "baseline": 514.0407379405542,
+            "candidate": 513.720187210294,
+            "candidateVsBaseline": 0.9993764098706563
+          },
+          {
+            "baseline": 515.2390084074659,
+            "candidate": 516.1799255775145,
+            "candidateVsBaseline": 1.0018261761137939
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.99452794160491,
+          1.0018261761137939
+        ],
+        "medianCandidateVsBaseline": 0.9993764098706563,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "direct-upload:c64": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.9006314537396996,
+          "min": 0.8856421830633971,
+          "standardDeviation": 0.007561505854818232
+        },
+        "blocks": [
+          {
+            "baseline": 0.7125237915,
+            "candidate": 0.6351429085,
+            "candidateVsBaseline": 0.8913988782927538
+          },
+          {
+            "baseline": 0.719311917,
+            "candidate": 0.6478349375000001,
+            "candidateVsBaseline": 0.9006314537396996
+          },
+          {
+            "baseline": 0.7363386890000001,
+            "candidate": 0.652132604,
+            "candidateVsBaseline": 0.8856421830633971
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.8856421830633971,
+          0.9006314537396996
+        ],
+        "medianCandidateVsBaseline": 0.8913988782927538,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.031777947114972,
+          "min": 1.018310336070555,
+          "standardDeviation": 0.007042556819587315
+        },
+        "blocks": [
+          {
+            "baseline": 1053.9103014056109,
+            "candidate": 1087.4014072276025,
+            "candidateVsBaseline": 1.031777947114972
+          },
+          {
+            "baseline": 1053.803077354963,
+            "candidate": 1076.43030551365,
+            "candidateVsBaseline": 1.0214719700909216
+          },
+          {
+            "baseline": 1048.3010686550078,
+            "candidate": 1067.495813525203,
+            "candidateVsBaseline": 1.018310336070555
+          }
+        ],
+        "bootstrap95Unresolved": [
+          1.018310336070555,
+          1.031777947114972
+        ],
+        "medianCandidateVsBaseline": 1.0214719700909216,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "framed-download:c1": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.010879593297282,
+          "min": 0.9873810049458092,
+          "standardDeviation": 0.013401401863619022
+        },
+        "blocks": [
+          {
+            "baseline": 0.623383424,
+            "candidate": 0.6298012799999999,
+            "candidateVsBaseline": 1.0102951983529158
+          },
+          {
+            "baseline": 0.6148994560000001,
+            "candidate": 0.621589312,
+            "candidateVsBaseline": 1.010879593297282
+          },
+          {
+            "baseline": 0.6305136,
+            "candidate": 0.622557152,
+            "candidateVsBaseline": 0.9873810049458092
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9873810049458092,
+          1.010879593297282
+        ],
+        "medianCandidateVsBaseline": 1.0102951983529158,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.000382552805491,
+          "min": 0.9921064534998358,
+          "standardDeviation": 0.0046999172845907464
+        },
+        "blocks": [
+          {
+            "baseline": 769.5054624097756,
+            "candidate": 769.7998388832613,
+            "candidateVsBaseline": 1.000382552805491
+          },
+          {
+            "baseline": 773.6750263138603,
+            "candidate": 767.5679865176361,
+            "candidateVsBaseline": 0.9921064534998358
+          },
+          {
+            "baseline": 768.9667642850486,
+            "candidate": 769.0468948958467,
+            "candidateVsBaseline": 1.000104205558055
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9921064534998358,
+          1.000382552805491
+        ],
+        "medianCandidateVsBaseline": 1.000104205558055,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "framed-download:c64": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0182732330062194,
+          "min": 1.0055611127310067,
+          "standardDeviation": 0.007277964298366804
+        },
+        "blocks": [
+          {
+            "baseline": 0.6837326485,
+            "candidate": 0.6962266545,
+            "candidateVsBaseline": 1.0182732330062194
+          },
+          {
+            "baseline": 0.691735303,
+            "candidate": 0.695582121,
+            "candidateVsBaseline": 1.0055611127310067
+          },
+          {
+            "baseline": 0.692762305,
+            "candidate": 0.6967640505,
+            "candidateVsBaseline": 1.0057765058391854
+          }
+        ],
+        "bootstrap95Unresolved": [
+          1.0055611127310067,
+          1.0182732330062194
+        ],
+        "medianCandidateVsBaseline": 1.0057765058391854,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.9942194455347435,
+          "min": 0.9896460164838691,
+          "standardDeviation": 0.002406050325990547
+        },
+        "blocks": [
+          {
+            "baseline": 1669.4126186486812,
+            "candidate": 1652.1275479135718,
+            "candidateVsBaseline": 0.9896460164838691
+          },
+          {
+            "baseline": 1655.0209110092328,
+            "candidate": 1645.4539724920055,
+            "candidateVsBaseline": 0.9942194455347435
+          },
+          {
+            "baseline": 1646.8177870688783,
+            "candidate": 1635.6670131149706,
+            "candidateVsBaseline": 0.9932288963348188
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9896460164838691,
+          0.9942194455347435
+        ],
+        "medianCandidateVsBaseline": 0.9932288963348188,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "framed-upload:c1": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.8054271915632102,
+          "min": 0.7945955615293082,
+          "standardDeviation": 0.005729167462083842
+        },
+        "blocks": [
+          {
+            "baseline": 0.847750016,
+            "candidate": 0.6736184000000001,
+            "candidateVsBaseline": 0.7945955615293082
+          },
+          {
+            "baseline": 0.840436448,
+            "candidate": 0.6769103679999999,
+            "candidateVsBaseline": 0.8054271915632102
+          },
+          {
+            "baseline": 0.848812352,
+            "candidate": 0.676312096,
+            "candidateVsBaseline": 0.7967745690863838
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.7945955615293082,
+          0.8054271915632102
+        ],
+        "medianCandidateVsBaseline": 0.7967745690863838,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.003706121391774,
+          "min": 0.9972835885958886,
+          "standardDeviation": 0.0034596079928148216
+        },
+        "blocks": [
+          {
+            "baseline": 773.1690834508611,
+            "candidate": 771.0688381352688,
+            "candidateVsBaseline": 0.9972835885958886
+          },
+          {
+            "baseline": 773.6460905193019,
+            "candidate": 776.5133168450377,
+            "candidateVsBaseline": 1.003706121391774
+          },
+          {
+            "baseline": 772.9213929450673,
+            "candidate": 771.5807706583053,
+            "candidateVsBaseline": 0.9982655127688291
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9972835885958886,
+          1.003706121391774
+        ],
+        "medianCandidateVsBaseline": 0.9982655127688291,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    },
+    "framed-upload:c64": {
+      "cpuSecondsPerGiB": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 0.9233639336053784,
+          "min": 0.8146443421703329,
+          "standardDeviation": 0.0543801243055204
+        },
+        "blocks": [
+          {
+            "baseline": 0.868581124,
+            "candidate": 0.7570373495,
+            "candidateVsBaseline": 0.8715793246964461
+          },
+          {
+            "baseline": 0.841213981,
+            "candidate": 0.7767466505,
+            "candidateVsBaseline": 0.9233639336053784
+          },
+          {
+            "baseline": 0.9322733955,
+            "candidate": 0.759471247,
+            "candidateVsBaseline": 0.8146443421703329
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.8146443421703329,
+          0.9233639336053784
+        ],
+        "medianCandidateVsBaseline": 0.8715793246964461,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "cpuSecondsPerGiB"
+      },
+      "mibPerSecond": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0639173745988046,
+          "min": 1.0108178752183012,
+          "standardDeviation": 0.027139124804170994
+        },
+        "blocks": [
+          {
+            "baseline": 1447.5610067320667,
+            "candidate": 1515.7567042827127,
+            "candidateVsBaseline": 1.0471107588788957
+          },
+          {
+            "baseline": 1465.1550234751753,
+            "candidate": 1481.004887694597,
+            "candidateVsBaseline": 1.0108178752183012
+          },
+          {
+            "baseline": 1400.6929646808035,
+            "candidate": 1490.2215816022167,
+            "candidateVsBaseline": 1.0639173745988046
+          }
+        ],
+        "bootstrap95Unresolved": [
+          1.0108178752183012,
+          1.0639173745988046
+        ],
+        "medianCandidateVsBaseline": 1.0471107588788957,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "mibPerSecond"
+      }
+    }
+  },
+  "coverPool": null,
+  "coverProfile": null,
+  "failures": 0,
+  "latency": {
+    "1": {
+      "p50Seconds": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0037142789756748,
+          "min": 0.9958186154067418,
+          "standardDeviation": 0.004187772317883594
+        },
+        "blocks": [
+          {
+            "baseline": 0.0006640145,
+            "candidate": 0.000661238,
+            "candidateVsBaseline": 0.9958186154067418
+          },
+          {
+            "baseline": 0.000664562,
+            "candidate": 0.000666015,
+            "candidateVsBaseline": 1.002186402472606
+          },
+          {
+            "baseline": 0.0006571935,
+            "candidate": 0.0006596345,
+            "candidateVsBaseline": 1.0037142789756748
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9958186154067418,
+          1.0037142789756748
+        ],
+        "medianCandidateVsBaseline": 1.002186402472606,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "seconds"
+      },
+      "p99Seconds": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0582320101778213,
+          "min": 0.9456536644503477,
+          "standardDeviation": 0.062464299509969776
+        },
+        "blocks": [
+          {
+            "baseline": 0.0008492505,
+            "candidate": 0.0008110674999999999,
+            "candidateVsBaseline": 0.9550391786640101
+          },
+          {
+            "baseline": 0.0007746255000000001,
+            "candidate": 0.0008197335,
+            "candidateVsBaseline": 1.0582320101778213
+          },
+          {
+            "baseline": 0.0008240389999999999,
+            "candidate": 0.0007792555,
+            "candidateVsBaseline": 0.9456536644503477
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9456536644503477,
+          1.0582320101778213
+        ],
+        "medianCandidateVsBaseline": 0.9550391786640101,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "seconds"
+      }
+    },
+    "64": {
+      "p50Seconds": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.0088594170724774,
+          "min": 0.9674355241906075,
+          "standardDeviation": 0.021925955705763812
+        },
+        "blocks": [
+          {
+            "baseline": 0.0147492005,
+            "candidate": 0.014758182,
+            "candidateVsBaseline": 1.0006089482612972
+          },
+          {
+            "baseline": 0.014090825500000001,
+            "candidate": 0.014215662,
+            "candidateVsBaseline": 1.0088594170724774
+          },
+          {
+            "baseline": 0.0145408605,
+            "candidate": 0.014067345,
+            "candidateVsBaseline": 0.9674355241906075
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.9674355241906075,
+          1.0088594170724774
+        ],
+        "medianCandidateVsBaseline": 1.0006089482612972,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "seconds"
+      },
+      "p99Seconds": {
+        "blockCount": 3,
+        "blockRatioSpread": {
+          "max": 1.231681502657925,
+          "min": 0.8126104313771965,
+          "standardDeviation": 0.21280470962015563
+        },
+        "blocks": [
+          {
+            "baseline": 0.029600961999999998,
+            "candidate": 0.0240540505,
+            "candidateVsBaseline": 0.8126104313771965
+          },
+          {
+            "baseline": 0.0241140175,
+            "candidate": 0.023096086000000002,
+            "candidateVsBaseline": 0.9577867313068011
+          },
+          {
+            "baseline": 0.022033917,
+            "candidate": 0.027138768,
+            "candidateVsBaseline": 1.231681502657925
+          }
+        ],
+        "bootstrap95Unresolved": [
+          0.8126104313771965,
+          1.231681502657925
+        ],
+        "medianCandidateVsBaseline": 0.9577867313068011,
+        "resolutionCaveat": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution",
+        "unit": "seconds"
+      }
+    }
+  },
+  "method": "alternating balanced ABBA blocks; block bootstrap",
+  "performanceVerdict": "NOT_EVALUATED",
+  "rawSampleCount": 72,
+  "runKind": "comparison",
+  "schemaVersion": 3,
+  "slotCount": 12,
+  "status": "COMPLETE"
+}

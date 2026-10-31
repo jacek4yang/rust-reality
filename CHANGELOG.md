@@ -2,7 +2,7 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [Unreleased]
+## [2.3.0] - 2026-10-31
 
 - Add per-LINE `fingerprint` selection: Chrome 156.0.8078.74 (default) and
   Firefox 159.0, grounded in native Windows browser captures. Unknown profile
@@ -17,6 +17,22 @@ All notable user-facing changes to this project are documented in this file.
   record I/O, including authenticated alerts and KeyUpdate handling. Share
   Vision framing between TCP and XUDP, preserve Direct-boundary read-ahead,
   and keep each direction's framing independent.
+
+- Share immutable LINE configuration across groups while retaining independent
+  selection health. Tie XUDP GlobalID leases to association lifetime, including
+  failed opens and cancellation.
+- Preserve actual delayed UDP reply sources independently of authorized uplink
+  destinations in Direct, NXR and Handoff. NXR peers must upgrade together:
+  downlink source metadata is mandatory and missing metadata fails closed.
+  Reject oversized NXR replies and unknown authenticated frame flags. Close
+  NXR UDP associations when their frame sequence space is exhausted instead of
+  wrapping and allowing old authenticated sequence values to repeat.
+- Reuse bounded upload storage across Vision framing and TLS sealing. Retain
+  complete measured performance comparisons, rejected experiments and binary
+  identities in the performance reference; ClientHello matching is not a
+  claim of complete browser traffic indistinguishability.
+- Pin required stock Xray ingress and isolated qualification to Xray-core
+  26.10.31, with one shared reference and verified archive/executable identities.
 
 ## [2.2.0] - 2026-10-22
 

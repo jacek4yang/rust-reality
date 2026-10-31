@@ -1,0 +1,286 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "reason": "Three blocks are not confidence bounds or release qualification; retain all cells for decision whether to run formal d72 matrix.",
+  "cells": [
+    {
+      "cell": "bidi:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9234182511611084,
+      "blockRatios": [
+        0.8981969330721166,
+        0.9568947874254724,
+        0.9234182511611084
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.8981969330721166,
+        0.9568947874254724
+      ]
+    },
+    {
+      "cell": "bidi:c1",
+      "metric": "mibPerSecond",
+      "median": 1.0152352028289757,
+      "blockRatios": [
+        1.0129691104239438,
+        1.0171914215915905,
+        1.0152352028289757
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0129691104239438,
+        1.0171914215915905
+      ]
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9087788084324547,
+      "blockRatios": [
+        0.91349149651222,
+        0.8741780899957514,
+        0.9087788084324547
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.8741780899957514,
+        0.91349149651222
+      ]
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0246711651351725,
+      "blockRatios": [
+        1.024161484118023,
+        1.0474258103550944,
+        1.0246711651351725
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.024161484118023,
+        1.0474258103550944
+      ]
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.002671709225776,
+      "blockRatios": [
+        1.0150020981399595,
+        0.9826771785843093,
+        1.002671709225776
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9826771785843093,
+        1.0150020981399595
+      ]
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "mibPerSecond",
+      "median": 1.0025783186582453,
+      "blockRatios": [
+        1.0030434850539898,
+        1.0025783186582453,
+        1.0001439794116624
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0001439794116624,
+        1.0030434850539898
+      ]
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.00206625320973,
+      "blockRatios": [
+        1.00206625320973,
+        1.0042922243021248,
+        0.9990615681345116
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9990615681345116,
+        1.0042922243021248
+      ]
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "mibPerSecond",
+      "median": 0.996667565043013,
+      "blockRatios": [
+        0.9892438134968552,
+        0.996667565043013,
+        0.9980744551597927
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9892438134968552,
+        0.9980744551597927
+      ]
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9669837219180166,
+      "blockRatios": [
+        0.9391384761029048,
+        0.9669837219180166,
+        0.9826049449933522
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9391384761029048,
+        0.9826049449933522
+      ]
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9993764098706563,
+      "blockRatios": [
+        0.99452794160491,
+        0.9993764098706563,
+        1.0018261761137939
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.99452794160491,
+        1.0018261761137939
+      ]
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8913988782927538,
+      "blockRatios": [
+        0.8913988782927538,
+        0.9006314537396996,
+        0.8856421830633971
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.8856421830633971,
+        0.9006314537396996
+      ]
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0214719700909216,
+      "blockRatios": [
+        1.031777947114972,
+        1.0214719700909216,
+        1.018310336070555
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.018310336070555,
+        1.031777947114972
+      ]
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0102951983529158,
+      "blockRatios": [
+        1.0102951983529158,
+        1.010879593297282,
+        0.9873810049458092
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9873810049458092,
+        1.010879593297282
+      ]
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "mibPerSecond",
+      "median": 1.000104205558055,
+      "blockRatios": [
+        1.000382552805491,
+        0.9921064534998358,
+        1.000104205558055
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9921064534998358,
+        1.000382552805491
+      ]
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0057765058391854,
+      "blockRatios": [
+        1.0182732330062194,
+        1.0055611127310067,
+        1.0057765058391854
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0055611127310067,
+        1.0182732330062194
+      ]
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "mibPerSecond",
+      "median": 0.9932288963348188,
+      "blockRatios": [
+        0.9896460164838691,
+        0.9942194455347435,
+        0.9932288963348188
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9896460164838691,
+        0.9942194455347435
+      ]
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7967745690863838,
+      "blockRatios": [
+        0.7945955615293082,
+        0.8054271915632102,
+        0.7967745690863838
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.7945955615293082,
+        0.8054271915632102
+      ]
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9982655127688291,
+      "blockRatios": [
+        0.9972835885958886,
+        1.003706121391774,
+        0.9982655127688291
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9972835885958886,
+        1.003706121391774
+      ]
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8715793246964461,
+      "blockRatios": [
+        0.8715793246964461,
+        0.9233639336053784,
+        0.8146443421703329
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.8146443421703329,
+        0.9233639336053784
+      ]
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0471107588788957,
+      "blockRatios": [
+        1.0471107588788957,
+        1.0108178752183012,
+        1.0639173745988046
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0108178752183012,
+        1.0639173745988046
+      ]
+    }
+  ]
+}

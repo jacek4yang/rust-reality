@@ -434,6 +434,18 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
+## v2.3.0 release comparison evidence
+
+v2.3.0 adds native-browser ClientHello profiles and retains identity-bound
+client CPU, rate, latency and residency comparisons in the
+[performance reference](performance.md). Failed experiments and unresolved
+intermediate comparisons remain visible alongside the completed comparisons.
+The current stock-Xray interoperability pin is shared by Native and QEMU in
+`tools/fixtures/stock-xray.json`; it does not relabel the historical Xray
+26.7.28 measurements below. Final release qualification binds Native, Frozen
+and all four native packages to their actual source and executable identities.
+Publication does not imply production deployment or WAN performance evidence.
+
 ## v2.2.0 release comparison evidence
 
 v2.2.0 retains the historical comparator tables below with their original

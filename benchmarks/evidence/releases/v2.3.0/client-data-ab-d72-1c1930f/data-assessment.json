@@ -1,0 +1,413 @@
+{
+  "scope": "Same-Chrome client data only; not final release acceptance. Ratios are candidate/baseline.",
+  "source": "Qualified collector summary bootstrap95; no recomputed statistics.",
+  "cpuUpperBound": 1.01,
+  "throughputLowerBound": 0.99,
+  "cells": [
+    {
+      "cell": "bidi:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.5644588681057413,
+      "bootstrap95": [
+        0.532652897455927,
+        0.5886315843021348
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "bidi:c1",
+      "metric": "mibPerSecond",
+      "median": 6.480444776320153,
+      "bootstrap95": [
+        5.843717119509563,
+        6.524178048602954
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "bidi:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8983295973913765,
+      "bootstrap95": [
+        0.8950413013305432,
+        0.9028067919694567
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "bidi:c32",
+      "metric": "mibPerSecond",
+      "median": 0.9995362031945516,
+      "bootstrap95": [
+        0.9932862018362761,
+        1.0063180656537303
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9061546441711199,
+      "bootstrap95": [
+        0.9021903447781736,
+        0.9513143949139017
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "mibPerSecond",
+      "median": 0.9865396644358371,
+      "bootstrap95": [
+        0.9535197324749038,
+        1.0008635813742313
+      ],
+      "verdict": "UNRESOLVED"
+    },
+    {
+      "cell": "bidi:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8666950621756147,
+      "bootstrap95": [
+        0.8632350630730026,
+        0.8810866931450817
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "bidi:c8",
+      "metric": "mibPerSecond",
+      "median": 1.4241107401885662,
+      "bootstrap95": [
+        1.4034742077390228,
+        1.4680572073839828
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.582055315383396,
+      "bootstrap95": [
+        0.569663298779488,
+        0.5887097849041822
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "mibPerSecond",
+      "median": 7.910451804318624,
+      "bootstrap95": [
+        7.8793847131892525,
+        7.919826933629819
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8536482213826844,
+      "bootstrap95": [
+        0.8502763088624065,
+        0.8589431954677385
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c32",
+      "metric": "mibPerSecond",
+      "median": 1.2418114781084304,
+      "bootstrap95": [
+        1.234318214838999,
+        1.2545178537764976
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8627925967219767,
+      "bootstrap95": [
+        0.8598488485822889,
+        0.8659358743633407
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.066530222244425,
+      "bootstrap95": [
+        1.0598053718145626,
+        1.0714699702593102
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8295092136272543,
+      "bootstrap95": [
+        0.8235245125390604,
+        0.8328199421180312
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-download:c8",
+      "metric": "mibPerSecond",
+      "median": 2.1713918461130044,
+      "bootstrap95": [
+        2.146450559957633,
+        2.252377004703129
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7049032140010394,
+      "bootstrap95": [
+        0.6863490737732634,
+        0.9843450930176519
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 9.849447940521824,
+      "bootstrap95": [
+        7.395321073968102,
+        9.886844234465828
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8693176581297622,
+      "bootstrap95": [
+        0.8649136348515086,
+        0.8836927049977212
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c32",
+      "metric": "mibPerSecond",
+      "median": 1.1356579987464366,
+      "bootstrap95": [
+        1.117734858678884,
+        1.1571876456183037
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.895066480904892,
+      "bootstrap95": [
+        0.8855769037317733,
+        0.9093486484205561
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.007678018273454,
+      "bootstrap95": [
+        0.9942800760612553,
+        1.0144030703936096
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8322501366248973,
+      "bootstrap95": [
+        0.8276650795876376,
+        0.834387769068702
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "direct-upload:c8",
+      "metric": "mibPerSecond",
+      "median": 1.9853299194135146,
+      "bootstrap95": [
+        1.967812619722973,
+        2.1055942271219066
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.599984188138138,
+      "bootstrap95": [
+        0.5577245928204241,
+        0.6195419544766002
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "mibPerSecond",
+      "median": 5.411096130829268,
+      "bootstrap95": [
+        5.195149834183313,
+        5.4252978822222415
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9760036237803371,
+      "bootstrap95": [
+        0.9718094758645329,
+        0.9813147212345295
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c32",
+      "metric": "mibPerSecond",
+      "median": 1.1974548796557056,
+      "bootstrap95": [
+        1.190725201279656,
+        1.205047669976558
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9755214688702708,
+      "bootstrap95": [
+        0.9722076351899921,
+        0.9789899019632538
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0815696530730623,
+      "bootstrap95": [
+        1.0764016890561263,
+        1.0837027373818626
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9208772546380066,
+      "bootstrap95": [
+        0.9140394644498936,
+        0.924971291300983
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-download:c8",
+      "metric": "mibPerSecond",
+      "median": 2.2121686517274393,
+      "bootstrap95": [
+        2.1903597422882797,
+        2.2350351330087745
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.6783397492174227,
+      "bootstrap95": [
+        0.6683386462905391,
+        0.6867061278878398
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 7.42071899102487,
+      "bootstrap95": [
+        7.399478631898387,
+        7.425187207519654
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9147190180547671,
+      "bootstrap95": [
+        0.9042410788918783,
+        0.9401843644048329
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c32",
+      "metric": "mibPerSecond",
+      "median": 1.2298419663760531,
+      "bootstrap95": [
+        1.2231066380457443,
+        1.2518392973728383
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9918237219206176,
+      "bootstrap95": [
+        0.9736432226386206,
+        1.0271227912447118
+      ],
+      "verdict": "UNRESOLVED"
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0398016085280843,
+      "bootstrap95": [
+        1.0186098876451208,
+        1.0504944241487342
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8479524066960287,
+      "bootstrap95": [
+        0.8408162119080205,
+        0.8556814831023094
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "cell": "framed-upload:c8",
+      "metric": "mibPerSecond",
+      "median": 2.2671279223327367,
+      "bootstrap95": [
+        2.2450254439038253,
+        2.297750675806558
+      ],
+      "verdict": "PASS"
+    }
+  ],
+  "counts": {
+    "PASS": 38,
+    "UNRESOLVED": 2
+  },
+  "verdict": "UNRESOLVED"
+}

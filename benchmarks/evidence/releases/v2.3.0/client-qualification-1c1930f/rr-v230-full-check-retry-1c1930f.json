@@ -1,0 +1,11 @@
+{
+  "sourceCommit": "1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "failedAttemptLog": "rr-v230-client-full-1c1930f.log",
+  "failedAttemptSha256": "e1f08083ea1b8796c71f1f1f01740f1f2763521c98a5cd66e7a533546651ebe0",
+  "failure": "ETXTBSY executing temporary identity-test script; 824 other tooling tests passed.",
+  "classification": "Transient local process/file-execution contention suspected; root cause unproven. No source change or assertion weakening.",
+  "focusedSingleRun": "PASS",
+  "sameAllFeaturesBinaryIsolatedRepetitions": 100,
+  "repetitionFailures": 0,
+  "reproductionEvidence": "rr-v230-identity-fixture-repro-1c1930f.json"
+}

@@ -1,0 +1,48 @@
+{
+  "schema": "rr-nxr-sequence-boundary/v1",
+  "beforeSourceCommit": "8eba7f20e5c734e637b4937913a64ed71c81e478",
+  "beforeScope": "Only the inbound exhaustion regression was added to this source; initializing its private counter at u32::MAX reproduces acceptance of a repeated zero sequence without billions of packets. The original failed assertion and command output are retained.",
+  "beforeResult": "FAIL: zero accepted after the final wire sequence",
+  "afterScope": "Containing commit implements a u64 counter with an exhausted state beyond the 32-bit wire range. Tests additionally decode a valid-MAC old frame and reject its repeated sequence. No wire-layout or authentication-key change.",
+  "focusedResults": {
+    "protocol": 9,
+    "xudp": 13,
+    "landing": 9,
+    "lifecycle": 19,
+    "failed": 0,
+    "ignored": 0
+  },
+  "fullGateBefore": "8eba7f2 only: 19/19 PASS; not qualification of the correction",
+  "files": [
+    {
+      "path": "before.log.gz",
+      "sha256": "9824250816d4c48a6e02adda6e01119c6eb9ea85229d239a4ad49957c3112dbf",
+      "uncompressedSha256": "071c2adc88155f1b6ab17c15435eee3295dcc5d6c03b84743c914cb7431cdfe2"
+    },
+    {
+      "path": "protocol-after.log.gz",
+      "sha256": "fb573d46e2ebcde873c930de8406de7231c9d4b68192fdaac53fadffb36a023a",
+      "uncompressedSha256": "08ff5c7cbd04f616942db6c4b59d0ee60600df4796fdf2823ec1907c25f5ef80"
+    },
+    {
+      "path": "xudp-after.log.gz",
+      "sha256": "d64e971fc56044834326663d4c25922e8fabee4c8e9585c5d5f415e8c8c3f640",
+      "uncompressedSha256": "da9e820a49742dd9a9ece637f1f22740aa3db1b89dc94f68f81dcc88f2f92194"
+    },
+    {
+      "path": "landing-after.log.gz",
+      "sha256": "1d39d6695db184742e739bc79c6cd538d3aaa4a4c2dc322fc72f3285a0f5abc6",
+      "uncompressedSha256": "d7a22153e826152abdba8576ef79264ecca57b2337d9416d1f222ff91682aa5f"
+    },
+    {
+      "path": "lifecycle-after.log.gz",
+      "sha256": "b30703043d331342499586e5efe1c7f3f0057b317b1a08e3fd357daf74153e8a",
+      "uncompressedSha256": "f3bdd87e2a1969b0ee9ccae82094ddda9a510522c0e5c55d448d942a3e351811"
+    },
+    {
+      "path": "full-before.log.gz",
+      "sha256": "6b35059826dd92ced3f8d6979e6a2d6ddfbf0c37d49d4d463eb810140c1d4d43",
+      "uncompressedSha256": "70195215ad4c25ac25d5aac384dfc758725638e97bbb1853fcd1632cb1fc8bf1"
+    }
+  ]
+}
