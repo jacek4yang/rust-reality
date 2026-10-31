@@ -86,8 +86,9 @@ Directional contract (AGENTS.md §6, ADR 0059):
   Exact-head Native qualification.
 - **UDP via XUDP — mandatory proven:** unmodified stock Xray SOCKS client
   (`udp: true`, flow `xtls-rprx-vision-udp443`) → rust-reality entry Direct UDP
-  echo. Exact-head Native downloads pinned Xray v26.9.9, verifies the zip
-  SHA-256, exports `XRAY_BIN`, and runs
+  echo. Native and QEMU qualification share the current pin in
+  `tools/fixtures/stock-xray.json` (Xray v26.10.31). They verify both archive and
+  executable SHA-256. Exact-head Native exports `XRAY_BIN` and runs
   `stock_xray_client_udp_echo_via_rust_reality_entry` with `--ignored --exact`
   (`tests/xudp_stock_xray_interop.rs`). The test panics if `XRAY_BIN` is missing;
   the workflow also fails on skip markers, zero matched cases, or any result
