@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-pub fn delayed_replies_preserve_sources(socks_port: u16, expected_egress: Ipv4Addr) {
+pub(super) fn delayed_replies_preserve_sources(socks_port: u16, expected_egress: Ipv4Addr) {
     let mut control = TcpStream::connect((Ipv4Addr::LOCALHOST, socks_port)).unwrap();
     control
         .set_read_timeout(Some(Duration::from_secs(10)))
@@ -39,6 +39,14 @@ pub fn delayed_replies_preserve_sources(socks_port: u16, expected_egress: Ipv4Ad
     // B is now the uplink target. A's delayed response must still name A.
     a.send_to(b"late-a", peer_a).unwrap();
     receive_reply(&local, relay, a.local_addr().unwrap(), b"late-a");
+    // Receiving A must not suppress the required B -> A uplink rewrite.
+    send(
+        &local,
+        relay,
+        a.local_addr().unwrap(),
+        b"return-after-late-a",
+    );
+    assert_eq!(receive(&a, b"return-after-late-a"), peer_a);
     b.send_to(b"reply-b", peer_b).unwrap();
     receive_reply(&local, relay, b.local_addr().unwrap(), b"reply-b");
     // Continue on the same TCP control and UDP association after both replies.

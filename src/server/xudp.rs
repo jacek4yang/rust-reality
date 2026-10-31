@@ -382,8 +382,6 @@ pub fn process_xudp_global_map() -> &'static XudpGlobalMap {
 pub struct XudpDirectAssociation {
     socket: UdpSocket,
     destination: SocketAddr,
-    /// Last VLESS destination used for Keep frames that omit an address.
-    last_destination: Destination,
     global_id: Option<XudpGlobalId>,
     last_activity: Instant,
     uplink_datagrams: u64,
@@ -417,7 +415,6 @@ impl XudpDirectAssociation {
         Ok(Self {
             socket,
             destination: addr,
-            last_destination: destination.clone(),
             global_id,
             last_activity: now,
             uplink_datagrams: 0,
@@ -463,7 +460,6 @@ impl XudpDirectAssociation {
         if packet.destination.is_some() {
             let dest = authorized_destination.ok_or(XudpSessionError::UnauthorizedRewrite)?;
             self.destination = destination_to_socket_addr(dest)?;
-            self.last_destination = dest.clone();
         } else if packet.status == XudpSessionStatus::New {
             return Err(XudpSessionError::MissingNewDestination);
         }
@@ -491,11 +487,9 @@ impl XudpDirectAssociation {
             .await
             .map_err(XudpSessionError::Io)?;
         // Preserve peer address in the Keep frame so multi-address sessions work.
-        let dest = socket_addr_to_destination(from);
+        let dest = Destination::from(from);
         output.clear();
         encode_xudp_packet(&dest, &buf[..n], false, None, true, output)?;
-        self.last_destination = dest;
-        self.destination = from;
         self.downlink_datagrams = self.downlink_datagrams.saturating_add(1);
         self.last_activity = now;
         Ok(output.len())
@@ -505,13 +499,6 @@ impl XudpDirectAssociation {
         if let Some(id) = self.global_id {
             globals.expire(id, now);
         }
-    }
-}
-
-fn socket_addr_to_destination(addr: SocketAddr) -> Destination {
-    match addr {
-        SocketAddr::V4(v4) => Destination::new(Address::Ipv4(*v4.ip()), v4.port()),
-        SocketAddr::V6(v6) => Destination::new(Address::Ipv6(*v6.ip()), v6.port()),
     }
 }
 
@@ -528,7 +515,7 @@ pub struct XudpNxrAssociation {
     session: NxrUdpSessionKey,
     seq_out: NxrUdpSeq,
     seq_in: NxrUdpSeq,
-    last_destination: Destination,
+    last_uplink_destination: Destination,
     inbound_buf: Vec<u8>,
     pending_downlink: VecDeque<crate::protocol::nxr_udp::NxrUdpFrame>,
     global_id: Option<XudpGlobalId>,
@@ -562,7 +549,7 @@ impl XudpNxrAssociation {
             session,
             seq_out: NxrUdpSeq::new(),
             seq_in: NxrUdpSeq::new(),
-            last_destination: destination.clone(),
+            last_uplink_destination: destination.clone(),
             inbound_buf: Vec::new(),
             pending_downlink: VecDeque::new(),
             global_id,
@@ -601,9 +588,9 @@ impl XudpNxrAssociation {
         let mut dest_for_frame = None;
         if packet.destination.is_some() {
             let dest = authorized_destination.ok_or(XudpSessionError::UnauthorizedRewrite)?;
-            if dest != &self.last_destination {
+            if dest != &self.last_uplink_destination {
                 dest_for_frame = Some(dest.clone());
-                self.last_destination = dest.clone();
+                self.last_uplink_destination = dest.clone();
             } else if packet.status == XudpSessionStatus::New {
                 // Open already carried this destination; omit redundant field.
                 dest_for_frame = None;
@@ -694,13 +681,14 @@ impl XudpNxrAssociation {
         if frame.frame_type != FRAME_TYPE_DATAGRAM {
             return Err(XudpSessionError::NxrCarrier(NxrUdpError::FrameType));
         }
+        // LANDING must identify the actual UDP source. Inferring it from an
+        // uplink target mislabels delayed replies after a destination rewrite.
         let dest = frame
             .destination
-            .clone()
-            .unwrap_or_else(|| self.last_destination.clone());
-        self.last_destination = dest.clone();
+            .as_ref()
+            .ok_or(XudpSessionError::NxrCarrier(NxrUdpError::Address))?;
         output.clear();
-        encode_xudp_packet(&dest, &frame.payload, false, None, true, output)?;
+        encode_xudp_packet(dest, &frame.payload, false, None, true, output)?;
         self.downlink_datagrams = self.downlink_datagrams.saturating_add(1);
         self.last_activity = now;
         Ok(output.len())
@@ -871,7 +859,7 @@ mod tests {
             .await
             .unwrap();
         let echo_addr = echo.local_addr().unwrap();
-        let dest = socket_addr_to_destination(echo_addr);
+        let dest = Destination::from(echo_addr);
         let globals = XudpGlobalMap::new();
         let now = Instant::now();
         let mut assoc =
@@ -913,7 +901,7 @@ mod tests {
         let echo = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
-        let dest = socket_addr_to_destination(echo.local_addr().unwrap());
+        let dest = Destination::from(echo.local_addr().unwrap());
         let globals = XudpGlobalMap::new();
         let mut assoc =
             XudpDirectAssociation::open(&dest, None, [2; 16], &globals, Instant::now(), None)
@@ -975,7 +963,7 @@ mod tests {
         let echo = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .unwrap();
-        let dest = socket_addr_to_destination(echo.local_addr().unwrap());
+        let dest = Destination::from(echo.local_addr().unwrap());
         let globals = XudpGlobalMap::new();
         let now = Instant::now();
         let gid = [7_u8; 8];

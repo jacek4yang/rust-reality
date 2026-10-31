@@ -45,6 +45,10 @@ UDP/443 仅在 LINE 设置 `allowUdp443: true` 时允许。服务端 XUDP 出站
 Block 与不支持的出站失败关闭，且不得静默回退到 Direct。详见英文
 [XUDP and Vision UDP/443](../../en/development/xudp.md)。
 
+UDP 回复保留自身来源，与当前上行目标相互独立；延迟回复不能授权或替换后续 Keep
+帧的目标。NXR LANDING 在每个认证下行帧中携带实际 UDP 来源，LINE 拒绝缺失来源的
+下行数据报。超限回复失败关闭，不会截短成另一条数据报。
+
 ## 浏览器 ClientHello
 
 每个 LINE 可设置 `"fingerprint": "chrome"`（默认）或 `"fingerprint": "firefox"`。

@@ -1,4 +1,4 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// VLESS protocol version implemented by current Xray-core releases.
 pub const VERSION: u8 = 0;
@@ -90,6 +90,15 @@ impl Destination {
     /// Returns the destination port.
     pub fn port(&self) -> u16 {
         self.port
+    }
+}
+
+impl From<SocketAddr> for Destination {
+    fn from(address: SocketAddr) -> Self {
+        match address {
+            SocketAddr::V4(address) => Self::new(Address::Ipv4(*address.ip()), address.port()),
+            SocketAddr::V6(address) => Self::new(Address::Ipv6(*address.ip()), address.port()),
+        }
     }
 }
 
