@@ -1,0 +1,100 @@
+{
+  "slot": "block-01-slot-02-candidate",
+  "binaryIdentity": {
+    "binary": {
+      "buildId": "441c79d937a14f88b0a1aec32409859bc5d04639",
+      "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+      "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f"
+    },
+    "block": 1,
+    "implementation": "candidate",
+    "ports": {
+      "server": 61004,
+      "socks": 61005
+    },
+    "position": 2,
+    "process": {
+      "clientPid": 2501306
+    }
+  },
+  "roles": {
+    "client": {
+      "pid": 2501306,
+      "startTicks": "193230330",
+      "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+      "tids": [
+        2501306,
+        2501311,
+        2501312,
+        2501313,
+        2501314
+      ]
+    },
+    "server": {
+      "pid": 2501305,
+      "startTicks": "193230330",
+      "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+      "tids": [
+        2501305,
+        2501307,
+        2501308,
+        2501309,
+        2501310
+      ]
+    }
+  },
+  "attachedAtUnix": 1793464527.582463,
+  "commands": [
+    [
+      "sudo",
+      "-n",
+      "env",
+      "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+      "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+      "stat",
+      "--no-inherit",
+      "--per-thread",
+      "-I",
+      "100",
+      "-x",
+      ";",
+      "-e",
+      "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+      "-t",
+      "2501306,2501311,2501312,2501313,2501314,2501305,2501307,2501308,2501309,2501310",
+      "-o",
+      "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-long/block-01-slot-02-candidate.stat.csv",
+      "--",
+      "sleep",
+      "60"
+    ],
+    [
+      "sudo",
+      "-n",
+      "env",
+      "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+      "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+      "record",
+      "--no-inherit",
+      "-F",
+      "199",
+      "-e",
+      "cpu_core/cycles/",
+      "--call-graph",
+      "fp",
+      "-t",
+      "2501306,2501311,2501312,2501313,2501314,2501305,2501307,2501308,2501309,2501310",
+      "-o",
+      "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-long/block-01-slot-02-candidate.perf.data",
+      "--",
+      "sleep",
+      "60"
+    ]
+  ],
+  "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 1024-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance. Profile startup and stop lag mean counts cover an observed phase subset, not exact per-request costs; use for hotspot attribution only. Larger payload bounds profiler startup loss relative to the measured phase.",
+  "detachedAtUnix": 1793464531.4552898,
+  "profilerExitCodes": [
+    0,
+    -2
+  ]
+}

@@ -1099,6 +1099,17 @@ where
         if read == 0 {
             return Ok(0);
         }
+        self.write_filled_batch(read, timeout).await?;
+        Ok(read)
+    }
+
+    /// Seals the filled prefix of the existing record-slot layout, preserving
+    /// record boundaries and flushing before any intervening KeyUpdate.
+    async fn write_filled_batch(
+        &mut self,
+        read: usize,
+        timeout: Duration,
+    ) -> Result<(), TlsApplicationIoError> {
         let mut write = SealedWrite::new(&mut self.records)?;
         let mut sealed_len = 0_usize;
         let mut wire_start = 0_usize;
@@ -1168,7 +1179,54 @@ where
             .await
             .map_err(idle_failure)?;
         write.complete();
-        Ok(read)
+        Ok(())
+    }
+
+    /// Assembles a full first record and a bounded second record in retained
+    /// AEAD storage, then writes their sealed bytes together. No read or wait
+    /// for additional application data occurs here. Initial single-record
+    /// writers grow only when the caller already has a second record.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty or oversized second record, allocation failure, record
+    /// protection failure, and socket/deadline failure. Cancellation after
+    /// sealing invalidates the write direction, including between KeyUpdates.
+    pub(crate) async fn write_assembled_pair<Assemble>(
+        &mut self,
+        second_len: usize,
+        assemble: Assemble,
+        timeout: Duration,
+    ) -> Result<(), TlsApplicationIoError>
+    where
+        Assemble: FnOnce(&mut [u8], &mut [u8]),
+    {
+        if second_len == 0 || second_len > MAX_PLAINTEXT_LEN {
+            return Err(TlsApplicationIoError::Record(
+                Tls13RecordError::InvalidLength,
+            ));
+        }
+        self.records
+            .ensure_write_ready()
+            .map_err(TlsApplicationIoError::Record)?;
+        let slot = super::record::RECORD_SLOT_WIRE_CAPACITY;
+        let capacity = 2 * slot;
+        if self.write_record.len() < capacity {
+            self.write_record
+                .try_reserve_exact(capacity - self.write_record.len())
+                .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
+            self.write_record.resize(capacity, 0);
+        }
+        let (first, second) = self.write_record.split_at_mut(slot);
+        assemble(
+            &mut first[TLS_RECORD_HEADER_LEN..TLS_RECORD_HEADER_LEN + MAX_PLAINTEXT_LEN],
+            &mut second[TLS_RECORD_HEADER_LEN..TLS_RECORD_HEADER_LEN + second_len],
+        );
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
+        self.write_filled_batch(MAX_PLAINTEXT_LEN + second_len, timeout)
+            .await
     }
 
     /// Encrypts one record whose plaintext is assembled in final AEAD storage.
@@ -2751,14 +2809,16 @@ mod tests {
     enum WritePath {
         Copied,
         Assembled,
+        AssembledPair,
         ReadFrom,
         Batched,
         Shutdown,
     }
 
-    const WRITE_PATHS: [WritePath; 5] = [
+    const WRITE_PATHS: [WritePath; 6] = [
         WritePath::Copied,
         WritePath::Assembled,
+        WritePath::AssembledPair,
         WritePath::ReadFrom,
         WritePath::Batched,
         WritePath::Shutdown,
@@ -2776,6 +2836,18 @@ mod tests {
             WritePath::Assembled => {
                 writer
                     .write_assembled(5, |region| region.copy_from_slice(b"reply"), TIMEOUT)
+                    .await
+            }
+            WritePath::AssembledPair => {
+                writer
+                    .write_assembled_pair(
+                        MAX_PLAINTEXT_LEN,
+                        |first, second| {
+                            first.fill(0x6a);
+                            second.fill(0x6a);
+                        },
+                        TIMEOUT,
+                    )
                     .await
             }
             WritePath::ReadFrom => {
@@ -2939,7 +3011,7 @@ mod tests {
                 }
                 assert!(updates > 0, "{path:?} must send an update");
                 match path {
-                    WritePath::Batched => {
+                    WritePath::Batched | WritePath::AssembledPair => {
                         assert_eq!(application, vec![0x6a; 2 * MAX_PLAINTEXT_LEN])
                     }
                     WritePath::Shutdown => assert!(application.is_empty()),
@@ -3465,6 +3537,84 @@ mod tests {
             .expect("remaining batch data must use the next key");
         assert_eq!(opened.content_type(), ContentType::ApplicationData);
         assert_eq!(opened.plaintext(), &plaintext[MAX_PLAINTEXT_LEN..]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn assembled_pair_preserves_records_with_one_write_and_bounded_storage() {
+        let (established, mut client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let (_reader, mut writer) = TlsApplicationIo::new(sink.clone(), established).into_split();
+        assert_eq!(writer.write_record.capacity(), 0);
+        for second_len in [1, MAX_PLAINTEXT_LEN, 19] {
+            let before = sink.writes();
+            writer
+                .write_assembled_pair(
+                    second_len,
+                    |first, second| {
+                        first.fill(0x51);
+                        second.fill(0xa2);
+                    },
+                    TIMEOUT,
+                )
+                .await
+                .unwrap();
+            assert_eq!(sink.writes(), before + 1);
+            assert_eq!(writer.write_record.len(), 2 * RECORD_SLOT_WIRE_CAPACITY);
+        }
+        let wire = sink.wire().clone();
+        let records = open_wire_records(&mut client_read, &wire);
+        assert_eq!(records.len(), 6);
+        for (pair, second_len) in records
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip([1, MAX_PLAINTEXT_LEN, 19])
+        {
+            assert_eq!(pair[0], vec![0x51; MAX_PLAINTEXT_LEN]);
+            assert_eq!(pair[1], vec![0xa2; second_len]);
+        }
+        for invalid in [0, MAX_PLAINTEXT_LEN + 1, usize::MAX] {
+            assert!(
+                writer
+                    .write_assembled_pair(
+                        invalid,
+                        |_, _| panic!("invalid length assembled"),
+                        TIMEOUT
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(*sink.wire(), wire);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_pair_second_record_rejects_every_retry() {
+        for prefix in [RECORD_SLOT_WIRE_CAPACITY, RECORD_SLOT_WIRE_CAPACITY + 7] {
+            let (established, _client_write, _client_read) = key_update_states();
+            let sink = PartialWriteSink::new(prefix, InterruptedWrite::Pending);
+            let (_reader, mut writer) = resume_application_halves(
+                tokio::io::empty(),
+                Vec::new(),
+                sink.clone(),
+                established,
+                false,
+            );
+            let mut write = Box::pin(write_path(&mut writer, WritePath::AssembledPair));
+            poll_fn(|context| {
+                assert!(write.as_mut().poll(context).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            drop(write);
+            assert_eq!(sink.wire().len(), prefix);
+            sink.complete();
+            for retry in WRITE_PATHS {
+                assert!(write_path(&mut writer, retry).await.is_err());
+            }
+            assert_eq!(sink.wire().len(), prefix);
+            assert!(writer.into_handoff_parts().1.into_exported_state().is_err());
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

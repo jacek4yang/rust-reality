@@ -11,8 +11,8 @@ use crate::protocol::{
         },
     },
     vless::{
-        ResponseDecodeError, UserId, VisionCommand, VisionDecoder, VisionEncoder, VisionMode,
-        decode_response,
+        ResponseDecodeError, UserId, VisionCommand, VisionDecoder, VisionEncoder, VisionFramePlan,
+        VisionMode, decode_response,
     },
 };
 
@@ -239,53 +239,44 @@ impl VisionIo {
         }
         let mut offset = 0;
         while offset < payload.len() {
-            // The preamble already consumed the UUID. Pack two complete
-            // bounded frames in the existing AEAD storage, without an
-            // intermediate plaintext allocation or a delayed flush.
-            let want = (payload.len() - offset).min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
-            let first = self
-                .encoder
-                .plan(want, VisionCommand::Continue, false)
-                .map_err(|_| VisionTunnelError::Vision)?;
-            let next =
-                (payload.len() - offset - want).min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
-            let second = if next == 0 {
-                None
+            let first = UploadRecord::plan(&mut self.encoder, payload.len() - offset)?;
+            let next = offset + first.payload_len();
+            let second = if first.wire_len() == MAX_PLAINTEXT_LEN && next < payload.len() {
+                Some(UploadRecord::plan(&mut self.encoder, payload.len() - next)?)
             } else {
-                self.encoder
-                    .plan_within(
-                        next,
-                        VisionCommand::Continue,
-                        false,
-                        MAX_PLAINTEXT_LEN - first.wire_len(),
-                    )
-                    .map_err(|_| VisionTunnelError::Vision)?
+                None
             };
-            let wire_len = first.wire_len() + second.as_ref().map_or(0, |plan| plan.wire_len());
-            self.writer
-                .write_assembled(
-                    wire_len,
-                    |record| {
-                        let (frame, tail) = record.split_at_mut(first.wire_len());
-                        self.encoder
-                            .assemble(&first, &payload[offset..offset + want], frame);
-                        if let Some(plan) = &second {
-                            self.encoder.assemble(
-                                plan,
-                                &payload[offset + want..offset + want + next],
-                                tail,
+            if let Some(second) = &second {
+                self.writer
+                    .write_assembled_pair(
+                        second.wire_len(),
+                        |one, two| {
+                            first.assemble(&self.encoder, &payload[offset..next], one);
+                            second.assemble(
+                                &self.encoder,
+                                &payload[next..next + second.payload_len()],
+                                two,
                             );
-                        }
-                    },
-                    crate::io_activity::WRITE_STALL_TIMEOUT,
-                )
-                .await
-                .map_err(VisionTunnelError::Tls)?;
-            self.encoder.commit(&first);
-            offset += want;
-            if let Some(plan) = second {
-                self.encoder.commit(&plan);
-                offset += next;
+                        },
+                        crate::io_activity::WRITE_STALL_TIMEOUT,
+                    )
+                    .await
+                    .map_err(VisionTunnelError::Tls)?;
+            } else {
+                self.writer
+                    .write_assembled(
+                        first.wire_len(),
+                        |record| first.assemble(&self.encoder, &payload[offset..next], record),
+                        crate::io_activity::WRITE_STALL_TIMEOUT,
+                    )
+                    .await
+                    .map_err(VisionTunnelError::Tls)?;
+            }
+            first.commit(&mut self.encoder);
+            offset = next;
+            if let Some(second) = second {
+                second.commit(&mut self.encoder);
+                offset += second.payload_len();
             }
         }
         Ok(())
@@ -296,6 +287,67 @@ impl VisionIo {
             .shutdown(crate::io_activity::WRITE_STALL_TIMEOUT)
             .await
             .map_err(VisionTunnelError::Tls)
+    }
+}
+
+// A complete bounded pair of Vision frames occupying at most one TLS record.
+// The preamble has already consumed the UUID before upload planning begins.
+struct UploadRecord {
+    first: VisionFramePlan,
+    second: Option<VisionFramePlan>,
+    first_len: usize,
+    second_len: usize,
+}
+
+impl UploadRecord {
+    fn plan(encoder: &mut VisionEncoder, remaining: usize) -> Result<Self, VisionTunnelError> {
+        let first_len = remaining.min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
+        let first = encoder
+            .plan(first_len, VisionCommand::Continue, false)
+            .map_err(|_| VisionTunnelError::Vision)?;
+        let second_len = (remaining - first_len).min(crate::protocol::vless::VISION_FRAME_SIZE - 5);
+        let second = if second_len == 0 {
+            None
+        } else {
+            encoder
+                .plan_within(
+                    second_len,
+                    VisionCommand::Continue,
+                    false,
+                    MAX_PLAINTEXT_LEN - first.wire_len(),
+                )
+                .map_err(|_| VisionTunnelError::Vision)?
+        };
+        let second_len = if second.is_some() { second_len } else { 0 };
+        Ok(Self {
+            first,
+            second,
+            first_len,
+            second_len,
+        })
+    }
+
+    fn wire_len(&self) -> usize {
+        self.first.wire_len() + self.second.as_ref().map_or(0, VisionFramePlan::wire_len)
+    }
+
+    fn payload_len(&self) -> usize {
+        self.first_len + self.second_len
+    }
+
+    fn assemble(&self, encoder: &VisionEncoder, payload: &[u8], record: &mut [u8]) {
+        let (first, second) = record.split_at_mut(self.first.wire_len());
+        encoder.assemble(&self.first, &payload[..self.first_len], first);
+        if let Some(plan) = &self.second {
+            encoder.assemble(plan, &payload[self.first_len..], second);
+        }
+    }
+
+    fn commit(&self, encoder: &mut VisionEncoder) {
+        encoder.commit(&self.first);
+        if let Some(second) = &self.second {
+            encoder.commit(second);
+        }
     }
 }
 

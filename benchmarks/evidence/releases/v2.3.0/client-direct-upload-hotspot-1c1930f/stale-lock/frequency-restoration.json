@@ -1,0 +1,106 @@
+{
+  "before": {
+    "policy0": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy1": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy2": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy3": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy4": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy5": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy6": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy7": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    }
+  },
+  "after": {
+    "policy0": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy1": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy2": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy3": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy4": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy5": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy6": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    },
+    "policy7": {
+      "scaling_governor": "powersave",
+      "scaling_min_freq": "400000",
+      "scaling_max_freq": "4400000",
+      "energy_performance_preference": "balance_performance"
+    }
+  },
+  "restoredExactly": true,
+  "errors": [],
+  "failure": null,
+  "collectorExit": 1
+}

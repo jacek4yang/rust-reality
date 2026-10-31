@@ -1,0 +1,127 @@
+{
+  "scope": "One candidate c1 Direct-upload phase, partial instrumentation window; hotspot attribution only. Application symbols mapped using identical text and matching ELF offsets from independently retained symbol twin. Not cost acceptance.",
+  "slot": "block-01-slot-02-candidate",
+  "pid": 2501306,
+  "mmapStart": "0x58bac9829000",
+  "mmapFileOffset": "0x1dd000",
+  "elfVirtualOffsetDelta": "0x1000",
+  "samples": 564,
+  "weightedPeriod": 6262386952,
+  "leaves": [
+    {
+      "symbol": "[kernel.kallsyms]",
+      "percent": 71.95167477731421,
+      "period": 4505892293
+    },
+    {
+      "symbol": "ring_core_0_17_14__aes_gcm_enc_update_vaes_avx2",
+      "percent": 15.05338349778805,
+      "period": 942701124
+    },
+    {
+      "symbol": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "percent": 5.3898991963791385,
+      "period": 337536344
+    },
+    {
+      "symbol": "ring::aead::aes_gcm::seal",
+      "percent": 1.1696547588233415,
+      "period": 73248307
+    },
+    {
+      "symbol": "<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}",
+      "percent": 0.9666827116243008,
+      "period": 60537412
+    },
+    {
+      "symbol": "<tokio::net::tcp::stream::TcpStream>::poll_write_priv",
+      "percent": 0.731782040159054,
+      "period": 45827023
+    },
+    {
+      "symbol": "<rust_reality::client::session::VisionTunnel>::relay::<tokio::net::tcp::stream::TcpStream>::{closure#0}",
+      "percent": 0.6126773591936291,
+      "period": 38368227
+    },
+    {
+      "symbol": "<tokio::runtime::io::registration::Registration>::poll_ready",
+      "percent": 0.5411494252870627,
+      "period": 33888871
+    },
+    {
+      "symbol": "<tokio::time::sleep::Sleep>::reset",
+      "percent": 0.5049343523862145,
+      "period": 31620943
+    },
+    {
+      "symbol": "<rust_reality::protocol::reality::tls13::idle::IdleDeadline>::write_all::<tokio::net::tcp::split_owned::OwnedWriteHalf>::{closure#0}",
+      "percent": 0.39760896589195627,
+      "period": 24899812
+    },
+    {
+      "symbol": "ring_core_0_17_14__gcm_ghash_vpclmulqdq_avx2_1",
+      "percent": 0.37071548241818064,
+      "period": 23215638
+    },
+    {
+      "symbol": "tokio::runtime::scheduler::multi_thread::worker::run",
+      "percent": 0.36571464164611717,
+      "period": 22902466
+    },
+    {
+      "symbol": "<tokio::net::tcp::stream::TcpStream>::poll_read_priv",
+      "percent": 0.35418458121493607,
+      "period": 22180409
+    },
+    {
+      "symbol": "tokio::runtime::task::raw::poll::<rust_reality::client::serve::accept_loop::{closure#0}::{closure#0}, alloc::sync::Arc<tokio::runtime::scheduler::multi_thread::handle::Handle>>",
+      "percent": 0.19165304047791137,
+      "period": 12002055
+    },
+    {
+      "symbol": "<tokio::runtime::driver::Driver>::park",
+      "percent": 0.1887239337106999,
+      "period": 11818623
+    },
+    {
+      "symbol": "<std::sys::pal::unix::time::Timespec>::sub_timespec",
+      "percent": 0.1862656697742813,
+      "period": 11664677
+    },
+    {
+      "symbol": "tokio::runtime::task::waker::clone_waker",
+      "percent": 0.18365160262616745,
+      "period": 11500974
+    },
+    {
+      "symbol": "<tokio::runtime::scheduler::multi_thread::handle::Handle>::schedule_task",
+      "percent": 0.18359156162217297,
+      "period": 11497214
+    },
+    {
+      "symbol": "<tokio::runtime::time::handle::Handle>::process_at_time",
+      "percent": 0.18344867680734783,
+      "period": 11488266
+    },
+    {
+      "symbol": "<tokio::time::sleep::Sleep as core::future::future::Future>::poll",
+      "percent": 0.18315188901473042,
+      "period": 11469680
+    },
+    {
+      "symbol": "[vdso]",
+      "percent": 0.18067907790952487,
+      "period": 11314823
+    },
+    {
+      "symbol": "ring::aead::algorithm::aes_gcm_seal",
+      "percent": 0.05890579787347513,
+      "period": 3688909
+    },
+    {
+      "symbol": "<tokio::runtime::time::Driver>::park_internal",
+      "percent": 0.04986696005750109,
+      "period": 3122862
+    }
+  ]
+}
