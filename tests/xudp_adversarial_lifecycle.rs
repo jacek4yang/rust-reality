@@ -60,6 +60,71 @@ fn packet_keep_rewrite(
     decode_xudp_packet(&wire).expect("decode Keep").0
 }
 
+#[tokio::test]
+async fn downlink_peer_cannot_replace_the_authorized_uplink_destination() {
+    let allowed = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let responder = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let allowed_addr = allowed.local_addr().unwrap();
+    let dest = dest_ip([127, 0, 0, 1], allowed_addr.port());
+    let globals = XudpGlobalMap::new();
+    let mut association =
+        XudpDirectAssociation::open(&dest, None, [0x42; 16], &globals, Instant::now(), None)
+            .await
+            .unwrap();
+    association
+        .handle_uplink_packet(
+            &packet_new(&dest, b"open", None),
+            Some(&dest),
+            Instant::now(),
+        )
+        .await
+        .unwrap();
+    let mut bytes = [0; 64];
+    let (_, peer) = tokio::time::timeout(Duration::from_secs(2), allowed.recv_from(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    // A reply can have a different source; it carries no uplink authorization.
+    responder.send_to(b"reply", peer).await.unwrap();
+    let mut reply = Vec::new();
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        association.recv_downlink_frame(&mut bytes, &mut reply, Instant::now()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let decoded = decode_xudp_packet(&reply).unwrap().0;
+    assert_eq!(
+        decoded.destination,
+        Some(dest_ip(
+            [127, 0, 0, 1],
+            responder.local_addr().unwrap().port()
+        ))
+    );
+    assert_eq!(
+        association.destination(),
+        allowed_addr,
+        "downlink must not change uplink authorization"
+    );
+
+    let mut keep = Vec::new();
+    encode_xudp_packet(&dest, b"keep", false, None, false, &mut keep).unwrap();
+    association
+        .handle_uplink_packet(&decode_xudp_packet(&keep).unwrap().0, None, Instant::now())
+        .await
+        .unwrap();
+    let (len, _) = tokio::time::timeout(Duration::from_secs(2), allowed.recv_from(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&bytes[..len], b"keep");
+    assert!(
+        matches!(responder.try_recv_from(&mut bytes), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    );
+    association.close(&globals, Instant::now());
+}
+
 /// Simulate Vision authorize + Direct landward gate (PR1 / ADR 0060).
 fn authorize_or_reject(
     class: XudpRouteClass,
