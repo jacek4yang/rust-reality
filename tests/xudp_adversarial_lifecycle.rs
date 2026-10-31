@@ -363,6 +363,102 @@ async fn association_cancel_then_recover_same_global_id() {
     eprintln!("association_cancel_then_recover_same_global_id PASS");
 }
 
+#[tokio::test]
+async fn dropped_association_releases_global_id_without_explicit_close() {
+    let globals = XudpGlobalMap::new();
+    let dest = dest_ip([127, 0, 0, 1], 9);
+    let association = XudpDirectAssociation::open(
+        &dest,
+        Some([0x91; 8]),
+        [0x91; 16],
+        &globals,
+        Instant::now(),
+        None,
+    )
+    .await
+    .unwrap();
+    drop(association);
+    globals.purge(Instant::now() + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
+    assert!(
+        globals.is_empty(),
+        "cancel/error drop must release the GlobalID owner"
+    );
+}
+
+#[tokio::test]
+async fn failed_nxr_open_releases_global_id() {
+    use rust_reality::{
+        runtime::policy::DirectBarrierPolicy,
+        server::{outbound::OutboundRegistry, xudp::XudpNxrAssociation},
+        transport::FdBudget,
+    };
+
+    let outbounds = OutboundRegistry::new(
+        &Default::default(),
+        &DirectBarrierPolicy::default(),
+        Duration::from_secs(1),
+        FdBudget::new(64),
+    );
+    let globals = XudpGlobalMap::new();
+    let dest = dest_ip([127, 0, 0, 1], 9);
+    assert!(
+        XudpNxrAssociation::open(
+            &outbounds,
+            "missing",
+            &dest,
+            [0x92; 16],
+            Some([0x92; 8]),
+            &globals,
+            Instant::now(),
+        )
+        .await
+        .is_err()
+    );
+    globals.purge(Instant::now() + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
+    assert!(
+        globals.is_empty(),
+        "failed open must release its GlobalID reservation"
+    );
+}
+
+#[tokio::test]
+async fn closing_one_same_owner_association_keeps_the_other_global_id_live() {
+    let globals = XudpGlobalMap::new();
+    let dest = dest_ip([127, 0, 0, 1], 9);
+    let now = Instant::now();
+    let first =
+        XudpDirectAssociation::open(&dest, Some([0x93; 8]), [0x93; 16], &globals, now, None)
+            .await
+            .unwrap();
+    let second =
+        XudpDirectAssociation::open(&dest, Some([0x93; 8]), [0x93; 16], &globals, now, None)
+            .await
+            .unwrap();
+    first.close(&globals, now);
+    let after_grace = now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1);
+    globals.purge(after_grace);
+    assert_eq!(
+        globals.len(),
+        1,
+        "another active association still owns the GlobalID"
+    );
+    assert!(matches!(
+        XudpDirectAssociation::open(
+            &dest,
+            Some([0x93; 8]),
+            [0x94; 16],
+            &globals,
+            after_grace,
+            None,
+        )
+        .await,
+        Err(XudpSessionError::AssociationConflict)
+    ));
+    second.close(&globals, after_grace);
+    globals.purge(after_grace + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
+    assert!(globals.is_empty());
+}
+
 #[test]
 fn malformed_input_and_resource_pressure_fail_closed() {
     // Malformed: TCP network bit on New, nonzero session id, truncated, oversize meta.
