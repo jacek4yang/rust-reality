@@ -1,0 +1,47 @@
+[
+  {
+    "target": "xudp_stock_xray_interop",
+    "test": "stock_xray_client_udp_echo_via_rust_reality_entry",
+    "argv": [
+      "/home/jacek/Projects/rust-reality-v230-client/target/release/deps/xudp_stock_xray_interop-5628aa18b01646ff",
+      "stock_xray_client_udp_echo_via_rust_reality_entry",
+      "--ignored",
+      "--exact",
+      "--nocapture"
+    ],
+    "testExecutableSha256": "e20e4ed9c2177edae1ce86eb07be710482076620a055b4a6e539868716b5e865",
+    "exitCode": 0,
+    "elapsedSeconds": 10.699759123148397,
+    "binarySha256After": "124cdf3296429a1731a19ffac1b2a31eb3a54226396fd722b02d1c2c2e4a46ae"
+  },
+  {
+    "target": "xudp_nxr_e2e",
+    "test": "stock_xray_client_nxr_udp_echo_landing_is_sender",
+    "argv": [
+      "/home/jacek/Projects/rust-reality-v230-client/target/release/deps/xudp_nxr_e2e-5c440fd942a9ae18",
+      "stock_xray_client_nxr_udp_echo_landing_is_sender",
+      "--ignored",
+      "--exact",
+      "--nocapture"
+    ],
+    "testExecutableSha256": "7ef0d21e745c8a951c48166cf07218c6774c6a2c3cc7b3c8142002b115c5a871",
+    "exitCode": 0,
+    "elapsedSeconds": 0.3762997919693589,
+    "binarySha256After": "124cdf3296429a1731a19ffac1b2a31eb3a54226396fd722b02d1c2c2e4a46ae"
+  },
+  {
+    "target": "xudp_handoff_e2e",
+    "test": "stock_xray_client_handoff_udp_echo_landing_is_sender",
+    "argv": [
+      "/home/jacek/Projects/rust-reality-v230-client/target/release/deps/xudp_handoff_e2e-71c6f8ffcd273dbf",
+      "stock_xray_client_handoff_udp_echo_landing_is_sender",
+      "--ignored",
+      "--exact",
+      "--nocapture"
+    ],
+    "testExecutableSha256": "4ac7774157ccc7c7c1521cdc2a5a278e3f424f348da2fe5e85c22ab02ac16189",
+    "exitCode": 0,
+    "elapsedSeconds": 0.3753488480579108,
+    "binarySha256After": "124cdf3296429a1731a19ffac1b2a31eb3a54226396fd722b02d1c2c2e4a46ae"
+  }
+]
