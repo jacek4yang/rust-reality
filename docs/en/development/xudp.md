@@ -92,7 +92,7 @@ Directional contract (AGENTS.md §6, ADR 0059):
   (`tests/xudp_stock_xray_interop.rs`). The test panics if `XRAY_BIN` is missing;
   the workflow also fails on skip markers, zero matched cases, or any result
   other than exactly one pass. Local loopback single-datagram RTT samples
-  (warm path) are diagnostic only — **not** a throughput claim.
+  (including fresh association setup) are diagnostic only, not a throughput claim.
 - **UDP via XUDP — historical / ignored (not a release blocker):** rust-reality
   unified client → stock Xray VLESS+REALITY server. Past failure evidence
   (Go ClientHello parse, inbound `SetFlushNext` response ordering, freedom
@@ -136,7 +136,10 @@ Rust Client → stock Xray Server remains **not required** (ADR 0059).
 
 `tests/xudp_udp_performance.rs` records loopback single-datagram RTT through
 rust↔rust SOCKS5 UDP ASSOCIATE → XUDP, plus an A/A median ratio as noise
-characterisation. Exact-head Native may retain the receipt. These numbers are
+characterisation. Each timed call opens a new SOCKS/REALITY/XUDP association;
+the initial untimed exchange primes shared caches but does not remove setup
+from subsequent samples. This is not persistent-association datagram latency.
+Exact-head Native may retain the receipt. These numbers are
 **not** Internet throughput, **not** a capacity claim, and **not** a universal
 speedup claim. Optional stock Xray Client→RR samples (when `XRAY_BIN` is set in
 other suites) remain diagnostic; rust-reality Client→Xray Server is never required.

@@ -212,7 +212,8 @@ fn median_ms(samples: &mut [f64]) -> f64 {
 }
 
 fn collect_rtt_median(socks_port: u16, echo_port: u16, label: &str, n: usize) -> f64 {
-    // Warm one exchange so association setup is not in the sample set.
+    // Prime process and shared caches. Each timed call below still opens a new
+    // SOCKS/REALITY/XUDP association, so its setup cost remains in the sample.
     let warm = socks5_udp_round_trip(socks_port, echo_port, MARKER)
         .unwrap_or_else(|e| panic!("{label} warm failed: {e}"));
     assert_eq!(warm, MARKER);
