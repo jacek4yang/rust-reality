@@ -360,6 +360,15 @@ failure。顺序 collector 和会重复排队正在收集 class 的 controller �
 ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 class 优化，
 不是对所有 TLS 行为都完全相同的声明。
 
+## v2.3.0 发布证据
+
+v2.3.0 保留上面的完整客户端比较及其原始源码提交、可执行文件哈希、流量形态和
+统计界限。通过的预留上传缓冲区比较明确对应 `0c5b1dc`，不会静默替换成后续源码
+或最终安装包身份。原生浏览器指纹自身的成本与实现回退分开评估。当前 stock Xray
+兼容性使用 `tools/fixtures/stock-xray.json` 中的官方固定参考进行验证；下方旧 Xray
+表格仍为历史比较。最终发布要求精确 main 资格验证与安装包执行证明，不代表生产
+WAN 行为。
+
 ## v2.2.0 发布证据
 
 v2.2.0 保留[生产密码学实现](development/crypto-providers.md)，并将下面的测量保持为

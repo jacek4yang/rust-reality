@@ -36,9 +36,13 @@ Xray-compatible client
   delegated hashes, AEAD, signatures and ML-KEM. See the
   [provider mapping](docs/en/development/crypto-providers.md) and
   [bounded landing compatibility](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md).
-- Xray-core 26.7.28-compatible public VLESS + REALITY + Vision data path,
-  gated end to end with an unmodified Xray client.
-- v2.2.0 carries SOCKS5 UDP ASSOCIATE as XUDP over Direct, NXR, and Handoff.
+- Public VLESS + REALITY + Vision ingress is gated end to end with an
+  unmodified stock Xray client. Current qualification pins live in
+  [the reference fixture](tools/fixtures/stock-xray.json).
+- v2.3.0 provides per-LINE Chrome 156.0.8078.74 and Firefox 159.0
+  ClientHello profiles in the unified client, verified against native Windows
+  browser captures. See [client configuration](docs/en/configuration/client.md).
+- The unified client carries SOCKS5 UDP ASSOCIATE as XUDP over Direct, NXR, and Handoff.
   This is not native QUIC, and it is not a measured speedup.
 - Authenticated REALITY setup uses a validated prebuilt cover profile when an
   exact conservative ClientHello class is ready, otherwise a warm live-cover
@@ -85,13 +89,14 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
-v2.2.0 retains these tables as historical comparison references. They are not
+v2.3.0 retains these tables as historical comparison references. They are not
 new v2 measurements or production Internet performance claims. Current provider
 decisions and their evidence limits are recorded in
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md).
 
 Comparator: Xray-core 26.7.28 (commit `5ca6f4b`, go1.26.0, binary SHA-256
-`23d228d7…04c5268`) — the same binary that gates interoperability. Every
+`23d228d7…04c5268`) was the historical interoperability reference. Current
+client measurements and their limits are in [performance](docs/en/performance.md). Every
 v1.9.0 protected Xray-comparison number below retains the v1.6.1 measurement
 foundation from the release host (Intel i3-8100 4C/4T, Linux 6.12). Both
 servers used warn-level logging (rust-reality performs

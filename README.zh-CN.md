@@ -32,12 +32,15 @@
 - v2 的自有协议使用统一的 X25519 边界；哈希、AEAD、签名和 ML-KEM 保留成熟的
   委托实现。参见[实现清单](docs/zh-CN/development/crypto-providers.md)与
   [有限的落地配置兼容范围](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md)。
-- 公网 VLESS + REALITY + Vision 数据路径兼容 Xray-core 26.7.28，并以未经修改的
-  Xray 客户端做端到端门禁。
+- 公网 VLESS + REALITY + Vision 入站以未经修改的 stock Xray 客户端做端到端门禁；
+  当前资格验证版本统一记录于[参考 fixture](tools/fixtures/stock-xray.json)。
+- v2.3.0 在统一客户端中提供逐 LINE 的 Chrome 156.0.8078.74 与 Firefox 159.0
+  ClientHello 指纹，并以原生 Windows 浏览器抓包验证。参见
+  [客户端配置](docs/zh-CN/configuration/client.md)。
 - 已认证 REALITY 建连会在精确、保守的 ClientHello class 准备好时使用已验证的
   prebuilt cover profile；否则依次使用 warm live-cover TCP 和普通 cold
   live-cover 路径。未认证、畸形、不支持及重放流量始终看到真实 cover。
-- v2.2.0 将 SOCKS5 UDP ASSOCIATE 作为 XUDP 承载于 Direct、NXR 与 Handoff。
+- 统一客户端将 SOCKS5 UDP ASSOCIATE 作为 XUDP 承载于 Direct、NXR 与 Handoff。
   这不是原生 QUIC，也不是已测量的加速。
 - 方向级 Vision Direct：每个方向在认证完成的瞬间就切换到 raw 内核 relay
   （优先 `splice`），分裂脑从结构上不可能发生。
@@ -71,12 +74,13 @@
 
 ## 与 Xray-core 的性能对比
 
-v2.2.0 将下表保留为历史对比参考，不把它们表述为新的 v2 测量或生产互联网性能。
+v2.3.0 将下表保留为历史对比参考，不把它们表述为新的 v2 测量或生产互联网性能。
 当前密码学实现选择及证据边界见
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md)。
 
 对比对象：Xray-core 26.7.28（提交 `5ca6f4b`，go1.26.0，二进制 SHA-256
-`23d228d7…04c5268`）——即互操作测试所用的同一二进制。v1.9.0 受保护的
+`23d228d7…04c5268`）是历史互操作参考；当前客户端测量及其局限见
+[性能参考](docs/zh-CN/performance.md)。v1.9.0 受保护的
 Xray 对比数字沿用 v1.6.1 在发布主机（Intel i3-8100 4C/4T，Linux
 6.12）上的测量基础：两侧服务器均
 使用 warn 级日志（rust-reality 在 warn 级不做任何逐连接日志工作），两台

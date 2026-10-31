@@ -463,6 +463,18 @@ that is the consensus rule working, and relaxing it is a separate decision.
 The before/after binaries were built from the same tree with only
 `src/protocol/reality/tls13/cover_profile.rs` differing.
 
+## v2.3.0 release evidence
+
+v2.3.0 retains the complete client comparisons above with their original
+source revisions, executable hashes, traffic shapes and statistical limits.
+The passing reserved-upload comparison is scoped to `0c5b1dc`; later source
+changes and final package identities are not silently substituted. Native
+browser profile cost is distinct from implementation regression. Current
+stock-Xray compatibility is qualified with the pinned official reference in
+`tools/fixtures/stock-xray.json`; the older Xray tables below remain historical
+comparisons. Final publication requires exact-main qualification and verified
+package execution, and does not establish production-WAN behavior.
+
 ## v2.2.0 release evidence
 
 v2.2.0 retains the [production crypto providers](development/crypto-providers.md)
