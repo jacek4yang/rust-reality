@@ -1,0 +1,22 @@
+{
+  "sourceCommit": "e0b6068cd77fe8175de7bdd9afe23e25ef5f0766",
+  "localFullGate": {
+    "verdict": "PASS",
+    "stages": 19,
+    "seconds": 583.5,
+    "receiptDirectory": "target/rr-dev/check/1793478049133-538790"
+  },
+  "stockIngress": {
+    "verdict": "PASS",
+    "binarySha256": "124cdf3296429a1731a19ffac1b2a31eb3a54226396fd722b02d1c2c2e4a46ae",
+    "features": "--release --all-features; distinct from default-feature performance ELF",
+    "details": "stock-results.json"
+  },
+  "liveBrowserCollection": {
+    "workflowRun": 41238372428,
+    "chrome": "FAIL: chrome.msi download digest mismatch; no capture accepted",
+    "firefox": "PASS",
+    "authority": "ADR 0061: immutable native fixtures qualify releases; live collection detects drift"
+  },
+  "scope": "Development-head evidence; final-main CI/Security/Native/Frozen and package identities remain separate requirements."
+}
