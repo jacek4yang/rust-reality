@@ -48,6 +48,15 @@
       "verdict": "PASS: XUDP units 41, NXR UDP units 7, adversarial lifecycle 19",
       "decodedSha256": "010fae32d42eef418c05b9f65e82ba481a3d57fcebf7ec737417b22f8d428726",
       "decodedBytes": 6498
+    },
+    {
+      "file": "local-full-3302147.log.gz",
+      "sourceCommit": "3302147d135dd0ce234ec8e4fdbc29acc3d50e55",
+      "githubJobId": null,
+      "verdict": "PASS: authoritative cargo dev check --all 19/19 in 594.5 seconds",
+      "receiptDirectory": "target/rr-dev/check/1793477168369-504631",
+      "decodedSha256": "2d858739985664a4d75535b7307e33cb23365ebf879bab41a976ead90c9ee9e0",
+      "decodedBytes": 1637
     }
   ]
 }
