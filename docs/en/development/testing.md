@@ -514,9 +514,15 @@ identifiers. A different Xray preset is not an equivalent browser capture.
 
 ### Stock Xray comparison boundary
 
-The current independent reference is official Xray-core v26.10.29, commit
-`0afec66085a85191e9dd2a4a6646c7c9a94688d1`, Linux x86_64 ELF SHA-256
-`e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa`.
+The current independent reference is official stable Xray-core v26.10.31, commit
+`a4a3dff5b20c2faae567b742c172c7b95e75c083`, Linux x86_64 ELF SHA-256
+`cc4b84d3069569f297a61f04b914f2bb37e9d202fd7b84cb50def1fc30fd40e1`.
+The archive SHA-256 is
+`e4bd9119f50ae7c41658b1abd0679ae06f98bd864a2907ff33f2f2cf7081b214`,
+verified against both GitHub asset metadata and the publisher digest file.
+The 40 fresh captures and source/download provenance are retained under
+`benchmarks/evidence/browser-clienthello/xray-26.10.31/`. Earlier 26.10.29
+raw captures remain historical evidence; they are not relabelled as the new binary.
 Its pinned uTLS revision remains
 `aa6edf4b11af82e110eea845bb2983d30138d651`, as in the historical 26.7.28
 reference. Source aliases resolve to Chrome 133 and Firefox 148, not the native
@@ -533,7 +539,7 @@ binary and capture-tool identities. This is a fingerprint observation, not an
 authenticated-session test. Separate stock-Xray ingress tests exercise the
 required authenticated direction (ADR 0059).
 
-| Field | Native Chrome 156 / Firefox 159 | Xray 26.10.29 preset |
+| Field | Native Chrome 156 / Firefox 159 | Xray 26.10.31 preset |
 | --- | --- | --- |
 | Chrome signatures | GREASE and ML-DSA 44/65/87 precede traditional schemes | No signature GREASE or ML-DSA |
 | Chrome trust anchors | Extension 51764, 186-byte body | Absent |

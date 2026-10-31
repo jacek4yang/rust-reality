@@ -266,24 +266,28 @@ mod tests {
 
     #[test]
     fn stock_xray_captures_are_hashed_and_distinct_from_native_browsers() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../benchmarks/evidence/browser-clienthello/xray-26.10.29");
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
-        let samples = manifest["samples"].as_array().unwrap();
-        assert_eq!(samples.len(), 40);
-        for sample in samples {
-            let wire = std::fs::read(root.join(sample["file"].as_str().unwrap())).unwrap();
-            assert_eq!(
-                Sha256::digest(&wire)
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>(),
-                sample["sha256"].as_str().unwrap()
-            );
-            crate::decode(&wire).unwrap();
-            let name = sample["profile"].as_str().unwrap();
-            assert!(compare(&fixture(name), &wire, name == "chrome").is_err());
+        for reference in ["xray-26.10.29", "xray-26.10.31"] {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../benchmarks/evidence/browser-clienthello")
+                .join(reference);
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap())
+                    .unwrap();
+            let samples = manifest["samples"].as_array().unwrap();
+            assert_eq!(samples.len(), 40);
+            for sample in samples {
+                let wire = std::fs::read(root.join(sample["file"].as_str().unwrap())).unwrap();
+                assert_eq!(
+                    Sha256::digest(&wire)
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>(),
+                    sample["sha256"].as_str().unwrap()
+                );
+                crate::decode(&wire).unwrap();
+                let name = sample["profile"].as_str().unwrap();
+                assert!(compare(&fixture(name), &wire, name == "chrome").is_err());
+            }
         }
     }
 

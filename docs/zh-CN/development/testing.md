@@ -349,8 +349,16 @@ Chrome 中间扩展允许洗牌，首尾 GREASE 约束保留；Firefox 扩展顺
 
 ### Stock Xray 对照边界
 
-独立对照版本为 Xray-core v26.10.29，提交
-`0afec66085a85191e9dd2a4a6646c7c9a94688d1`，其 uTLS 固定提交仍为
+新版本的 Linux x86_64 ELF SHA-256 为
+`cc4b84d3069569f297a61f04b914f2bb37e9d202fd7b84cb50def1fc30fd40e1`；
+压缩包 SHA-256 为
+`e4bd9119f50ae7c41658b1abd0679ae06f98bd864a2907ff33f2f2cf7081b214`，
+已同时核对 GitHub 资产摘要与发布者摘要文件。40 份新抓包及来源记录保存在
+`benchmarks/evidence/browser-clienthello/xray-26.10.31/`。
+旧版 26.10.29 原始抓包继续作为历史证据保留，不会改称新版本抓包。
+
+独立对照版本为官方稳定版 Xray-core v26.10.31，提交
+`a4a3dff5b20c2faae567b742c172c7b95e75c083`，其 uTLS 固定提交仍为
 `aa6edf4b11af82e110eea845bb2983d30138d651`。`chrome` 和 `firefox` 别名
 分别指向 Chrome 133、Firefox 148，不是本次原生浏览器版本。
 使用 `cargo run --manifest-path tools/Cargo.toml -p rr-fingerprint -- capture-xray`

@@ -11,7 +11,7 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-const BINARY_SHA256: &str = "e783b9d2b46ed1ab3617c59b04dfbce38c999322d018c6e060f18d88bf6158aa";
+const BINARY_SHA256: &str = "cc4b84d3069569f297a61f04b914f2bb37e9d202fd7b84cb50def1fc30fd40e1";
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {
@@ -38,14 +38,14 @@ pub(super) fn collect(binary: &Path, output: &Path) -> Result<()> {
         .take(64 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)?;
     if digest(&bytes) != BINARY_SHA256 {
-        return Err("not the pinned stock Xray 26.10.29 Linux x86_64 binary".into());
+        return Err("not the pinned stock Xray 26.10.31 Linux x86_64 binary".into());
     }
     let version = Command::new(binary).arg("version").output()?;
     if !version.status.success() {
         return Err("Xray version command failed".into());
     }
     let version = String::from_utf8(version.stdout)?;
-    if !version.starts_with("Xray 26.10.29 ") || !version.contains("0afec66") {
+    if !version.starts_with("Xray 26.10.31 ") || !version.contains("a4a3dff") {
         return Err("Xray version identity mismatch".into());
     }
     fs::create_dir(output)?;
@@ -78,7 +78,7 @@ pub(super) fn collect(binary: &Path, output: &Path) -> Result<()> {
     fs::write(
         output.join("manifest.json"),
         serde_json::to_vec_pretty(&json!({
-            "schemaVersion":1, "xrayVersion":"v26.10.29", "xrayCommit":"0afec66085a85191e9dd2a4a6646c7c9a94688d1",
+            "schemaVersion":1, "xrayVersion":"v26.10.31", "xrayCommit":"a4a3dff5b20c2faae567b742c172c7b95e75c083",
             "utlsCommit":"aa6edf4b11af82e110eea845bb2983d30138d651", "binarySha256":BINARY_SHA256,
             "binaryVersionOutput":version,
         "captureToolSha256":digest(&fs::read(std::env::current_exe()?)?),
