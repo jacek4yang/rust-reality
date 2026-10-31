@@ -1,0 +1,120 @@
+{
+  "scope": "One c64 diagnostic client slot, leaf sampled cycles; manual mmap-to-ELF address translation against independently byte-identical .text and equal section address. Not acceptance.",
+  "totalSampledCycles": 36292891239,
+  "unresolvedApplicationCycles": 0,
+  "top": [
+    {
+      "symbol": "([kernel.kallsyms])",
+      "percent": 74.24936973068364
+    },
+    {
+      "symbol": "ring_core_0_17_14__aes_gcm_enc_update_vaes_avx2",
+      "percent": 13.462441310681934
+    },
+    {
+      "symbol": "(/usr/lib/x86_64-linux-gnu/libc.so.6)",
+      "percent": 4.930859013725986
+    },
+    {
+      "symbol": "<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}",
+      "percent": 0.8390432936155088
+    },
+    {
+      "symbol": "<rust_reality::client::session::VisionTunnel>::relay::<tokio::net::tcp::stream::TcpStream>::{closure#0}",
+      "percent": 0.7829343055883506
+    },
+    {
+      "symbol": "<tokio::time::sleep::Sleep>::reset",
+      "percent": 0.6535563078675668
+    },
+    {
+      "symbol": "ring::aead::aes_gcm::seal",
+      "percent": 0.5977018903550353
+    },
+    {
+      "symbol": "<tokio::runtime::io::registration::Registration>::poll_ready",
+      "percent": 0.45127351502931057
+    },
+    {
+      "symbol": "<tokio::net::tcp::stream::TcpStream>::poll_read_priv",
+      "percent": 0.42347732504387486
+    },
+    {
+      "symbol": "ring_core_0_17_14__gcm_ghash_vpclmulqdq_avx2_1",
+      "percent": 0.4018476539650261
+    },
+    {
+      "symbol": "<tokio::net::tcp::stream::TcpStream>::poll_write_priv",
+      "percent": 0.36373609677628255
+    },
+    {
+      "symbol": "<rust_reality::protocol::reality::tls13::idle::IdleDeadline>::write_all::<tokio::net::tcp::split_owned::OwnedWriteHalf>::{closure#0}",
+      "percent": 0.31474306152068204
+    },
+    {
+      "symbol": "([vdso])",
+      "percent": 0.25982160908323987
+    },
+    {
+      "symbol": "<rust_reality::protocol::vless::padding::PaddingRng>::below",
+      "percent": 0.20640703576545386
+    },
+    {
+      "symbol": "<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}",
+      "percent": 0.17794208671532508
+    },
+    {
+      "symbol": "rust_reality::client::serve::accept_loop::{closure#0}::{closure#0}",
+      "percent": 0.17214701245091948
+    },
+    {
+      "symbol": "rust_reality::protocol::reality::tls13::application_io::write_key_update_if_needed::<tokio::net::tcp::split_owned::OwnedWriteHalf>::{closure#0}",
+      "percent": 0.16115365021442568
+    },
+    {
+      "symbol": "<tokio::runtime::scheduler::multi_thread::worker::Context>::run_task",
+      "percent": 0.15895109491306955
+    },
+    {
+      "symbol": "tokio::runtime::scheduler::multi_thread::worker::run",
+      "percent": 0.13258054775281608
+    },
+    {
+      "symbol": "chacha20::backends::avx2::inner::<chacha20::R12, cipher::stream::core_api::ApplyBlocksCtx<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UInt<typenum::uint::UTerm, typenum::bit::B1>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>, typenum::bit::B0>>, chacha20::variants::Ietf>",
+      "percent": 0.12202546142813245
+    },
+    {
+      "symbol": "<rust_reality::protocol::reality::tls13::idle::IdleDeadline>::read::<tokio::net::tcp::split_owned::OwnedReadHalf>::{closure#0}",
+      "percent": 0.09910474688593879
+    },
+    {
+      "symbol": "<core::pin::Pin<&mut <rust_reality::io_activity::SessionActivity>::expired::{closure#0}> as core::future::future::Future>::poll",
+      "percent": 0.09751797884310741
+    },
+    {
+      "symbol": "<tokio::time::sleep::Sleep as core::future::future::Future>::poll",
+      "percent": 0.09063132166404472
+    },
+    {
+      "symbol": "<cipher::stream::wrapper::StreamCipherCoreWrapper<chacha20::ChaChaCore<chacha20::R12, chacha20::variants::Ietf>> as cipher::stream::StreamCipher>::try_apply_keystream_inout",
+      "percent": 0.08049853567082461
+    },
+    {
+      "symbol": "rr_crypto_curve25519_x25519_byte",
+      "percent": 0.0734731378230497
+    }
+  ],
+  "profile": "block-02-slot-04-candidate.perf.data",
+  "clientPid": 363556,
+  "mmapStart": "0x583609d83000",
+  "mmapFileOffset": "0x1dd000",
+  "elfVirtualMinusFileOffset": "0x1000",
+  "textVirtualAddress": "0x1de740",
+  "textFileOffset": "0x1dd740",
+  "textBytes": 5829302,
+  "textSha256": "4b46ace9dddce67683bc96443b99794ccd64ba5597265e1d1e914ac18af7688b",
+  "symbolBinarySha256": "f2e086fa1a88421271ecb0e327f79039c9dcf4ce65514fd02406b7d0d7777adf",
+  "symbolCommand": "nm -n -S -C --defined-only SYMBOL_BINARY",
+  "sampleCommand": "perf script -G -F pid,tid,ip,dso,period -i PROFILE",
+  "mapping": "ELF address = sampled IP - mmapStart + mmapFileOffset + elfVirtualMinusFileOffset; resolve containing text symbol by its start and size. Code bytes and .text virtual/file offsets match the frozen executable; Build IDs differ, so no false build-id substitution was made."
+}

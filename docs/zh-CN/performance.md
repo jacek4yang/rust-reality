@@ -141,6 +141,22 @@ EOF，其[失败证据](../../benchmarks/evidence/releases/v2.3.0/client-data-ab
 选取的常规报告正常解码且无丢失样本，但一次仅输出文件头的命令报告事件
 元数据警告。不根据已剥离符号的可执行文件声称应用函数热点结论。
 
+[固定频率完整对照](../../benchmarks/evidence/releases/v2.3.0/client-data-fixed-frequency-1c1930f/archive-manifest.json)
+采用 20 个 ABBA 区块、每单元五个样本，覆盖全部五种 16 MiB 负载以及
+1/8/32/64 并发。两侧使用相同的 2.4 GHz P 核策略，结束后全部 CPU
+策略字段精确恢复。252,000 次数据请求全部成功。结果为 38 项通过、
+一项失败、一项未定，不构成验收。Direct 上传 c1 CPU 为 1.0197
+（1.0116-1.0371），超过 1% 上限；分帧上传 c1 CPU 为 1.0104
+（1.0046-1.0162），仍未定。c64 的十项指标全部通过，包括分帧上传
+CPU 0.9630（0.9537-0.9728）与双向吞吐 1.0444（1.0421-1.0486）。
+此前通过的 c1 结果不覆盖本次失败。失败的预检与全部原始样本均已保留。
+
+[叶采样映射](../../benchmarks/evidence/releases/v2.3.0/client-framed-upload-hotspot-1c1930f/candidate-symbol-leaves.json)
+使用记录的精确 mmap 与代码段字节、段地址一致的符号副本。在该单个 c64
+诊断客户端槽中，74.25% 的采样周期位于内核，13.46% 位于 AES-GCM 汇编。
+这支持调查本地读取系统调用的摊销，但不证明低并发回退的根因，也不构成
+性能验收。
+
 [`1c1930f` 的完整对照](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
 使用同一 32 KiB Direct 窗口实现与 `d72abc2` 比较：16 个 ABBA 区块、每格三个
 样本，共 3,840 个批次、120,960 次请求，零负载错误。38 项通过，两项未决。

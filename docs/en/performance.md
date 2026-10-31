@@ -172,6 +172,24 @@ Raw counters and profiles are retained; selected normal reports decode with
 zero lost samples, while one header-only command warns about event metadata.
 No application-symbol hotspot claim is inferred from stripped executables.
 
+The [fixed-frequency full comparison](../../benchmarks/evidence/releases/v2.3.0/client-data-fixed-frequency-1c1930f/archive-manifest.json)
+uses 20 ABBA blocks, five samples per cell, all five 16-MiB workloads and
+concurrency 1/8/32/64. Both binaries use the same 2.4-GHz P-core policy; original
+CPU policy fields are restored exactly afterward. All 252,000 data requests
+succeed. The result is 38 PASS, one FAIL and one UNRESOLVED, not acceptance.
+Direct-upload c1 CPU is 1.0197 (1.0116-1.0371), exceeding the 1% limit;
+framed-upload c1 CPU is unresolved at 1.0104 (1.0046-1.0162). All ten c64
+metrics pass, including framed-upload CPU 0.9630 (0.9537-0.9728) and
+bidirectional throughput 1.0444 (1.0421-1.0486). Earlier passing c1 results do
+not override this failure. Failed preflights and all raw samples remain retained.
+
+A [mapped leaf profile](../../benchmarks/evidence/releases/v2.3.0/client-framed-upload-hotspot-1c1930f/candidate-symbol-leaves.json)
+uses the exact recorded mmap and a symbol twin with byte-identical executable
+text and matching section addresses. In that one c64 diagnostic client slot,
+74.25% of sampled cycles are in the kernel and 13.46% in AES-GCM assembly.
+This supports investigating local-read syscall amortization; it is not a
+low-concurrency root-cause proof or a performance acceptance result.
+
 The [full comparison at `1c1930f`](../../benchmarks/evidence/releases/v2.3.0/client-data-ab-d72-1c1930f/archive-manifest.json)
 uses the same 32-KiB Direct-window implementation against `d72abc2`: 16 ABBA
 blocks, three samples, 3,840 batches and 120,960 requests, without workload
