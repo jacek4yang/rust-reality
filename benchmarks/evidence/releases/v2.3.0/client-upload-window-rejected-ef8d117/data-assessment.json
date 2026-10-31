@@ -1,0 +1,287 @@
+{
+  "verdict": "REJECTED_DIAGNOSTIC",
+  "reason": "Direct-upload c1 CPU rises in all three blocks (5.34%-8.27%) while rate decreases in all three. High-concurrency benefits do not justify a low-concurrency regression. Three blocks do not establish confidence bounds or formal acceptance.",
+  "cells": [
+    {
+      "cell": "bidi:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.967276457956686,
+      "blockRatios": [
+        1.0031914384606366,
+        0.9584910901164823,
+        0.967276457956686
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9584910901164823,
+        1.0031914384606366
+      ]
+    },
+    {
+      "cell": "bidi:c1",
+      "metric": "mibPerSecond",
+      "median": 1.0009961870288817,
+      "blockRatios": [
+        1.0009961870288817,
+        0.9871215080585298,
+        1.0082355739014397
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9871215080585298,
+        1.0082355739014397
+      ]
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9603930711081954,
+      "blockRatios": [
+        0.9557101715374127,
+        0.9706949067107181,
+        0.9603930711081954
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9557101715374127,
+        0.9706949067107181
+      ]
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "mibPerSecond",
+      "median": 1.017755558380286,
+      "blockRatios": [
+        1.017755558380286,
+        1.0225231835555406,
+        1.0175489046443853
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0175489046443853,
+        1.0225231835555406
+      ]
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0083347467476504,
+      "blockRatios": [
+        1.0083347467476504,
+        1.0070413740704767,
+        1.0147225461131208
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0070413740704767,
+        1.0147225461131208
+      ]
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "mibPerSecond",
+      "median": 1.0003777255232502,
+      "blockRatios": [
+        0.9978455644651548,
+        1.0003777255232502,
+        1.0005697512494403
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9978455644651548,
+        1.0005697512494403
+      ]
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.004113814937581,
+      "blockRatios": [
+        0.9948044060904054,
+        1.004113814937581,
+        1.0067757752607032
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9948044060904054,
+        1.0067757752607032
+      ]
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0025077448906392,
+      "blockRatios": [
+        1.004458478972311,
+        1.0006137268416548,
+        1.0025077448906392
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0006137268416548,
+        1.004458478972311
+      ]
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0553383876578013,
+      "blockRatios": [
+        1.0553383876578013,
+        1.0826795612018596,
+        1.0533690066178356
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0533690066178356,
+        1.0826795612018596
+      ]
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 0.988594596959617,
+      "blockRatios": [
+        0.9912249067073714,
+        0.988594596959617,
+        0.9843835971511519
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9843835971511519,
+        0.9912249067073714
+      ]
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.925443187111467,
+      "blockRatios": [
+        0.925443187111467,
+        0.938669111983853,
+        0.9227611530639995
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9227611530639995,
+        0.938669111983853
+      ]
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0239303362533194,
+      "blockRatios": [
+        1.0239303362533194,
+        1.015287303496551,
+        1.0249665078796715
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.015287303496551,
+        1.0249665078796715
+      ]
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9937070166326741,
+      "blockRatios": [
+        0.9925923483529698,
+        0.9937070166326741,
+        1.0182495730185959
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9925923483529698,
+        1.0182495730185959
+      ]
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "mibPerSecond",
+      "median": 1.0029131299357863,
+      "blockRatios": [
+        0.9995186749672427,
+        1.0041450314614468,
+        1.0029131299357863
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9995186749672427,
+        1.0041450314614468
+      ]
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.004932024996013,
+      "blockRatios": [
+        0.9788045900141623,
+        1.00544702659849,
+        1.004932024996013
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9788045900141623,
+        1.00544702659849
+      ]
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0041022208602381,
+      "blockRatios": [
+        1.0174174598845813,
+        1.0041022208602381,
+        1.003233834237503
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.003233834237503,
+        1.0174174598845813
+      ]
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9398492214937542,
+      "blockRatios": [
+        0.9050409617323382,
+        0.9398492214937542,
+        0.9400609260520278
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9050409617323382,
+        0.9400609260520278
+      ]
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9970253772671097,
+      "blockRatios": [
+        0.9995990130333821,
+        0.9970253772671097,
+        0.9956071721916502
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9956071721916502,
+        0.9995990130333821
+      ]
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9476393601209532,
+      "blockRatios": [
+        0.9476393601209532,
+        1.0015187079010384,
+        0.8919187373628396
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.8919187373628396,
+        1.0015187079010384
+      ]
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0300460456063552,
+      "blockRatios": [
+        1.0300460456063552,
+        0.987971051841084,
+        1.0482735904804603
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.987971051841084,
+        1.0482735904804603
+      ]
+    }
+  ],
+  "memoryDiagnostic": "NOT_RUN: production experiment rejected before optional resource investigation."
+}

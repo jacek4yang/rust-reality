@@ -10,8 +10,6 @@ use crate::protocol::{
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-const UPLOAD_RECORD_PAYLOAD: usize = 2 * (crate::protocol::vless::VISION_FRAME_SIZE - 5);
-
 /// Bidirectional Vision tunnel to a destination through an entry.
 pub struct VisionTunnel {
     io: VisionIo,
@@ -38,10 +36,9 @@ impl VisionTunnel {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        // Start with one TLS record's worth of complete Vision frames. A full
-        // read promotes this window once; idle and sparse connections keep
-        // their existing capacity, and short reads still flush immediately.
-        let mut local_buf = vec![0_u8; UPLOAD_RECORD_PAYLOAD];
+        // Two full Vision frames fit one outer TLS record. Reserving their
+        // headers avoids a ten-byte third frame on every full local read.
+        let mut local_buf = vec![0_u8; 2 * (crate::protocol::vless::VISION_FRAME_SIZE - 5)];
         let mut upload_open = true;
         let mut download_open = true;
         let activity = self.io.activity.clone();
@@ -85,11 +82,6 @@ impl VisionTunnel {
                         continue;
                     }
                     self.io.write_application(&local_buf[..n]).await?;
-                    if n == UPLOAD_RECORD_PAYLOAD && local_buf.len() == UPLOAD_RECORD_PAYLOAD {
-                        local_buf.try_reserve_exact(UPLOAD_RECORD_PAYLOAD)
-                            .map_err(|_| VisionTunnelError::Io(std::io::ErrorKind::OutOfMemory.into()))?;
-                        local_buf.resize(2 * UPLOAD_RECORD_PAYLOAD, 0);
-                    }
                 }
             }
         }

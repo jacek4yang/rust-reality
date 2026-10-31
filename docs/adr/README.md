@@ -106,3 +106,4 @@ of the law is what it is.
 | [0062](0062-p256-for-browser-tls-key-shares.md) | P-256 for browser TLS key shares | Accepted |
 | [0063](0063-stock-xray-benchmark-identity.md) | Stock Xray benchmark identity | Accepted |
 | [0064](0064-retain-full-client-delivery-capacity.md) | Retain full client delivery capacity | Accepted |
+| [0065](0065-reject-full-read-upload-window-growth.md) | Reject full-read upload window growth | Rejected |
