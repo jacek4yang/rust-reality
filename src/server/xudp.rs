@@ -880,7 +880,7 @@ mod tests {
         map.purge(after_grace);
         assert_eq!(map.len(), 1, "a pending owner still holds its lease");
         drop(pending);
-        map.purge(after_grace);
+        map.purge(Instant::now() + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
         assert!(map.is_empty());
     }
 
