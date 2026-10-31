@@ -1,0 +1,606 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "sourceCommit": "1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "scope": "Three balanced ABBA blocks, c64 framed-upload warmup plus three64-MiB samples per slot. Existing client/server threads; no raw user-stack capture. Instrumented timing is not acceptance. perf stat exits0; perf record is intentionally interrupted after each phase and flushes its output.",
+  "encoding": "Concatenate listed gzip parts, decode and verify decoded bytes/SHA256.",
+  "observations": [
+    {
+      "name": "block-01-slot-01-baseline.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-01-baseline.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-01-baseline.perf-1.log",
+      "decodedBytes": 205,
+      "decodedSha256": "e77a29164bb3b31ee1270715bca196831b55ee54bdd4e12e14b334c8d186e604",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-01-baseline.perf-1.log.gz.part-01",
+          "sha256": "ad72d9b765433f424b92a8388d464702fcb93dd463319adc5b371471e809740e"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-01-baseline.perf.data",
+      "decodedBytes": 936260,
+      "decodedSha256": "28cdaee04e1a4bafe7ca65507d1a821bc53ff43050ded4bc5a96983042c2128a",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-01-baseline.perf.data.gz.part-01",
+          "sha256": "4f71eaed3fd8d60dc72d8b722515aaef3211d5bc8bd6ac086f7fc00961e45363"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-01-baseline.stat.csv",
+      "decodedBytes": 621393,
+      "decodedSha256": "3835d43589942072d35d258f4a1610fa3ed91b64cdbffcefa4b80a2f28df0fe8",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-01-baseline.stat.csv.gz.part-01",
+          "sha256": "f4970ffd8b69b2e099fcf69253852e5fc56c8c8a92bbd3e4d63f783175335954"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-02-candidate.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-02-candidate.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-02-candidate.perf-1.log",
+      "decodedBytes": 206,
+      "decodedSha256": "1bc41f6c0b7b51e93b4d7773e128ea7abfe2c53895cacdde46cf6863dbb52cb7",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-02-candidate.perf-1.log.gz.part-01",
+          "sha256": "f6387bca3a5c4902888d931485fc1680724cd76bc75acf547400a512efe40637"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-02-candidate.perf.data",
+      "decodedBytes": 1145084,
+      "decodedSha256": "1f208cd383718439798a9b311ac13907c65f25f2560a6bc75bcdad5131b81e33",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-02-candidate.perf.data.gz.part-01",
+          "sha256": "6e2bea5bab8053dd8b31ff649275f31601331bc1477548515361494d2d7d276e"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-02-candidate.stat.csv",
+      "decodedBytes": 705829,
+      "decodedSha256": "31d79b053a615b5515df8b75005f8b3aad4f5d5ae3fac292385720c033c1e0d8",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-02-candidate.stat.csv.gz.part-01",
+          "sha256": "264f5d7dc2c669c3803fb1996316da4b50963d52d59c6434a01eef6131a439fd"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-03-candidate.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-03-candidate.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-03-candidate.perf-1.log",
+      "decodedBytes": 206,
+      "decodedSha256": "b56c28d480608f59cee7c12586dc1296e76c82d255380da839e9cacd43fef0de",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-03-candidate.perf-1.log.gz.part-01",
+          "sha256": "10a16ee276215a3517c0c9eb2e9e7faceb978dcc45b52f6641489a40320fa913"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-03-candidate.perf.data",
+      "decodedBytes": 1081116,
+      "decodedSha256": "81f7042cab6aa526a74111e5690fa033d0c23d8f0602ef9b3c5ac82b2786ceab",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-03-candidate.perf.data.gz.part-01",
+          "sha256": "75a6d35d4a74cd3f1ad667cafc1737d24fde14ab9cb9ab8031f075a0cf97f23f"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-03-candidate.stat.csv",
+      "decodedBytes": 712362,
+      "decodedSha256": "db5104f4e42e978667a92876e0ae93a62af7937de8e473a466b43ffaf549419c",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-03-candidate.stat.csv.gz.part-01",
+          "sha256": "ce2da3820b804f6d0a7c3fcdae74ab9fdcb59038eebf683c5396828e4db697d8"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-04-baseline.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-04-baseline.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-04-baseline.perf-1.log",
+      "decodedBytes": 205,
+      "decodedSha256": "535c47b73217735ed39c75aabbfb3efd758c8f4d794c0a8572324c99461972cc",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-04-baseline.perf-1.log.gz.part-01",
+          "sha256": "86ce38ba48742b0df2a339ee8d582b630565990535373919ac47c144ebb4cb99"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-04-baseline.perf.data",
+      "decodedBytes": 1064508,
+      "decodedSha256": "a6e5138d922e5b4d5119efc955d9d4ef171602c3365e95d0b03076c9c2469bb6",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-04-baseline.perf.data.gz.part-01",
+          "sha256": "483172a5c5c00c05baf520519b3347ff5a2b40eb6a5a1694ebf41e525a20b5b4"
+        }
+      ]
+    },
+    {
+      "name": "block-01-slot-04-baseline.stat.csv",
+      "decodedBytes": 731807,
+      "decodedSha256": "984f9b8a44f59fb05e2c0fea1e9d876cadfaad163f0064d928c74e0b149f48f6",
+      "gzipParts": [
+        {
+          "name": "block-01-slot-04-baseline.stat.csv.gz.part-01",
+          "sha256": "b9a67b230075c21ff3e2f74f255f15b374b43aff9601abdb4ba657b0458ae738"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-01-candidate.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-01-candidate.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-01-candidate.perf-1.log",
+      "decodedBytes": 206,
+      "decodedSha256": "effb8230698e0c4ed9d6e7ab7b85186c31536e305e3de86fe1b2bca739293d9a",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-01-candidate.perf-1.log.gz.part-01",
+          "sha256": "3d9c305c2af9c5e921e7dd1131a46f93e2501784fc830fd068f3341b946468ca"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-01-candidate.perf.data",
+      "decodedBytes": 1042884,
+      "decodedSha256": "798dc12a6d84759843eba67841a0e406d5d51a393acf331f75d7c049acfb7330",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-01-candidate.perf.data.gz.part-01",
+          "sha256": "bc91808d93f8021b2c390ec4fd262e9bc184fa3c437aab7164c3265aa0184983"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-01-candidate.stat.csv",
+      "decodedBytes": 705742,
+      "decodedSha256": "9588cb9f43bb066398d451b038268a099bca10ed6eb8ac0c1c9806a0d34e2781",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-01-candidate.stat.csv.gz.part-01",
+          "sha256": "4abf28ac106772943404470505a5778653f3bfa7adcef81c5283eb02f29cc103"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-02-baseline.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-02-baseline.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-02-baseline.perf-1.log",
+      "decodedBytes": 205,
+      "decodedSha256": "304e3166761278b1ef8aee0581d4c5cf08e2da33cec5cd91033347ae7545c175",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-02-baseline.perf-1.log.gz.part-01",
+          "sha256": "4f4ca980ac2f8c34f990ee239c660986fc8b49c303a97eee3f3d3ef60da23c18"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-02-baseline.perf.data",
+      "decodedBytes": 1107180,
+      "decodedSha256": "a4e4054c5850c3312b1167c6be0a47ed36045b2c41a691b91496e567023768ab",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-02-baseline.perf.data.gz.part-01",
+          "sha256": "7dc7887e9c2f9e9645944ad8ac6437fc0da6f0c2ff0288bc1ab42597fd26eaa5"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-02-baseline.stat.csv",
+      "decodedBytes": 745136,
+      "decodedSha256": "710a0abc28a74a72322881aa33aaac98915185ed20770288fb80646933e43f8e",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-02-baseline.stat.csv.gz.part-01",
+          "sha256": "86505bf082bf5fd9a1b4462bb65cac49dc35f986117d7fa2fd6e016eeef186fa"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-03-baseline-client-report-stderr.txt",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-03-baseline-client-report-stderr.txt.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-03-baseline-client-report.txt",
+      "decodedBytes": 1489,
+      "decodedSha256": "6be8841acaaaa6e1dcd1d06a242747894ccea8490d9a43812031a7d5faddee0a",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-03-baseline-client-report.txt.gz.part-01",
+          "sha256": "ae3b3962f9aebf653baa05e9360d5af406b97272f2ebec63ee49676bd611b308"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-03-baseline.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-03-baseline.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-03-baseline.perf-1.log",
+      "decodedBytes": 205,
+      "decodedSha256": "0abd8b0c77decc747705ff3e238858aba7ea44b165de5a0d73e52405d86d582c",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-03-baseline.perf-1.log.gz.part-01",
+          "sha256": "f819ff108ab99916d662fa263f8715c8641ddd516f0d0f4ac30fc52479b14920"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-03-baseline.perf.data",
+      "decodedBytes": 1061508,
+      "decodedSha256": "2ce8f29ec0686d3b1ef5d6d1bdf05f6e04404e8771030f4c3c7f68e2bae5670e",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-03-baseline.perf.data.gz.part-01",
+          "sha256": "3f27fa145c971bdd5372c8b75bf0725869ea5d6c4a267fbf8f502449b4bcd9b0"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-03-baseline.stat.csv",
+      "decodedBytes": 725505,
+      "decodedSha256": "13f0099fbed835c849702a874f3f62744585161c9d1beb1536dc3302bc6608a1",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-03-baseline.stat.csv.gz.part-01",
+          "sha256": "62641a3b75fb9d00a6ea2f1f14315b78c575e867ef249950b1d7246dd05c29b4"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-04-candidate-client-report-stderr.txt",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-04-candidate-client-report-stderr.txt.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-04-candidate-client-report.txt",
+      "decodedBytes": 1489,
+      "decodedSha256": "ae91bbf0f50c9e1d8b7b299565136f3fb8b5a2b2fa85795c3dabadfcbfe4ff8d",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-04-candidate-client-report.txt.gz.part-01",
+          "sha256": "03a6ad9f13978cc96e201433c708643f1734ab5b4bf1973baa58f7ff4afe5e6c"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-04-candidate.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-04-candidate.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-04-candidate.perf-1.log",
+      "decodedBytes": 206,
+      "decodedSha256": "0208fb51b5a6283507cbdd89164d4580d80dde4b914a01cdef88884ac5db498a",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-04-candidate.perf-1.log.gz.part-01",
+          "sha256": "0849241840cd38b47665318412dfe944451ed9067eb76796581abbc13364f59b"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-04-candidate.perf.data",
+      "decodedBytes": 1106012,
+      "decodedSha256": "7a715c2a36610cb4c51e67c95c0a7922da15e4b6c0045128ed52dbbfa070d3ac",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-04-candidate.perf.data.gz.part-01",
+          "sha256": "b56955e696609a5321e3b74676c1bb2383cf5dbc1631454e79d9789ec98c3e06"
+        }
+      ]
+    },
+    {
+      "name": "block-02-slot-04-candidate.stat.csv",
+      "decodedBytes": 686172,
+      "decodedSha256": "c59111d0435150f9dd81164de5a12b765de68969cf4c45a6d7b9df647db2c9aa",
+      "gzipParts": [
+        {
+          "name": "block-02-slot-04-candidate.stat.csv.gz.part-01",
+          "sha256": "b932801924233c940094e06619e76edfe4d65bc0208eebb48fed1c9c045d4de0"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-01-baseline.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-01-baseline.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-01-baseline.perf-1.log",
+      "decodedBytes": 205,
+      "decodedSha256": "47e97edf0528c06863446ef2a61b658a418cc4d11e2b8e431d23e62b68f702f3",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-01-baseline.perf-1.log.gz.part-01",
+          "sha256": "8c5e2ea7a56a7d63c72eedd63b54620cf334ad006de68b4c9de3f295ee0fff37"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-01-baseline.perf.data",
+      "decodedBytes": 1097228,
+      "decodedSha256": "22e0d88586728c57448154e9baa763f844944aad1c7c23d3c092aab9a02c6a5b",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-01-baseline.perf.data.gz.part-01",
+          "sha256": "07a7496588abe7215bbc6deab9a53ec744e0b07ecfeed5c723af4815e383ff7b"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-01-baseline.stat.csv",
+      "decodedBytes": 725487,
+      "decodedSha256": "584c4c706451f4e1a7fc489d729c570c2172b61d1a92aef066d4dff57cd28958",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-01-baseline.stat.csv.gz.part-01",
+          "sha256": "dd310c4cfd0f8b636f2aa4cb6e83d74fbc9f55f06c3983e40e6291e640ac2050"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-02-candidate.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-02-candidate.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-02-candidate.perf-1.log",
+      "decodedBytes": 206,
+      "decodedSha256": "2469516abe442a26a33949ef3ebf42448baa69228c9219e6cb0b11347129ad97",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-02-candidate.perf-1.log.gz.part-01",
+          "sha256": "135862c849c30ac6ed0d1c280b27ab87f87cf7d05c1baada68104f55074f31db"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-02-candidate.perf.data",
+      "decodedBytes": 1130724,
+      "decodedSha256": "57c2adfcf9f990136c37b6c2700ba653559d562b8be6221933fcc9a810f80d79",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-02-candidate.perf.data.gz.part-01",
+          "sha256": "a678edcc9aef533c663ba1b4784d7abb4b83cbda2d7c7d4c59d53e265ea347b9"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-02-candidate.stat.csv",
+      "decodedBytes": 712295,
+      "decodedSha256": "05adbed552be4118cb85cd56415a3138c6c2d310a463665973b96a70b0f547fa",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-02-candidate.stat.csv.gz.part-01",
+          "sha256": "229520278189655144dc04bfecc3460ab5fc5060a9f345dc2f56fce7f8a287ef"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-03-candidate.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-03-candidate.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-03-candidate.perf-1.log",
+      "decodedBytes": 206,
+      "decodedSha256": "b470a763a2e6cbc877a51a6f907313dcc9f59565a6b3bca5e9791ee30feb3580",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-03-candidate.perf-1.log.gz.part-01",
+          "sha256": "e02512ef47cc73ea3bfb16d02d9722c29f97e98c1c704d5cd5526f39dad5de9f"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-03-candidate.perf.data",
+      "decodedBytes": 1118356,
+      "decodedSha256": "287924d4f495aada853fd2bb550645c5e7b6bc2bd178c69d7d6e18e09745b8bb",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-03-candidate.perf.data.gz.part-01",
+          "sha256": "872bfb1a9945de02d136f9495fa4f01d444cf6fb2cb0dc22b9186fca3a1521a8"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-03-candidate.stat.csv",
+      "decodedBytes": 705658,
+      "decodedSha256": "8ac54e656c5264283c6898f629ff8390d28b51056296ca981468c3e1dafb3c09",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-03-candidate.stat.csv.gz.part-01",
+          "sha256": "b9f3cdd56e1d61d0b0695f8dc78c633518608d62a564aa1cdf7f979df37973e9"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-04-baseline.perf-0.log",
+      "decodedBytes": 0,
+      "decodedSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-04-baseline.perf-0.log.gz.part-01",
+          "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-04-baseline.perf-1.log",
+      "decodedBytes": 205,
+      "decodedSha256": "00cb1d6950ec7887cc5182ae465e2b1793b00f62d32837c73f6a6f69868cbb4a",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-04-baseline.perf-1.log.gz.part-01",
+          "sha256": "74080cc17ce16eb8356dd2c19b8c629330b13a4505f128bc7890f1ba32e433fc"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-04-baseline.perf.data",
+      "decodedBytes": 1131324,
+      "decodedSha256": "d34cd66d538fdab4f884f70cc3e624444cb187c2c576246da6c5fe7196a00b76",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-04-baseline.perf.data.gz.part-01",
+          "sha256": "d22e4e993598fa51688035cd7aa2e2e21046d96c79e81f9104f02e24d2b27036"
+        }
+      ]
+    },
+    {
+      "name": "block-03-slot-04-baseline.stat.csv",
+      "decodedBytes": 744985,
+      "decodedSha256": "76c1a3e4982766698af051dc459d3e949d04e723eb72dafc443e412140ee07b7",
+      "gzipParts": [
+        {
+          "name": "block-03-slot-04-baseline.stat.csv.gz.part-01",
+          "sha256": "dbbdcad2bc97014d3767a4f93fe1f7505dcd41f68d2ffa3a651121524d657463"
+        }
+      ]
+    },
+    {
+      "name": "exit-code.txt",
+      "decodedBytes": 2,
+      "decodedSha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "gzipParts": [
+        {
+          "name": "exit-code.txt.gz.part-01",
+          "sha256": "89ed3b723e0e40d8957a2df55fcb04d57b6d95fa665c5fe67b098df7f29694ae"
+        }
+      ]
+    },
+    {
+      "name": "run.log",
+      "decodedBytes": 97,
+      "decodedSha256": "cc33247f731e02a12b3129ced2be259f1f87dffcfbd4d3cc4677020b22311539",
+      "gzipParts": [
+        {
+          "name": "run.log.gz.part-01",
+          "sha256": "e07f2adf1a515aeee61ac7aa35a375689735146090b1dc8bfd037bbe940e9d16"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "CPU cycles divided by task-clock varied from2.53 to3.42GHz across client slots; this is an effective aggregate estimate, not per-core frequency proof.",
+    "Report --header-only emitted HEADER_EVENT_DESC warning for one file; normal selected reports completed exit0 with no stderr and zero lost samples. Raw reports and data retained. No symbolic application hotspot conclusion is inferred from stripped binaries."
+  ]
+}
