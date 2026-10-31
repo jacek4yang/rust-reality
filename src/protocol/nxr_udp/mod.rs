@@ -126,7 +126,7 @@ mod tests {
                 let body_end = wire.len() - SESSION_TAG_LEN;
                 for unknown in 0_u8..=127 {
                     wire[FRAME_LEN_SIZE + 1] =
-                        (unknown << 1) | u8::from(address.is_some()) * FRAME_FLAG_DESTINATION;
+                        (unknown << 1) | (u8::from(address.is_some()) * FRAME_FLAG_DESTINATION);
                     let tag = session.frame_tag(direction, &wire[FRAME_LEN_SIZE..body_end]);
                     wire[body_end..].copy_from_slice(&tag);
                     let decoded = decode_frame(&wire, &session, direction);
