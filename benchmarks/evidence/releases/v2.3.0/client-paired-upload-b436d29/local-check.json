@@ -1,0 +1,9 @@
+{
+  "sourceCommit": "b436d294e39be61b982ac90471ec9901fbc2e2f7",
+  "command": "cargo dev check --all",
+  "verdict": "PASS",
+  "stages": 19,
+  "elapsedSeconds": 509.5,
+  "logSha256": "eb0db65c7afbbc4c5f90b640784cc607d541c83065aee82f111049cc4fbe17dc",
+  "scope": "Exact experimental source only; memory diagnostic rejects this candidate despite quality success."
+}

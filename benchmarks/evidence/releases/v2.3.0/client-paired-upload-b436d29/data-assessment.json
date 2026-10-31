@@ -1,0 +1,286 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "reason": "Low-concurrency Direct upload CPU decreases in every observed block, unlike the rejected read-only growth experiment. Framed download c1 varies up to +3.25%; all cells still require formal unchanged-contract comparison against d72. These three blocks do not resolve confidence bounds or release acceptance.",
+  "cells": [
+    {
+      "cell": "bidi:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9354349279154887,
+      "blockRatios": [
+        0.9354349279154887,
+        0.934337284594975,
+        0.9454974436370344
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.934337284594975,
+        0.9454974436370344
+      ]
+    },
+    {
+      "cell": "bidi:c1",
+      "metric": "mibPerSecond",
+      "median": 1.003243213907309,
+      "blockRatios": [
+        0.9912471307307408,
+        1.003243213907309,
+        1.0156168386354076
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9912471307307408,
+        1.0156168386354076
+      ]
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9194778676947061,
+      "blockRatios": [
+        0.9194778676947061,
+        0.9243752710847323,
+        0.9173985189000277
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9173985189000277,
+        0.9243752710847323
+      ]
+    },
+    {
+      "cell": "bidi:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0194332315337313,
+      "blockRatios": [
+        1.021607167977819,
+        1.017398925264292,
+        1.0194332315337313
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.017398925264292,
+        1.021607167977819
+      ]
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0006815711166155,
+      "blockRatios": [
+        0.9947671294116806,
+        1.000697420527384,
+        1.0006815711166155
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9947671294116806,
+        1.000697420527384
+      ]
+    },
+    {
+      "cell": "direct-download:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9986310647453841,
+      "blockRatios": [
+        1.0001190968714222,
+        0.993293618866941,
+        0.9986310647453841
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.993293618866941,
+        1.0001190968714222
+      ]
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0011807801623058,
+      "blockRatios": [
+        0.9943035348867625,
+        1.0011807801623058,
+        1.0014256036327576
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9943035348867625,
+        1.0014256036327576
+      ]
+    },
+    {
+      "cell": "direct-download:c64",
+      "metric": "mibPerSecond",
+      "median": 0.9989592198350676,
+      "blockRatios": [
+        0.9989592198350676,
+        0.9948130921094116,
+        1.0026599488265215
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9948130921094116,
+        1.0026599488265215
+      ]
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9715345064452241,
+      "blockRatios": [
+        0.9603113586614811,
+        0.9715345064452241,
+        0.9889001536599145
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9603113586614811,
+        0.9889001536599145
+      ]
+    },
+    {
+      "cell": "direct-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 1.0075760430106537,
+      "blockRatios": [
+        1.002057923055514,
+        1.0075760430106537,
+        1.010819748981306
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.002057923055514,
+        1.010819748981306
+      ]
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9172033410744104,
+      "blockRatios": [
+        0.896893002156952,
+        0.9172033410744104,
+        0.923071624933266
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.896893002156952,
+        0.923071624933266
+      ]
+    },
+    {
+      "cell": "direct-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0215708496829277,
+      "blockRatios": [
+        1.0197698060635283,
+        1.0243121720954405,
+        1.0215708496829277
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0197698060635283,
+        1.0243121720954405
+      ]
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.009761204851737,
+      "blockRatios": [
+        1.009761204851737,
+        1.0324895653586537,
+        0.9974525176786182
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9974525176786182,
+        1.0324895653586537
+      ]
+    },
+    {
+      "cell": "framed-download:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9997970921608356,
+      "blockRatios": [
+        0.9997970921608356,
+        0.9995484371726675,
+        1.0057980351130091
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9995484371726675,
+        1.0057980351130091
+      ]
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9930726141072185,
+      "blockRatios": [
+        1.0018844105077385,
+        0.9930726141072185,
+        0.9873584826584474
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9873584826584474,
+        1.0018844105077385
+      ]
+    },
+    {
+      "cell": "framed-download:c64",
+      "metric": "mibPerSecond",
+      "median": 0.9994112524044158,
+      "blockRatios": [
+        0.9994112524044158,
+        0.9987011539173738,
+        1.0070115764464223
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9987011539173738,
+        1.0070115764464223
+      ]
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8145023537309435,
+      "blockRatios": [
+        0.8105441870903279,
+        0.8145023537309435,
+        0.8207440657430524
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.8105441870903279,
+        0.8207440657430524
+      ]
+    },
+    {
+      "cell": "framed-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9997075719615062,
+      "blockRatios": [
+        0.9997075719615062,
+        0.9972464096996777,
+        1.0025764524258558
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.9972464096996777,
+        1.0025764524258558
+      ]
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8760692153946185,
+      "blockRatios": [
+        0.8693069488117497,
+        0.8760692153946185,
+        0.9243355334061164
+      ],
+      "observedRangeNotConfidenceBound": [
+        0.8693069488117497,
+        0.9243355334061164
+      ]
+    },
+    {
+      "cell": "framed-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0250164907387505,
+      "blockRatios": [
+        1.0398408723265835,
+        1.0250164907387505,
+        1.0101501385423888
+      ],
+      "observedRangeNotConfidenceBound": [
+        1.0101501385423888,
+        1.0398408723265835
+      ]
+    }
+  ]
+}

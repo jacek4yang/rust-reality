@@ -38,9 +38,17 @@ impl VisionTunnel {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        // Keep idle capacity unchanged. A full read grows the window once so
-        // two already available records can share one bounded transport write.
-        let mut local_buf = vec![0_u8; UPLOAD_RECORD_PAYLOAD];
+        // Reuse the writer's allocation for local reads and final AEAD slots.
+        // A full read grows this one buffer once for two available records.
+        let mut local_buf = self.io.take_upload_storage();
+        let initial_capacity = crate::protocol::reality::tls13::RECORD_SLOT_WIRE_CAPACITY;
+        if local_buf.len() < initial_capacity {
+            local_buf
+                .try_reserve_exact(initial_capacity - local_buf.len())
+                .map_err(|_| VisionTunnelError::Io(std::io::ErrorKind::OutOfMemory.into()))?;
+            local_buf.resize(initial_capacity, 0);
+        }
+        let mut read_limit = UPLOAD_RECORD_PAYLOAD;
         let mut upload_open = true;
         let mut download_open = true;
         let activity = self.io.activity.clone();
@@ -75,7 +83,7 @@ impl VisionTunnel {
                         }
                     }
                 }
-                read = local.read(&mut local_buf), if upload_open => {
+                read = local.read(&mut local_buf[..read_limit]), if upload_open => {
                     let n = read.map_err(VisionTunnelError::Io)?;
                     if n == 0 {
                         self.io.shutdown().await?;
@@ -83,11 +91,15 @@ impl VisionTunnel {
                         if !download_open { return Ok(()); }
                         continue;
                     }
-                    self.io.write_application(&local_buf[..n]).await?;
-                    if n == UPLOAD_RECORD_PAYLOAD && local_buf.len() == UPLOAD_RECORD_PAYLOAD {
-                        local_buf.try_reserve_exact(UPLOAD_RECORD_PAYLOAD)
-                            .map_err(|_| VisionTunnelError::Io(std::io::ErrorKind::OutOfMemory.into()))?;
-                        local_buf.resize(2 * UPLOAD_RECORD_PAYLOAD, 0);
+                    self.io.write_upload(&mut local_buf, n).await?;
+                    if n == UPLOAD_RECORD_PAYLOAD && read_limit == UPLOAD_RECORD_PAYLOAD {
+                        read_limit = 2 * UPLOAD_RECORD_PAYLOAD;
+                        let capacity = 2 * crate::protocol::reality::tls13::RECORD_SLOT_WIRE_CAPACITY;
+                        if local_buf.len() < capacity {
+                            local_buf.try_reserve_exact(capacity - local_buf.len())
+                                .map_err(|_| VisionTunnelError::Io(std::io::ErrorKind::OutOfMemory.into()))?;
+                            local_buf.resize(capacity, 0);
+                        }
                     }
                 }
             }

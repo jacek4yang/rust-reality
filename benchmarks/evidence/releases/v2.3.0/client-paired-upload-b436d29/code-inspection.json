@@ -1,0 +1,20 @@
+{
+  "sourceCommit": "b436d294e39be61b982ac90471ec9901fbc2e2f7",
+  "textByteIdentical": true,
+  "textSha256": "b700bed713e39574815c386206cb76c183f7f67b4e02605ab3ee9b6be74b7df7",
+  "symbolizedSha256": "f8afdf57c37916fd37663164cf8c2adebed896407b648200b98f36a022fec917",
+  "textBytes": 5832118,
+  "inspection": {
+    "sharedBatchSymbol": "0x4ebcc0",
+    "recordSlotStride": "0x4016 at 0x4ebf6f",
+    "plaintextBound": "0x4000 at 0x4ebf5f",
+    "keyUpdateCall": "0x4ebec2",
+    "transportWrites": [
+      "0x4ebe49 before KeyUpdate",
+      "0x4ec219 after sealing"
+    ],
+    "scope": "Generated shared loop preserves record-slot bounds, separate sealing and existing deadline writer; no performance acceptance.",
+    "pairCapacity": "0x802c (32812) at 0x4cfafb, 0x4cfb42; one bounded growth branch",
+    "sharedWriterCall": "0x4cfc49"
+  }
+}

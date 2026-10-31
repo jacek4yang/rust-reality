@@ -14,6 +14,21 @@ frozen v1.0.0 release comparison matrix is published in
 sections immediately below and keeps the v1.0.0 tables unchanged as
 historical release measurements.
 
+## Upload storage ownership experiment
+
+The paired-upload experiment `b436d294` reduced observed upload CPU but retained
+separate enlarged local and TLS buffers. Its [matched diagnostic](../../benchmarks/evidence/releases/v2.3.0/client-paired-upload-b436d29/archive-manifest.json)
+has 14,040 successful requests; three blocks are not confidence bounds.
+The [post-upload residency comparison](../../benchmarks/evidence/releases/v2.3.0/client-paired-upload-memory-b436d29/assessment.json)
+shows 15,648-15,724 KiB anonymous memory at 128 connections, versus
+10,328-10,480 KiB for `1c1930f`. All nine runs recover descriptors, but this
+does not excuse the extra retained storage. [ADR 0066](../adr/0066-reject-duplicated-upload-storage.md)
+rejects that layout. Current TCP upload reuses one connection-owned buffer for
+local input, in-place Vision framing and canonical TLS sealing. Byte-equivalence
+and cancellation tests verify ownership; performance and residency must still
+be measured on the final source. No release qualification follows from this
+rejected experiment.
+
 ## Native browser client: qualified development measurements
 
 The following comparisons bind candidate `2fb3076` (binary SHA-256

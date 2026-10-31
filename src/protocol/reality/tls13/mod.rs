@@ -46,6 +46,7 @@ pub use messages::{
     CertificateIdentity, HandshakeMessageError, certificate_message, encrypted_extensions,
     finished_message,
 };
+pub(crate) use record::RECORD_SLOT_WIRE_CAPACITY;
 pub use record::{
     ContentType, ExportedRecordState, MAX_PLAINTEXT_LEN, OpenedRecord, Tls13RecordError,
     Tls13RecordLayer,

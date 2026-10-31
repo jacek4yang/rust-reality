@@ -7,7 +7,8 @@ use crate::protocol::{
     reality::{
         ClientSession,
         tls13::{
-            MAX_PLAINTEXT_LEN, TlsApplicationReader, TlsApplicationWriter, application_halves,
+            MAX_PLAINTEXT_LEN, RECORD_SLOT_WIRE_CAPACITY, TLS_RECORD_HEADER_LEN,
+            TlsApplicationReader, TlsApplicationWriter, application_halves,
         },
     },
     vless::{
@@ -230,6 +231,65 @@ impl VisionIo {
         Ok(())
     }
 
+    pub(super) fn take_upload_storage(&mut self) -> Vec<u8> {
+        self.writer.take_write_storage()
+    }
+
+    /// Moves at most two records of local payload into final AEAD slots in the
+    /// same retained allocation. Work backwards so headers cannot overwrite
+    /// bytes belonging to a later frame. Each body moves exactly once.
+    pub(super) async fn write_upload(
+        &mut self,
+        storage: &mut Vec<u8>,
+        length: usize,
+    ) -> Result<(), VisionTunnelError> {
+        if length == 0
+            || length > 4 * (crate::protocol::vless::VISION_FRAME_SIZE - 5)
+            || length > storage.len()
+        {
+            return Err(VisionTunnelError::Vision);
+        }
+        let first = UploadRecord::plan(&mut self.encoder, length)?;
+        let second = if first.payload_len() < length {
+            Some(UploadRecord::plan(
+                &mut self.encoder,
+                length - first.payload_len(),
+            )?)
+        } else {
+            None
+        };
+        let slots = 1 + usize::from(second.is_some());
+        let required = slots * RECORD_SLOT_WIRE_CAPACITY;
+        if storage.len() < required {
+            storage
+                .try_reserve_exact(required - storage.len())
+                .map_err(|_| VisionTunnelError::Io(io::ErrorKind::OutOfMemory.into()))?;
+            storage.resize(required, 0);
+        }
+        if let Some(second) = &second {
+            second.assemble_in_place(
+                &self.encoder,
+                storage,
+                first.payload_len(),
+                RECORD_SLOT_WIRE_CAPACITY + TLS_RECORD_HEADER_LEN,
+            );
+        }
+        first.assemble_in_place(&self.encoder, storage, 0, TLS_RECORD_HEADER_LEN);
+        self.writer
+            .write_filled_storage(
+                storage,
+                first.wire_len() + second.as_ref().map_or(0, UploadRecord::wire_len),
+                crate::io_activity::WRITE_STALL_TIMEOUT,
+            )
+            .await
+            .map_err(VisionTunnelError::Tls)?;
+        first.commit(&mut self.encoder);
+        if let Some(second) = second {
+            second.commit(&mut self.encoder);
+        }
+        Ok(())
+    }
+
     pub(super) async fn write_application(
         &mut self,
         payload: &[u8],
@@ -241,43 +301,16 @@ impl VisionIo {
         while offset < payload.len() {
             let first = UploadRecord::plan(&mut self.encoder, payload.len() - offset)?;
             let next = offset + first.payload_len();
-            let second = if first.wire_len() == MAX_PLAINTEXT_LEN && next < payload.len() {
-                Some(UploadRecord::plan(&mut self.encoder, payload.len() - next)?)
-            } else {
-                None
-            };
-            if let Some(second) = &second {
-                self.writer
-                    .write_assembled_pair(
-                        second.wire_len(),
-                        |one, two| {
-                            first.assemble(&self.encoder, &payload[offset..next], one);
-                            second.assemble(
-                                &self.encoder,
-                                &payload[next..next + second.payload_len()],
-                                two,
-                            );
-                        },
-                        crate::io_activity::WRITE_STALL_TIMEOUT,
-                    )
-                    .await
-                    .map_err(VisionTunnelError::Tls)?;
-            } else {
-                self.writer
-                    .write_assembled(
-                        first.wire_len(),
-                        |record| first.assemble(&self.encoder, &payload[offset..next], record),
-                        crate::io_activity::WRITE_STALL_TIMEOUT,
-                    )
-                    .await
-                    .map_err(VisionTunnelError::Tls)?;
-            }
+            self.writer
+                .write_assembled(
+                    first.wire_len(),
+                    |record| first.assemble(&self.encoder, &payload[offset..next], record),
+                    crate::io_activity::WRITE_STALL_TIMEOUT,
+                )
+                .await
+                .map_err(VisionTunnelError::Tls)?;
             first.commit(&mut self.encoder);
             offset = next;
-            if let Some(second) = second {
-                second.commit(&mut self.encoder);
-                offset += second.payload_len();
-            }
         }
         Ok(())
     }
@@ -343,6 +376,28 @@ impl UploadRecord {
         }
     }
 
+    fn assemble_in_place(
+        &self,
+        encoder: &VisionEncoder,
+        storage: &mut [u8],
+        source: usize,
+        target: usize,
+    ) {
+        if let Some(second) = &self.second {
+            let start = target + self.first.wire_len();
+            storage.copy_within(
+                source + self.first_len..source + self.payload_len(),
+                start + 5,
+            );
+            encoder.assemble_layout(second, &mut storage[start..start + second.wire_len()]);
+        }
+        storage.copy_within(source..source + self.first_len, target + 5);
+        encoder.assemble_layout(
+            &self.first,
+            &mut storage[target..target + self.first.wire_len()],
+        );
+    }
+
     fn commit(&self, encoder: &mut VisionEncoder) {
         encoder.commit(&self.first);
         if let Some(second) = &self.second {
@@ -388,6 +443,7 @@ fn decode_downlink(
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub fn fuzz_vision_response(input: &[u8]) {
+    fuzz_upload_assembly(input);
     let mut response = Some(Vec::new());
     let mut decoder = VisionDecoder::new(UserId::new([0x11; 16]));
     let mut readable = Vec::new();
@@ -402,6 +458,51 @@ pub fn fuzz_vision_response(input: &[u8]) {
     }
 }
 
+#[cfg(any(test, feature = "fuzzing"))]
+fn fuzz_upload_assembly(input: &[u8]) {
+    if input.is_empty() {
+        return;
+    }
+    let input = &input[..input.len().min(32748)];
+    let mut seed = [0_u8; 44];
+    for (a, b) in seed.iter_mut().zip(input.iter().cycle()) {
+        *a = *b;
+    }
+    let mut encoder = VisionEncoder::with_padding_seed(UserId::new([0x11; 16]), &seed);
+    let first = encoder.plan(0, VisionCommand::Continue, false).unwrap();
+    encoder.commit(&first);
+    let first = UploadRecord::plan(&mut encoder, input.len()).unwrap();
+    let second = (first.payload_len() < input.len())
+        .then(|| UploadRecord::plan(&mut encoder, input.len() - first.payload_len()).unwrap());
+    let mut reference = vec![0_u8; 2 * RECORD_SLOT_WIRE_CAPACITY];
+    let mut actual = reference.clone();
+    actual[..input.len()].copy_from_slice(input);
+    if let Some(second) = &second {
+        let start = RECORD_SLOT_WIRE_CAPACITY + TLS_RECORD_HEADER_LEN;
+        second.assemble(
+            &encoder,
+            &input[first.payload_len()..],
+            &mut reference[start..start + second.wire_len()],
+        );
+        second.assemble_in_place(&encoder, &mut actual, first.payload_len(), start);
+        assert_eq!(
+            &actual[start..start + second.wire_len()],
+            &reference[start..start + second.wire_len()]
+        );
+    }
+    let start = TLS_RECORD_HEADER_LEN;
+    first.assemble(
+        &encoder,
+        &input[..first.payload_len()],
+        &mut reference[start..start + first.wire_len()],
+    );
+    first.assemble_in_place(&encoder, &mut actual, 0, start);
+    assert_eq!(
+        &actual[start..start + first.wire_len()],
+        &reference[start..start + first.wire_len()]
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,6 +514,18 @@ mod tests {
         io::AsyncWriteExt,
         net::{TcpListener, TcpStream},
     };
+
+    #[test]
+    fn in_place_upload_matches_assembly_at_every_frame_boundary() {
+        for length in [
+            1, 2, 8186, 8187, 8188, 16373, 16374, 16375, 24560, 24561, 32747, 32748,
+        ] {
+            for seed in 0..16_u8 {
+                let payload: Vec<u8> = (0..length).map(|i| (i as u8).wrapping_add(seed)).collect();
+                fuzz_upload_assembly(&payload);
+            }
+        }
+    }
 
     fn record_pair() -> (Tls13RecordLayer, Tls13RecordLayer) {
         let suite = CipherSuite::Aes128GcmSha256;
@@ -632,7 +745,15 @@ mod tests {
         // and the next record's sequence number without splitting a frame.
         for length in [16374, 8190, 1, 32748, 32749, 16374] {
             let payload: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
-            io.write_application(&payload).await.unwrap();
+            if length <= 32748 {
+                let mut storage = io.take_upload_storage();
+                storage.resize(length, 0);
+                storage[..length].copy_from_slice(&payload);
+                io.write_upload(&mut storage, length).await.unwrap();
+                assert!(!storage.is_empty());
+            } else {
+                io.write_application(&payload).await.unwrap();
+            }
             received.clear();
             let mut records = 0;
             while received.len() < payload.len() {

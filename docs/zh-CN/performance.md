@@ -11,6 +11,19 @@ v1.0.0 发布对比矩阵见
 [benchmarks.zh-CN.md](benchmarks.md)。v1.6.0、v1.5.1 与 v1.5.0 的证据在下面紧随的
 章节中，v1.0.0 表格作为该版本的历史发布测量保持不变。
 
+## 上传缓冲所有权实验
+
+双记录上传实验 `b436d294` 降低了观测到的上传 CPU 成本，却分别保留了扩大的本地与 TLS 缓冲。
+[匹配诊断](../../benchmarks/evidence/releases/v2.3.0/client-paired-upload-b436d29/archive-manifest.json)
+完成 14,040 个成功请求；三个对照块不能建立置信区间。
+[上传后驻留内存对照](../../benchmarks/evidence/releases/v2.3.0/client-paired-upload-memory-b436d29/assessment.json)
+显示，128 个连接的匿名内存为 15,648-15,724 KiB，`1c1930f` 为 10,328-10,480 KiB。
+九轮测试的文件描述符均恢复，但这不能抵消额外保留的缓冲。
+[ADR 0066](../adr/0066-reject-duplicated-upload-storage.md) 拒绝该布局。
+当前 TCP 上传复用连接所有的一份缓冲，依次用于本地输入、Vision 原位装配与既有 TLS 加密。
+字节一致性和取消测试验证所有权；最终源码仍须重新测量性能与驻留内存。
+被拒绝的实验不构成发布资格。
+
 ## 原生浏览器客户端：开发版本性能验证
 
 以下对比绑定候选 `2fb3076`，二进制 SHA-256 为
