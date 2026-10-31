@@ -108,3 +108,4 @@ of the law is what it is.
 | [0064](0064-retain-full-client-delivery-capacity.md) | Retain full client delivery capacity | Accepted |
 | [0065](0065-reject-full-read-upload-window-growth.md) | Reject full-read upload window growth | Rejected |
 | [0066](0066-reject-duplicated-upload-storage.md) | Reject duplicated upload storage | Rejected |
+| [0067](0067-xudp-global-id-leases-follow-association-lifetime.md) | XUDP GlobalID leases follow association lifetime | Accepted |

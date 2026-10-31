@@ -409,3 +409,8 @@ VLESS 响应由版本和带长度前缀的 Addons protobuf 构成，第二个字
 两个候选都必须停在目标请求之前。不存在会话中途迁移，也不重放请求。参见
 [ADR 0032](../adr/0032-client-candidates-stop-before-destination-open.md) 与
 [客户端配置](configuration/client.md)。
+
+XUDP 关联从建立过程到销毁始终拥有自己的 GlobalID 租约。失败和取消会自动释放
+租约；同一认证用户的并发关联分别持有租约，最后一个所有者释放后才开始既有宽限期。
+这项所有权记账不进入数据报转发路径，参见
+[ADR 0067](../adr/0067-xudp-global-id-leases-follow-association-lifetime.md)。

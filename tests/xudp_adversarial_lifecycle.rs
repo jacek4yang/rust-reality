@@ -122,7 +122,7 @@ async fn downlink_peer_cannot_replace_the_authorized_uplink_destination() {
     assert!(
         matches!(responder.try_recv_from(&mut bytes), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
     );
-    association.close(&globals, Instant::now());
+    association.close(Instant::now());
 }
 
 /// Simulate Vision authorize + Direct landward gate (PR1 / ADR 0060).
@@ -205,7 +205,7 @@ async fn rewrite_direct_to_block_rejects_and_sends_zero_datagrams() {
         }
         Ok(Err(e)) => panic!("forbidden dest recv error: {e}"),
     }
-    assoc.close(&globals, Instant::now());
+    assoc.close(Instant::now());
     eprintln!("rewrite_direct_to_block_rejects_and_sends_zero_datagrams PASS");
 }
 
@@ -238,33 +238,34 @@ fn global_id_process_wide_capacity_and_no_cross_user() {
     let user_a = [0xAA; 16];
     let user_b = [0xBB; 16];
 
+    let mut leases = Vec::new();
     for i in 0..XUDP_MAX_ASSOCIATIONS {
         let mut id = [0u8; 8];
         id[0] = (i / 256) as u8;
         id[1] = (i % 256) as u8;
-        map.activate(id, user_a, now).unwrap();
+        leases.push(map.acquire(id, user_a, now).unwrap());
     }
     assert_eq!(map.len(), XUDP_MAX_ASSOCIATIONS);
     assert!(matches!(
-        map.activate([0xff; 8], user_a, now),
+        map.acquire([0xff; 8], user_a, now),
         Err(XudpSessionError::AssociationLimit)
     ));
     // Capacity is process-wide: another user cannot escape the shared limit.
     assert!(matches!(
-        map.activate([0xfe; 8], user_b, now),
+        map.acquire([0xfe; 8], user_b, now),
         Err(XudpSessionError::AssociationLimit)
     ));
 
     let claimed = [0, 0, 0, 0, 0, 0, 0, 0];
     assert!(matches!(
-        map.activate(claimed, user_b, now),
+        map.acquire(claimed, user_b, now),
         Err(XudpSessionError::AssociationConflict)
     ));
-    map.activate(claimed, user_a, now).unwrap(); // same owner refresh
-
-    map.expire(claimed, now);
+    let same_owner = map.acquire(claimed, user_a, now).unwrap();
+    same_owner.release(now);
+    leases.remove(0).release(now);
     map.purge(now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
-    map.activate(claimed, user_b, now).unwrap(); // reclaim after purge
+    let _replacement = map.acquire(claimed, user_b, now).unwrap(); // reclaim after purge
     eprintln!("global_id_process_wide_capacity_and_no_cross_user PASS");
 }
 
@@ -344,7 +345,7 @@ async fn association_cancel_then_recover_same_global_id() {
         .unwrap();
     assert_eq!(globals.len(), 1);
     // Control-EOF / cancel path: close marks Expiring; purge frees the slot.
-    assoc.close(&globals, now);
+    assoc.close(now);
     globals.purge(now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
     assert_eq!(globals.len(), 0);
 
@@ -359,7 +360,7 @@ async fn association_cancel_then_recover_same_global_id() {
     let mut buf = [0u8; 32];
     let (n, _) = echo.recv_from(&mut buf).await.unwrap();
     assert_eq!(&buf[..n], b"recovered");
-    again.close(&globals, Instant::now());
+    again.close(Instant::now());
     eprintln!("association_cancel_then_recover_same_global_id PASS");
 }
 
@@ -434,7 +435,7 @@ async fn closing_one_same_owner_association_keeps_the_other_global_id_live() {
         XudpDirectAssociation::open(&dest, Some([0x93; 8]), [0x93; 16], &globals, now, None)
             .await
             .unwrap();
-    first.close(&globals, now);
+    first.close(now);
     let after_grace = now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1);
     globals.purge(after_grace);
     assert_eq!(
@@ -454,7 +455,7 @@ async fn closing_one_same_owner_association_keeps_the_other_global_id_live() {
         .await,
         Err(XudpSessionError::AssociationConflict)
     ));
-    second.close(&globals, after_grace);
+    second.close(after_grace);
     globals.purge(after_grace + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
     assert!(globals.is_empty());
 }
@@ -473,20 +474,21 @@ fn malformed_input_and_resource_pressure_fail_closed() {
     let map = XudpGlobalMap::new();
     let now = Instant::now();
     let owner = [0x33; 16];
+    let mut leases = Vec::new();
     for i in 0..XUDP_MAX_ASSOCIATIONS {
         let mut id = [0u8; 8];
         id[6] = (i / 256) as u8;
         id[7] = (i % 256) as u8;
-        map.activate(id, owner, now).unwrap();
+        leases.push(map.acquire(id, owner, now).unwrap());
     }
     assert!(matches!(
-        map.activate([0xAB; 8], owner, now),
+        map.acquire([0xAB; 8], owner, now),
         Err(XudpSessionError::AssociationLimit)
     ));
     // Release one slot under pressure.
-    map.expire([0, 0, 0, 0, 0, 0, 0, 0], now);
+    leases.remove(0).release(now);
     map.purge(now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
-    map.activate([0xAB; 8], owner, now).unwrap();
+    let _replacement = map.acquire([0xAB; 8], owner, now).unwrap();
     eprintln!("malformed_input_and_resource_pressure_fail_closed PASS");
 }
 
@@ -515,7 +517,7 @@ async fn fail_detection_demo_unauthorized_rewrite_gate() {
         "GATE demo failed: expected UnauthorizedRewrite, got {err}"
     );
     assert_eq!(assoc.uplink_datagrams(), 0);
-    assoc.close(&globals, Instant::now());
+    assoc.close(Instant::now());
     eprintln!("fail_detection_demo_unauthorized_rewrite_gate PASS");
 }
 
@@ -599,7 +601,7 @@ async fn association_resource_recovery_after_repeated_fault_cycles() {
         assert_eq!(&buf[..n], b"pulse");
         // Induced "fault": cancel / expire / purge — like LINE reload retiring
         // an association without leaking the GlobalID slot.
-        assoc.close(&globals, Instant::now());
+        assoc.close(Instant::now());
         globals.purge(Instant::now() + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
         assert_eq!(globals.len(), 0, "cycle {i}: recovered to empty map");
     }
@@ -687,7 +689,7 @@ async fn rewrite_cross_outbound_direct_landward_rejects_nxr_handoff() {
         1,
         "only the initial Direct New may have egressed"
     );
-    assoc.close(&globals, Instant::now());
+    assoc.close(Instant::now());
     eprintln!("rewrite_cross_outbound_direct_landward_rejects_nxr_handoff PASS");
 }
 
@@ -763,7 +765,7 @@ async fn reload_retirement_does_not_widen_in_flight_authority() {
     assert!(matches!(err, XudpSessionError::UnauthorizedRewrite));
 
     // Retirement recovers the GlobalID for a *new* association (new generation).
-    assoc.close(&globals, Instant::now());
+    assoc.close(Instant::now());
     globals.purge(Instant::now() + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
     assert_eq!(globals.len(), 0);
     let mut again =
@@ -784,6 +786,6 @@ async fn reload_retirement_does_not_widen_in_flight_authority() {
     } else {
         assert_eq!(&buf[..n], b"gen2");
     }
-    again.close(&globals, Instant::now());
+    again.close(Instant::now());
     eprintln!("reload_retirement_does_not_widen_in_flight_authority PASS");
 }

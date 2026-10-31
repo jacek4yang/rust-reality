@@ -288,16 +288,35 @@ pub struct XudpGlobalMap {
 
 struct GlobalEntry {
     expire: Instant,
-    status: GlobalStatus,
-    /// Authenticated VLESS user that owns this GlobalID while it is Active
-    /// (or still Expiring pending purge). Prevents cross-user claim of a live id.
+    active_leases: usize,
+    /// Authenticated VLESS user that owns all active leases and the following
+    /// expiration grace. Prevents cross-user claim of a live id.
     owner: [u8; 16],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum GlobalStatus {
-    Active,
-    Expiring,
+/// One association's ownership of a GlobalID. Dropping it starts the existing
+/// grace period only when no other association of the same user owns the ID.
+#[must_use = "the lease must live as long as its association"]
+pub struct XudpGlobalLease<'a> {
+    map: Option<&'a XudpGlobalMap>,
+    id: XudpGlobalId,
+}
+
+impl XudpGlobalLease<'_> {
+    /// Releases this owner at an explicit time (for orderly close and tests).
+    pub fn release(mut self, now: Instant) {
+        if let Some(map) = self.map.take() {
+            map.release_lease(self.id, now);
+        }
+    }
+}
+
+impl Drop for XudpGlobalLease<'_> {
+    fn drop(&mut self) {
+        if let Some(map) = self.map.take() {
+            map.release_lease(self.id, Instant::now());
+        }
+    }
 }
 
 impl XudpGlobalMap {
@@ -305,26 +324,31 @@ impl XudpGlobalMap {
         Self::default()
     }
 
-    /// Insert or refresh an active GlobalID for `owner`.
+    /// Acquires one association lease for `owner` before fallible setup.
     ///
     /// Capacity [`XUDP_MAX_ASSOCIATIONS`] is process-wide. An Active (or still
     /// Expiring) id owned by a *different* user fails closed with
     /// [`XudpSessionError::AssociationConflict`] — no cross-user takeover.
-    pub fn activate(
+    pub fn acquire(
         &self,
         id: XudpGlobalId,
         owner: [u8; 16],
         now: Instant,
-    ) -> Result<(), XudpSessionError> {
+    ) -> Result<XudpGlobalLease<'_>, XudpSessionError> {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         self.purge_locked(&mut guard, now);
         if let Some(entry) = guard.get_mut(&id) {
             if entry.owner != owner {
                 return Err(XudpSessionError::AssociationConflict);
             }
-            entry.status = GlobalStatus::Active;
-            entry.expire = now + XUDP_ASSOCIATION_IDLE;
-            return Ok(());
+            entry.active_leases = entry
+                .active_leases
+                .checked_add(1)
+                .ok_or(XudpSessionError::AssociationLimit)?;
+            return Ok(XudpGlobalLease {
+                map: Some(self),
+                id,
+            });
         }
         if guard.len() >= XUDP_MAX_ASSOCIATIONS {
             return Err(XudpSessionError::AssociationLimit);
@@ -333,19 +357,23 @@ impl XudpGlobalMap {
             id,
             GlobalEntry {
                 expire: now + XUDP_ASSOCIATION_IDLE,
-                status: GlobalStatus::Active,
+                active_leases: 1,
                 owner,
             },
         );
-        Ok(())
+        Ok(XudpGlobalLease {
+            map: Some(self),
+            id,
+        })
     }
 
-    /// Mark an association expiring (stock puts a one-minute grace).
-    pub fn expire(&self, id: XudpGlobalId, now: Instant) {
+    fn release_lease(&self, id: XudpGlobalId, now: Instant) {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = guard.get_mut(&id) {
-            entry.status = GlobalStatus::Expiring;
-            entry.expire = now + XUDP_ASSOCIATION_IDLE;
+            entry.active_leases -= 1;
+            if entry.active_leases == 0 {
+                entry.expire = now + XUDP_ASSOCIATION_IDLE;
+            }
         }
     }
 
@@ -360,7 +388,7 @@ impl XudpGlobalMap {
     }
 
     fn purge_locked(&self, map: &mut HashMap<XudpGlobalId, GlobalEntry>, now: Instant) {
-        map.retain(|_, entry| !(entry.status == GlobalStatus::Expiring && now >= entry.expire));
+        map.retain(|_, entry| !(entry.active_leases == 0 && now >= entry.expire));
     }
 
     pub fn purge(&self, now: Instant) {
@@ -379,16 +407,16 @@ pub fn process_xudp_global_map() -> &'static XudpGlobalMap {
 }
 
 /// One Direct UDP association for an XUDP Mux session (session id 0).
-pub struct XudpDirectAssociation {
+pub struct XudpDirectAssociation<'a> {
     socket: UdpSocket,
     destination: SocketAddr,
-    global_id: Option<XudpGlobalId>,
+    global_lease: Option<XudpGlobalLease<'a>>,
     last_activity: Instant,
     uplink_datagrams: u64,
     downlink_datagrams: u64,
 }
 
-impl XudpDirectAssociation {
+impl<'a> XudpDirectAssociation<'a> {
     /// Bind an ephemeral UDP socket and remember the first destination.
     ///
     /// When `bind_ip` is set (Handoff/NXR LANDING), the UDP socket is bound to
@@ -398,14 +426,14 @@ impl XudpDirectAssociation {
         destination: &Destination,
         global_id: Option<XudpGlobalId>,
         owner: [u8; 16],
-        globals: &XudpGlobalMap,
+        globals: &'a XudpGlobalMap,
         now: Instant,
         bind_ip: Option<std::net::IpAddr>,
     ) -> Result<Self, XudpSessionError> {
         let addr = destination_to_socket_addr(destination)?;
-        if let Some(id) = global_id {
-            globals.activate(id, owner, now)?;
-        }
+        let global_lease = global_id
+            .map(|id| globals.acquire(id, owner, now))
+            .transpose()?;
         let bind = match (bind_ip, addr) {
             (Some(ip), _) => SocketAddr::new(ip, 0),
             (None, SocketAddr::V4(_)) => SocketAddr::from(([0, 0, 0, 0], 0)),
@@ -415,7 +443,7 @@ impl XudpDirectAssociation {
         Ok(Self {
             socket,
             destination: addr,
-            global_id,
+            global_lease,
             last_activity: now,
             uplink_datagrams: 0,
             downlink_datagrams: 0,
@@ -495,9 +523,9 @@ impl XudpDirectAssociation {
         Ok(output.len())
     }
 
-    pub fn close(self, globals: &XudpGlobalMap, now: Instant) {
-        if let Some(id) = self.global_id {
-            globals.expire(id, now);
+    pub fn close(self, now: Instant) {
+        if let Some(lease) = self.global_lease {
+            lease.release(now);
         }
     }
 }
@@ -509,7 +537,7 @@ const NXR_LINE_FRAME_BUFFER: usize = 256 * 1024;
 ///
 /// LINE retains routing authority: every New/Keep destination is authorized
 /// locally, then integrity-protected inside NXR UDP frames (ADR 0060 Option A).
-pub struct XudpNxrAssociation {
+pub struct XudpNxrAssociation<'a> {
     stream: TcpStream,
     _permit: OutboundPermit,
     session: NxrUdpSessionKey,
@@ -518,13 +546,13 @@ pub struct XudpNxrAssociation {
     last_uplink_destination: Destination,
     inbound_buf: Vec<u8>,
     pending_downlink: VecDeque<crate::protocol::nxr_udp::NxrUdpFrame>,
-    global_id: Option<XudpGlobalId>,
+    global_lease: Option<XudpGlobalLease<'a>>,
     last_activity: Instant,
     uplink_datagrams: u64,
     downlink_datagrams: u64,
 }
 
-impl XudpNxrAssociation {
+impl<'a> XudpNxrAssociation<'a> {
     /// Dial LANDING with a UDP-mode open and register GlobalID affinity.
     pub async fn open(
         outbounds: &OutboundRegistry,
@@ -532,12 +560,12 @@ impl XudpNxrAssociation {
         destination: &Destination,
         user_id: [u8; 16],
         global_id: Option<XudpGlobalId>,
-        globals: &XudpGlobalMap,
+        globals: &'a XudpGlobalMap,
         now: Instant,
     ) -> Result<Self, XudpSessionError> {
-        if let Some(id) = global_id {
-            globals.activate(id, user_id, now)?;
-        }
+        let global_lease = global_id
+            .map(|id| globals.acquire(id, user_id, now))
+            .transpose()?;
         let (connection, session) = outbounds
             .connect_nxr_udp(outbound_tag, destination, user_id)
             .await
@@ -552,7 +580,7 @@ impl XudpNxrAssociation {
             last_uplink_destination: destination.clone(),
             inbound_buf: Vec::new(),
             pending_downlink: VecDeque::new(),
-            global_id,
+            global_lease,
             last_activity: now,
             uplink_datagrams: 0,
             downlink_datagrams: 0,
@@ -694,7 +722,7 @@ impl XudpNxrAssociation {
         Ok(output.len())
     }
 
-    pub async fn close(mut self, globals: &XudpGlobalMap, now: Instant) {
+    pub async fn close(mut self, now: Instant) {
         let seq = self.seq_out.next_out();
         let mut wire = Vec::new();
         if encode_frame(
@@ -711,8 +739,8 @@ impl XudpNxrAssociation {
             let _ = self.stream.write_all(&wire).await;
         }
         let _ = self.stream.shutdown().await;
-        if let Some(id) = self.global_id {
-            globals.expire(id, now);
+        if let Some(lease) = self.global_lease {
+            lease.release(now);
         }
     }
 }
@@ -822,20 +850,38 @@ mod tests {
     fn global_map_respects_capacity_and_expire() {
         let map = XudpGlobalMap::new();
         let now = Instant::now();
+        let mut leases = Vec::new();
         for i in 0..XUDP_MAX_ASSOCIATIONS {
             let mut id = [0_u8; 8];
             id[0] = (i / 256) as u8;
             id[1] = (i % 256) as u8;
-            map.activate(id, [1; 16], now).unwrap();
+            leases.push(map.acquire(id, [1; 16], now).unwrap());
         }
         assert!(matches!(
-            map.activate([0xff; 8], [1; 16], now),
+            map.acquire([0xff; 8], [1; 16], now),
             Err(XudpSessionError::AssociationLimit)
         ));
-        map.expire([0, 0, 0, 0, 0, 0, 0, 0], now);
+        leases.remove(0).release(now);
         map.purge(now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
-        assert!(map.len() < XUDP_MAX_ASSOCIATIONS);
-        map.activate([0xff; 8], [1; 16], now).unwrap();
+        assert_eq!(map.len(), XUDP_MAX_ASSOCIATIONS - 1);
+        let _replacement = map.acquire([0xff; 8], [1; 16], now).unwrap();
+    }
+
+    #[test]
+    fn cancelling_a_pending_owner_releases_its_global_lease() {
+        let map = XudpGlobalMap::new();
+        let mut pending = Box::pin(async {
+            let _lease = map.acquire([0x55; 8], [0x55; 16], Instant::now()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(pending.as_mut(), &mut context).is_pending());
+        let after_grace = Instant::now() + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1);
+        map.purge(after_grace);
+        assert_eq!(map.len(), 1, "a pending owner still holds its lease");
+        drop(pending);
+        map.purge(after_grace);
+        assert!(map.is_empty());
     }
 
     #[test]
@@ -893,7 +939,7 @@ mod tests {
         assert_eq!(reply.status, XudpSessionStatus::Keep);
         assert_eq!(assoc.uplink_datagrams(), 1);
         assert_eq!(assoc.downlink_datagrams(), 1);
-        assoc.close(&globals, Instant::now());
+        assoc.close(Instant::now());
     }
 
     #[tokio::test]
@@ -920,7 +966,7 @@ mod tests {
             .expect_err("rewrite without authorization must fail closed");
         assert!(matches!(err, XudpSessionError::UnauthorizedRewrite));
         assert_eq!(assoc.uplink_datagrams(), 0);
-        assoc.close(&globals, Instant::now());
+        assoc.close(Instant::now());
     }
 
     #[test]
@@ -972,14 +1018,14 @@ mod tests {
             .unwrap();
         assert_eq!(globals.len(), 1);
         // close marks the GlobalID expired; purge drops it (control-EOF / cancel path).
-        assoc.close(&globals, now);
+        assoc.close(now);
         globals.purge(now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
         assert_eq!(globals.len(), 0);
         let again = XudpDirectAssociation::open(&dest, Some(gid), [7; 16], &globals, now, None)
             .await
             .unwrap();
         assert_eq!(globals.len(), 1);
-        again.close(&globals, now);
+        again.close(now);
     }
 
     #[test]
@@ -987,16 +1033,19 @@ mod tests {
         let map = XudpGlobalMap::new();
         let now = Instant::now();
         let gid = [0x42_u8; 8];
-        map.activate(gid, [1; 16], now).unwrap();
+        let first = map.acquire(gid, [1; 16], now).unwrap();
         assert!(matches!(
-            map.activate(gid, [2; 16], now),
+            map.acquire(gid, [2; 16], now),
             Err(XudpSessionError::AssociationConflict)
         ));
-        // Same owner may refresh.
-        map.activate(gid, [1; 16], now).unwrap();
-        map.expire(gid, now);
+        // Same owner may acquire an independent lease.
+        let second = map.acquire(gid, [1; 16], now).unwrap();
+        first.release(now);
+        map.purge(now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
+        assert_eq!(map.len(), 1);
+        second.release(now);
         map.purge(now + XUDP_ASSOCIATION_IDLE + Duration::from_secs(1));
         // After purge, a different user may claim the id.
-        map.activate(gid, [2; 16], now).unwrap();
+        let _replacement = map.acquire(gid, [2; 16], now).unwrap();
     }
 }
