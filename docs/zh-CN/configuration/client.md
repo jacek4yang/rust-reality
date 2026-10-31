@@ -20,6 +20,7 @@ REALITY 身份，也不得绑到非回环地址。
   absolute-form 正向代理。
 - `lineGroups` + `selection`（`hedgeMs` / `timeoutMs`）实现 sticky 主选与 hedge；
   健康跳闸只影响**新**会话。
+  多个组引用同一 LINE 时共享编译后的不可变配置，但各组保留独立的健康与主选状态。
 - Listener 必须绑定回环；每组 1–8 个 LINE tag；`entry` / `landing` 拒绝
   `protocol` 与 `lineGroup`。
 
@@ -43,6 +44,10 @@ UDP/443 仅在 LINE 设置 `allowUdp443: true` 时允许。服务端 XUDP 出站
 **Direct**、**NXR** 或 **Handoff**（[ADR 0060](../../adr/0060-xudp-over-nxr-and-handoff.md)）；
 Block 与不支持的出站失败关闭，且不得静默回退到 Direct。详见英文
 [XUDP and Vision UDP/443](../../en/development/xudp.md)。
+
+UDP 回复保留自身来源，与当前上行目标相互独立；延迟回复不能授权或替换后续 Keep
+帧的目标。NXR LANDING 在每个认证下行帧中携带实际 UDP 来源，LINE 拒绝缺失来源的
+下行数据报。超限回复失败关闭，不会截短成另一条数据报。
 
 ## 浏览器 ClientHello
 

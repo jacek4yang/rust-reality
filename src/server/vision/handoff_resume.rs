@@ -164,7 +164,7 @@ pub(crate) async fn run_resumed_xudp_session(
     drop(prefetched_plaintext);
 
     let mut packets = drain_xudp_frames(&mut vision_plaintext).map_err(VisionSessionError::Xudp)?;
-    let mut association = None::<XudpDirectAssociation>;
+    let mut association = None::<XudpDirectAssociation<'_>>;
     let globals = process_xudp_global_map();
     let mut uplink_bytes = 0_u64;
     let mut downlink_bytes = 0_u64;
@@ -315,7 +315,7 @@ pub(crate) async fn run_resumed_xudp_session(
         }
     }
 
-    assoc.close(globals, std::time::Instant::now());
+    assoc.close(std::time::Instant::now());
     let _ = client_writer.shutdown(timeout).await;
     Ok(VisionRelayStats {
         uplink_bytes,
@@ -325,12 +325,12 @@ pub(crate) async fn run_resumed_xudp_session(
 }
 
 /// Landward owner for one XUDP association (Direct local UDP or NXR carrier).
-pub(super) enum XudpLandwardAssociation {
-    Direct(XudpDirectAssociation),
-    Nxr(XudpNxrAssociation),
+pub(super) enum XudpLandwardAssociation<'a> {
+    Direct(XudpDirectAssociation<'a>),
+    Nxr(XudpNxrAssociation<'a>),
 }
 
-impl XudpLandwardAssociation {
+impl XudpLandwardAssociation<'_> {
     pub(super) const fn capability(&self) -> XudpEgressCapability {
         match self {
             Self::Direct(_) => XudpEgressCapability::Direct,
@@ -370,14 +370,10 @@ impl XudpLandwardAssociation {
         }
     }
 
-    pub(super) async fn close(
-        self,
-        globals: &crate::server::xudp::XudpGlobalMap,
-        now: std::time::Instant,
-    ) {
+    pub(super) async fn close(self, now: std::time::Instant) {
         match self {
-            Self::Direct(assoc) => assoc.close(globals, now),
-            Self::Nxr(assoc) => assoc.close(globals, now).await,
+            Self::Direct(assoc) => assoc.close(now),
+            Self::Nxr(assoc) => assoc.close(now).await,
         }
     }
 }

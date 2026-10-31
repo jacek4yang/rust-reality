@@ -134,6 +134,12 @@ supported.
 }
 ```
 
+UDP replies preserve their source independently of the current uplink target.
+A delayed reply cannot authorize or replace the target of a later Keep frame.
+NXR LANDING includes the actual UDP source in each authenticated downlink
+frame; LINE rejects a downlink datagram without that address. Oversized replies
+fail closed instead of becoming truncated datagrams.
+
 ## Multi-LINE groups and selection
 
 Tag each LINE, declare `lineGroups`, and optionally pin a listener to a group.
@@ -141,6 +147,8 @@ Absent `lineGroups`, all lines form one implicit `default` group. Selection
 uses a sticky primary with a hedge after `selection.hedgeMs` (default 275)
 inside `selection.timeoutMs` (default 15000). Health trips after repeated
 authentication faults and affects **new** sessions only.
+Groups that reference the same LINE share its immutable compiled configuration;
+each group keeps its own health and sticky-primary state.
 
 ```json
 {

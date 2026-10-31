@@ -52,6 +52,17 @@ impl Drop for DirGuard {
 mod ports;
 use ports::free_port;
 
+#[path = "support/xudp_reordering.rs"]
+mod xudp_reordering;
+
+#[test]
+fn handoff_xudp_delayed_replies_preserve_sources() {
+    let root = std::env::temp_dir().join(format!("rr-handoff-reordering-{}", free_port()));
+    let _guard = DirGuard(root.clone());
+    let stack = start_handoff_line_landing(&root, false, "chrome");
+    xudp_reordering::delayed_replies_preserve_sources(stack.socks_port, LANDING_IP);
+}
+
 fn wait_tcp(ip: Ipv4Addr, port: u16, budget: Duration) {
     let deadline = Instant::now() + budget;
     loop {

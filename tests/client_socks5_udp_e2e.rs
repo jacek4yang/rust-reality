@@ -36,6 +36,15 @@ impl Drop for DirGuard {
 mod ports;
 use ports::free_port;
 
+#[path = "support/xudp_reordering.rs"]
+mod xudp_reordering;
+
+#[test]
+fn direct_xudp_delayed_replies_preserve_sources() {
+    let (_guard, socks_port, _entry_port, _cover, _entry, _client) = start_stack(false, "chrome");
+    xudp_reordering::delayed_replies_preserve_sources(socks_port, std::net::Ipv4Addr::LOCALHOST);
+}
+
 fn wait_port(port: u16, budget: Duration) {
     let deadline = Instant::now() + budget;
     loop {

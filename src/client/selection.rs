@@ -227,23 +227,35 @@ impl LinePool {
     }
 
     /// Compiles explicit named groups; each name must resolve to configured tags.
+    ///
+    /// Groups share immutable compiled LINEs, but own their selection health.
     pub fn from_groups(
         lines: &[crate::config::node::LineConfig],
         groups: &[crate::config::node::LineGroupConfig],
         policy: SelectionPolicy,
     ) -> Result<Self, LineError> {
-        let by_tag: std::collections::BTreeMap<&str, &crate::config::node::LineConfig> = lines
+        let mut by_tag: std::collections::BTreeMap<_, _> = lines
             .iter()
-            .filter_map(|l| l.tag.as_deref().map(|t| (t, l)))
+            .filter_map(|line| line.tag.as_deref().map(|tag| (tag, (line, None))))
             .collect();
         let mut out = Vec::with_capacity(groups.len());
         for group in groups {
             let mut members = Vec::new();
             for tag in &group.lines {
-                let cfg = by_tag
-                    .get(tag.as_str())
+                let (config, compiled) = by_tag
+                    .get_mut(tag.as_str())
                     .ok_or(LineError::Config("line group unknown tag"))?;
-                members.push(Arc::new(Line::from_config(cfg)?));
+                // Compile on first reference so unused LINEs and error ordering
+                // retain the same behavior. The cache ends with construction.
+                let line = match compiled {
+                    Some(line) => Arc::clone(line),
+                    None => {
+                        let line = Arc::new(Line::from_config(config)?);
+                        *compiled = Some(Arc::clone(&line));
+                        line
+                    }
+                };
+                members.push(line);
             }
             out.push(Arc::new(LineGroup::new(
                 group.name.clone(),
@@ -299,6 +311,44 @@ mod tests {
     fn rejects_empty_group() {
         let err = LineGroup::new("g", vec![], SelectionPolicy::default()).unwrap_err();
         assert!(matches!(err, LineError::Config(_)));
+    }
+
+    #[test]
+    fn shared_lines_keep_group_health_independent_and_release_with_the_pool() {
+        use crate::config::node::LineGroupConfig;
+
+        let pool = LinePool::from_groups(
+            &[dummy_line("a", 1), dummy_line("b", 2)],
+            &[
+                LineGroupConfig {
+                    name: "first".to_owned(),
+                    lines: vec!["a".to_owned(), "b".to_owned()],
+                },
+                LineGroupConfig {
+                    name: "second".to_owned(),
+                    lines: vec!["a".to_owned(), "b".to_owned()],
+                },
+            ],
+            SelectionPolicy::default(),
+        )
+        .unwrap();
+        let first = &pool.groups[0];
+        let second = &pool.groups[1];
+        for (a, b) in first.lines.iter().zip(&second.lines) {
+            assert!(Arc::ptr_eq(a, b));
+        }
+        first.note_fault(0);
+        first.note_fault(0);
+        assert_eq!(first.pick_primary(), 1);
+        assert_eq!(second.pick_primary(), 0);
+        first.note_success(1);
+        assert_eq!(first.sticky.load(Ordering::Relaxed), 1);
+        assert_eq!(second.sticky.load(Ordering::Relaxed), 0);
+        assert_eq!(second.fault_counts(), vec![0, 0]);
+
+        let line = Arc::downgrade(&first.lines[0]);
+        drop(pool);
+        assert!(line.upgrade().is_none());
     }
 
     #[tokio::test]

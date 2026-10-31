@@ -1,6 +1,5 @@
 //! TCP relay over one authenticated LINE, preserving each half-close.
-use super::vision_io::VisionIo;
-pub(super) use super::vision_io::VisionTunnelError;
+use super::vision_io::{VisionIo, VisionTunnelError};
 use crate::protocol::{
     reality::{
         ClientSession,

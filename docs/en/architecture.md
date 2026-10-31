@@ -540,3 +540,10 @@ UDP destinations from the client SOCKS5 **UDP ASSOCIATE** path use **XUDP**
 ([ADR 0060](../adr/0060-xudp-over-nxr-and-handoff.md)); Block fails closed and
 there is no silent Direct fallback. See
 [XUDP and Vision UDP/443](development/xudp.md).
+
+An XUDP association owns its GlobalID lease from pending open through teardown.
+Failure and cancellation release the lease automatically; concurrent
+associations of the same authenticated user keep independent leases. The
+existing grace period starts after the final owner releases the ID. This
+ownership bookkeeping is outside datagram forwarding; see
+[ADR 0067](../adr/0067-xudp-global-id-leases-follow-association-lifetime.md).

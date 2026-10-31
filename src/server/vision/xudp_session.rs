@@ -133,7 +133,7 @@ impl VisionHandler {
         let mut packets =
             drain_xudp_frames(&mut vision_plaintext).map_err(VisionSessionError::Xudp)?;
 
-        let mut association = None::<XudpLandwardAssociation>;
+        let mut association = None::<XudpLandwardAssociation<'_>>;
         let globals = process_xudp_global_map();
         let mut uplink_bytes = 0_u64;
         let mut downlink_bytes = 0_u64;
@@ -427,7 +427,7 @@ impl VisionHandler {
             }
         }
 
-        assoc.close(globals, std::time::Instant::now()).await;
+        assoc.close(std::time::Instant::now()).await;
         let _ = client_writer.shutdown(self.io_timeout).await;
         Ok(VisionRelayStats {
             uplink_bytes,

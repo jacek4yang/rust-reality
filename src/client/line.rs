@@ -24,8 +24,7 @@ use crate::{
     },
 };
 
-use super::session::{VisionTunnel, VisionTunnelError};
-use super::xudp::XudpTunnel;
+use super::{session::VisionTunnel, vision_io::VisionTunnelError, xudp::XudpTunnel};
 
 const ALPN: &[&[u8]] = &[b"h2", b"http/1.1"];
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);

@@ -35,6 +35,11 @@ rejects malformed framing and lengths while preserving all observable wire bytes
 `p256_agreement` exercises the TLS SEC1 share boundary and agreement with a
 fixed fuzz-only scalar, including invalid lengths, infinity and off-curve input.
 
+`nxr_udp_frames` exercises both the raw authenticated-frame decoder and the
+same bounded body parser directly through a test-only hook. This prevents MAC
+rejection from hiding malformed flags, addresses, and payload lengths from
+fuzzing; production parsing still verifies the MAC before decoding the body.
+
 ## Commands
 
 ```shell

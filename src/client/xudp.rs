@@ -20,14 +20,15 @@ use crate::protocol::{
     },
 };
 
-use super::{session::VisionTunnelError, vision_io::VisionIo};
+use super::vision_io::{VisionIo, VisionTunnelError};
 
 /// Client-side XUDP association bound to one authenticated LINE.
 pub struct XudpTunnel {
     io: VisionIo,
-    /// Destination of the most recent uplink New/Keep frame (for Keep without rewrite).
-    last_destination: Option<Destination>,
-    association_opened: bool,
+    /// Destination last committed to the uplink; replies cannot change it.
+    last_uplink_destination: Option<Destination>,
+    /// Source of the most recent downlink frame (for Keep without an address).
+    last_downlink_source: Option<Destination>,
     allow_udp_443: bool,
 }
 
@@ -50,8 +51,8 @@ impl XudpTunnel {
         let io = VisionIo::connect(stream, session, user_id, &request[..request_len]).await?;
         Ok(Self {
             io,
-            last_destination: None,
-            association_opened: false,
+            last_uplink_destination: None,
+            last_downlink_source: None,
             allow_udp_443,
         })
     }
@@ -96,11 +97,11 @@ impl XudpTunnel {
                         .await?;
 
                 }
-                ready = self.poll_fill_readable(), if self.association_opened => {
+                ready = self.poll_fill_readable(), if self.last_uplink_destination.is_some() => {
                     ready?;
                     while let Some(packet) = self.take_xudp_packet()? {
                         let Some(destination) = packet.destination.clone().or_else(|| {
-                            self.last_destination.clone()
+                            self.last_downlink_source.clone()
                         }) else {
                             continue;
                         };
@@ -130,9 +131,9 @@ impl XudpTunnel {
         payload: &[u8],
         scratch: &mut Vec<u8>,
     ) -> Result<(), VisionTunnelError> {
-        let new_association = !self.association_opened;
+        let new_association = self.last_uplink_destination.is_none();
         let rewrite = self
-            .last_destination
+            .last_uplink_destination
             .as_ref()
             .is_some_and(|last| last != destination);
         scratch.clear();
@@ -146,8 +147,10 @@ impl XudpTunnel {
         )
         .map_err(|_| VisionTunnelError::Request)?;
         self.io.write_application(scratch).await?;
-        self.association_opened = true;
-        self.last_destination = Some(destination.clone());
+        if new_association {
+            self.last_downlink_source = Some(destination.clone());
+        }
+        self.last_uplink_destination = Some(destination.clone());
         Ok(())
     }
 
@@ -160,7 +163,7 @@ impl XudpTunnel {
             Ok((packet, consumed)) => {
                 self.io.readable_at += consumed;
                 if let Some(dest) = packet.destination.clone() {
-                    self.last_destination = Some(dest);
+                    self.last_downlink_source = Some(dest);
                 }
                 if self.io.readable_at > 64 * 1024 {
                     self.io.readable.drain(..self.io.readable_at);
