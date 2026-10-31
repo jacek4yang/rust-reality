@@ -1,0 +1,21 @@
+{
+  "purpose": "Allocation-count diagnostic only, not timing or residency acceptance. Three repeats per profile, zero-connection and 128-connection controls, matched minimum ten-second process lifetime; workload and fixed server are immutable. Heaptrack instruments only the client. All successful workloads require exactly 128 authenticated HTTP responses.",
+  "controllerSha256": "52997ee1274bd4c48cded2a64fb12874f0c108f99971dd943ab226071455bb3f",
+  "toolSha256": "ca416fcd777db10954ff8d8fec2be314d4c82e99f343089d9b4a2b7cdb7a2bba",
+  "candidateSha256": "cd5535e856bce73572765b122e9b1405a16edd002e27fa5f9780c5fecb29ac27",
+  "baselineSha256": "0071eac26e36f6e8eb73bca313db5ec6567affefabbe8352d112dbd1f1bc60a3",
+  "serverSha256": "1af42605b1ec2b883ba854ec10a2bf69759e8c9a461eb8f3a1a4ba98a292511d",
+  "heaptrackVersion": "heaptrack 1.5.0",
+  "heaptrackScriptSha256": "11ef8b89a93d43b63e4dec187f4c7dca2644f10254c5639e55a563fb5465b574",
+  "heaptrackPreloadSha256": "e7304fb4e62b8cb99228f7d86a4a1b1adb9de61770712ad3b0c2a211f436fb0f",
+  "heaptrackInterpreterSha256": "2a9cee138a829fe7d72b8452ed0ca1d4a7273825789a962eae996b87e40ebc49",
+  "heaptrackPrintSha256": "99022bd2333c4d503c7b11db69a4d8f2801d900caf3ef957a0030b2c334ec118",
+  "uid": 1000,
+  "netns": "net:[4026533291]",
+  "affinity": [
+    0,
+    2,
+    4,
+    6
+  ]
+}

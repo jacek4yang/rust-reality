@@ -1,0 +1,171 @@
+
+/home/jacek/.cache/rr-v230-code-inspection-38abe32/rust-reality-unstripped:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000004a3050 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}>:
+  4a3050:	55                   	push   %rbp
+  4a3051:	41 57                	push   %r15
+  4a3053:	41 56                	push   %r14
+  4a3055:	41 55                	push   %r13
+  4a3057:	41 54                	push   %r12
+  4a3059:	53                   	push   %rbx
+  4a305a:	48 83 ec 28          	sub    $0x28,%rsp
+  4a305e:	4c 8b 0f             	mov    (%rdi),%r9
+  4a3061:	45 0f b6 41 05       	movzbl 0x5(%r9),%r8d
+  4a3066:	44 89 c0             	mov    %r8d,%eax
+  4a3069:	c1 e0 04             	shl    $0x4,%eax
+  4a306c:	45 0f b7 11          	movzwl (%r9),%r10d
+  4a3070:	4c 01 d0             	add    %r10,%rax
+  4a3073:	45 0f b7 59 02       	movzwl 0x2(%r9),%r11d
+  4a3078:	49 8d 2c 03          	lea    (%r11,%rax,1),%rbp
+  4a307c:	48 83 c5 05          	add    $0x5,%rbp
+  4a3080:	48 29 ea             	sub    %rbp,%rdx
+  4a3083:	0f 82 f8 01 00 00    	jb     4a3281 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x231>
+  4a3089:	4c 8b 7f 18          	mov    0x18(%rdi),%r15
+  4a308d:	48 8b 47 20          	mov    0x20(%rdi),%rax
+  4a3091:	48 8b 00             	mov    (%rax),%rax
+  4a3094:	48 8b 4f 28          	mov    0x28(%rdi),%rcx
+  4a3098:	48 8b 09             	mov    (%rcx),%rcx
+  4a309b:	48 89 cb             	mov    %rcx,%rbx
+  4a309e:	48 01 c3             	add    %rax,%rbx
+  4a30a1:	0f 82 c4 01 00 00    	jb     4a326b <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x21b>
+  4a30a7:	4c 39 fb             	cmp    %r15,%rbx
+  4a30aa:	0f 87 bb 01 00 00    	ja     4a326b <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x21b>
+  4a30b0:	4c 8b 77 08          	mov    0x8(%rdi),%r14
+  4a30b4:	4c 8b 67 10          	mov    0x10(%rdi),%r12
+  4a30b8:	4c 89 64 24 10       	mov    %r12,0x10(%rsp)
+  4a30bd:	45 84 c0             	test   %r8b,%r8b
+  4a30c0:	74 25                	je     4a30e7 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x97>
+  4a30c2:	4c 39 d1             	cmp    %r10,%rcx
+  4a30c5:	0f 85 a5 00 00 00    	jne    4a3170 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x120>
+  4a30cb:	41 0f 10 06          	movups (%r14),%xmm0
+  4a30cf:	0f 11 06             	movups %xmm0,(%rsi)
+  4a30d2:	41 bc 10 00 00 00    	mov    $0x10,%r12d
+  4a30d8:	4d 8d 44 24 05       	lea    0x5(%r12),%r8
+  4a30dd:	49 39 e8             	cmp    %rbp,%r8
+  4a30e0:	76 1b                	jbe    4a30fd <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0xad>
+  4a30e2:	e9 89 00 00 00       	jmp    4a3170 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x120>
+  4a30e7:	4c 39 d1             	cmp    %r10,%rcx
+  4a30ea:	0f 85 80 00 00 00    	jne    4a3170 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x120>
+  4a30f0:	45 31 e4             	xor    %r12d,%r12d
+  4a30f3:	4d 8d 44 24 05       	lea    0x5(%r12),%r8
+  4a30f8:	49 39 e8             	cmp    %rbp,%r8
+  4a30fb:	77 73                	ja     4a3170 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x120>
+  4a30fd:	45 0f b6 49 04       	movzbl 0x4(%r9),%r9d
+  4a3102:	66 41 c1 c2 08       	rol    $0x8,%r10w
+  4a3107:	46 88 0c 26          	mov    %r9b,(%rsi,%r12,1)
+  4a310b:	66 46 89 54 26 01    	mov    %r10w,0x1(%rsi,%r12,1)
+  4a3111:	66 41 c1 c3 08       	rol    $0x8,%r11w
+  4a3116:	66 46 89 5c 26 03    	mov    %r11w,0x3(%rsi,%r12,1)
+  4a311c:	4d 8d 2c 08          	lea    (%r8,%rcx,1),%r13
+  4a3120:	49 89 ec             	mov    %rbp,%r12
+  4a3123:	4d 29 ec             	sub    %r13,%r12
+  4a3126:	72 48                	jb     4a3170 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x120>
+  4a3128:	48 03 44 24 10       	add    0x10(%rsp),%rax
+  4a312d:	49 01 f0             	add    %rsi,%r8
+  4a3130:	48 89 7c 24 20       	mov    %rdi,0x20(%rsp)
+  4a3135:	4c 89 c7             	mov    %r8,%rdi
+  4a3138:	48 89 74 24 08       	mov    %rsi,0x8(%rsp)
+  4a313d:	48 89 c6             	mov    %rax,%rsi
+  4a3140:	48 89 54 24 18       	mov    %rdx,0x18(%rsp)
+  4a3145:	48 89 ca             	mov    %rcx,%rdx
+  4a3148:	ff 15 9a fe 30 00    	call   *0x30fe9a(%rip)        # 7b2fe8 <memcpy@GLIBC_2.14>
+  4a314e:	4c 03 6c 24 08       	add    0x8(%rsp),%r13
+  4a3153:	4c 89 ef             	mov    %r13,%rdi
+  4a3156:	31 f6                	xor    %esi,%esi
+  4a3158:	4c 89 e2             	mov    %r12,%rdx
+  4a315b:	ff 15 1f 00 31 00    	call   *0x31001f(%rip)        # 7b3180 <memset@GLIBC_2.2.5>
+  4a3161:	48 8b 7c 24 20       	mov    0x20(%rsp),%rdi
+  4a3166:	48 8b 74 24 08       	mov    0x8(%rsp),%rsi
+  4a316b:	48 8b 54 24 18       	mov    0x18(%rsp),%rdx
+  4a3170:	48 8b 4f 30          	mov    0x30(%rdi),%rcx
+  4a3174:	44 0f b6 51 05       	movzbl 0x5(%rcx),%r10d
+  4a3179:	41 80 fa 02          	cmp    $0x2,%r10b
+  4a317d:	75 0f                	jne    4a318e <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x13e>
+  4a317f:	48 83 c4 28          	add    $0x28,%rsp
+  4a3183:	5b                   	pop    %rbx
+  4a3184:	41 5c                	pop    %r12
+  4a3186:	41 5d                	pop    %r13
+  4a3188:	41 5e                	pop    %r14
+  4a318a:	41 5f                	pop    %r15
+  4a318c:	5d                   	pop    %rbp
+  4a318d:	c3                   	ret
+  4a318e:	48 8b 47 38          	mov    0x38(%rdi),%rax
+  4a3192:	48 8b 00             	mov    (%rax),%rax
+  4a3195:	49 89 c0             	mov    %rax,%r8
+  4a3198:	49 01 d8             	add    %rbx,%r8
+  4a319b:	0f 82 f9 00 00 00    	jb     4a329a <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x24a>
+  4a31a1:	4d 39 f8             	cmp    %r15,%r8
+  4a31a4:	0f 87 f0 00 00 00    	ja     4a329a <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x24a>
+  4a31aa:	48 01 ee             	add    %rbp,%rsi
+  4a31ad:	44 0f b7 01          	movzwl (%rcx),%r8d
+  4a31b1:	44 0f b7 49 02       	movzwl 0x2(%rcx),%r9d
+  4a31b6:	4b 8d 3c 01          	lea    (%r9,%r8,1),%rdi
+  4a31ba:	41 f6 c2 01          	test   $0x1,%r10b
+  4a31be:	74 26                	je     4a31e6 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x196>
+  4a31c0:	4c 39 c0             	cmp    %r8,%rax
+  4a31c3:	75 ba                	jne    4a317f <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x12f>
+  4a31c5:	48 83 c7 15          	add    $0x15,%rdi
+  4a31c9:	48 39 fa             	cmp    %rdi,%rdx
+  4a31cc:	75 b1                	jne    4a317f <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x12f>
+  4a31ce:	41 0f 10 06          	movups (%r14),%xmm0
+  4a31d2:	0f 11 06             	movups %xmm0,(%rsi)
+  4a31d5:	41 ba 10 00 00 00    	mov    $0x10,%r10d
+  4a31db:	49 8d 7a 05          	lea    0x5(%r10),%rdi
+  4a31df:	48 39 d7             	cmp    %rdx,%rdi
+  4a31e2:	77 9b                	ja     4a317f <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x12f>
+  4a31e4:	eb 1e                	jmp    4a3204 <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x1b4>
+  4a31e6:	4c 39 c0             	cmp    %r8,%rax
+  4a31e9:	75 94                	jne    4a317f <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x12f>
+  4a31eb:	48 83 c7 05          	add    $0x5,%rdi
+  4a31ef:	48 39 fa             	cmp    %rdi,%rdx
+  4a31f2:	75 8b                	jne    4a317f <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x12f>
+  4a31f4:	45 31 d2             	xor    %r10d,%r10d
+  4a31f7:	49 8d 7a 05          	lea    0x5(%r10),%rdi
+  4a31fb:	48 39 d7             	cmp    %rdx,%rdi
+  4a31fe:	0f 87 7b ff ff ff    	ja     4a317f <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x12f>
+  4a3204:	0f b6 49 04          	movzbl 0x4(%rcx),%ecx
+  4a3208:	42 88 0c 16          	mov    %cl,(%rsi,%r10,1)
+  4a320c:	66 41 c1 c0 08       	rol    $0x8,%r8w
+  4a3211:	66 41 c1 c1 08       	rol    $0x8,%r9w
+  4a3216:	66 46 89 44 16 01    	mov    %r8w,0x1(%rsi,%r10,1)
+  4a321c:	66 46 89 4c 16 03    	mov    %r9w,0x3(%rsi,%r10,1)
+  4a3222:	4c 8d 3c 07          	lea    (%rdi,%rax,1),%r15
+  4a3226:	4c 29 fa             	sub    %r15,%rdx
+  4a3229:	0f 82 50 ff ff ff    	jb     4a317f <<rust_reality::client::vision_io::VisionIo>::write_application::{closure#0}::{closure#3}+0x12f>
+  4a322f:	48 8b 4c 24 10       	mov    0x10(%rsp),%rcx
+  4a3234:	48 01 d9             	add    %rbx,%rcx
+  4a3237:	48 01 f7             	add    %rsi,%rdi
+  4a323a:	49 89 f6             	mov    %rsi,%r14
+  4a323d:	48 89 ce             	mov    %rcx,%rsi
+  4a3240:	48 89 d3             	mov    %rdx,%rbx
+  4a3243:	48 89 c2             	mov    %rax,%rdx
+  4a3246:	ff 15 9c fd 30 00    	call   *0x30fd9c(%rip)        # 7b2fe8 <memcpy@GLIBC_2.14>
+  4a324c:	4d 01 f7             	add    %r14,%r15
+  4a324f:	4c 89 ff             	mov    %r15,%rdi
+  4a3252:	31 f6                	xor    %esi,%esi
+  4a3254:	48 89 da             	mov    %rbx,%rdx
+  4a3257:	48 83 c4 28          	add    $0x28,%rsp
+  4a325b:	5b                   	pop    %rbx
+  4a325c:	41 5c                	pop    %r12
+  4a325e:	41 5d                	pop    %r13
+  4a3260:	41 5e                	pop    %r14
+  4a3262:	41 5f                	pop    %r15
+  4a3264:	5d                   	pop    %rbp
+  4a3265:	ff 25 15 ff 30 00    	jmp    *0x30ff15(%rip)        # 7b3180 <memset@GLIBC_2.2.5>
+  4a326b:	48 8d 0d 3e cb 2f 00 	lea    0x2fcb3e(%rip),%rcx        # 79fdb0 <anon.52698127c12854c52b81d178cd5cfcaf.8.llvm.3558453383676843257+0x36f0>
+  4a3272:	48 89 c7             	mov    %rax,%rdi
+  4a3275:	48 89 de             	mov    %rbx,%rsi
+  4a3278:	4c 89 fa             	mov    %r15,%rdx
+  4a327b:	ff 15 97 fd 30 00    	call   *0x30fd97(%rip)        # 7b3018 <_DYNAMIC+0x268>
+  4a3281:	48 8d 3d 17 c4 c6 ff 	lea    -0x393be9(%rip),%rdi        # 10f69f <anon.52698127c12854c52b81d178cd5cfcaf.6.llvm.3558453383676843257+0x85c2>
+  4a3288:	48 8d 15 f1 ca 2f 00 	lea    0x2fcaf1(%rip),%rdx        # 79fd80 <anon.52698127c12854c52b81d178cd5cfcaf.8.llvm.3558453383676843257+0x36c0>
+  4a328f:	be 13 00 00 00       	mov    $0x13,%esi
+  4a3294:	ff 15 96 fd 30 00    	call   *0x30fd96(%rip)        # 7b3030 <_DYNAMIC+0x280>
+  4a329a:	48 8d 0d f7 ca 2f 00 	lea    0x2fcaf7(%rip),%rcx        # 79fd98 <anon.52698127c12854c52b81d178cd5cfcaf.8.llvm.3558453383676843257+0x36d8>
+  4a32a1:	48 89 df             	mov    %rbx,%rdi
+  4a32a4:	4c 89 c6             	mov    %r8,%rsi
+  4a32a7:	4c 89 fa             	mov    %r15,%rdx
+  4a32aa:	ff 15 68 fd 30 00    	call   *0x30fd68(%rip)        # 7b3018 <_DYNAMIC+0x268>

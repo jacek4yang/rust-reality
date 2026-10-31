@@ -1,0 +1,317 @@
+{
+  "scope": "Diagnostic existing-thread counters over Direct-upload warm-up plus three c1 / 1024-MiB samples; partial observed phase counters, not exact whole-request costs or acceptance timing. Sleeping-thread not-counted intervals contribute zero.",
+  "results": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "seconds": 4.185580730438232,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 5840907710.0,
+          "cpu_core/instructions/": 8948507145.0,
+          "task-clock": 2537.68,
+          "context-switches": 32647.0,
+          "syscalls:sys_enter_recvfrom": 98956.0,
+          "syscalls:sys_enter_sendto": 167898.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 233.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7455263479.0,
+          "cpu_core/instructions/": 11728370635.0,
+          "task-clock": 3189.1100000000006,
+          "context-switches": 23567.0,
+          "syscalls:sys_enter_recvfrom": 271485.0,
+          "syscalls:sys_enter_sendto": 795401.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 4072.0
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "seconds": 3.8728268146514893,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 7633105932.0,
+          "cpu_core/instructions/": 11228192481.0,
+          "task-clock": 3265.2900000000013,
+          "context-switches": 27166.0,
+          "syscalls:sys_enter_recvfrom": 217637.0,
+          "syscalls:sys_enter_sendto": 228305.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 63.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7858786435.0,
+          "cpu_core/instructions/": 11468058547.0,
+          "task-clock": 3380.2300000000005,
+          "context-switches": 35742.0,
+          "syscalls:sys_enter_recvfrom": 313518.0,
+          "syscalls:sys_enter_sendto": 313533.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 363.0
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "seconds": 3.8445098400115967,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 7523517943.0,
+          "cpu_core/instructions/": 11095306182.0,
+          "task-clock": 3232.92,
+          "context-switches": 32512.0,
+          "syscalls:sys_enter_recvfrom": 210863.0,
+          "syscalls:sys_enter_sendto": 223242.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 98.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7778908491.0,
+          "cpu_core/instructions/": 11404764034.0,
+          "task-clock": 3358.93,
+          "context-switches": 41124.0,
+          "syscalls:sys_enter_recvfrom": 311410.0,
+          "syscalls:sys_enter_sendto": 311425.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 462.0
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-04-baseline",
+      "seconds": 4.204225540161133,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 6095360540.0,
+          "cpu_core/instructions/": 9156017626.0,
+          "task-clock": 2660.229999999999,
+          "context-switches": 39866.0,
+          "syscalls:sys_enter_recvfrom": 105175.0,
+          "syscalls:sys_enter_sendto": 170144.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 268.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7651762328.0,
+          "cpu_core/instructions/": 11981136543.0,
+          "task-clock": 3287.2300000000005,
+          "context-switches": 31026.0,
+          "syscalls:sys_enter_recvfrom": 282257.0,
+          "syscalls:sys_enter_sendto": 806968.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 3842.0
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-01-candidate",
+      "seconds": 3.8789148330688477,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 7317812988.0,
+          "cpu_core/instructions/": 11040971764.0,
+          "task-clock": 3136.190000000001,
+          "context-switches": 27281.0,
+          "syscalls:sys_enter_recvfrom": 213762.0,
+          "syscalls:sys_enter_sendto": 227525.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 64.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7695071362.0,
+          "cpu_core/instructions/": 11278973007.0,
+          "task-clock": 3316.3399999999992,
+          "context-switches": 37117.0,
+          "syscalls:sys_enter_recvfrom": 309277.0,
+          "syscalls:sys_enter_sendto": 309319.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 439.0
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-02-baseline",
+      "seconds": 4.096471309661865,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 6073731972.0,
+          "cpu_core/instructions/": 9351895427.0,
+          "task-clock": 2624.59,
+          "context-switches": 29284.0,
+          "syscalls:sys_enter_recvfrom": 107854.0,
+          "syscalls:sys_enter_sendto": 168251.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 156.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7367317735.0,
+          "cpu_core/instructions/": 11592261379.0,
+          "task-clock": 3138.5600000000004,
+          "context-switches": 19551.0,
+          "syscalls:sys_enter_recvfrom": 271977.0,
+          "syscalls:sys_enter_sendto": 792879.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 3060.0
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-03-baseline",
+      "seconds": 4.04594087600708,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 6060574180.0,
+          "cpu_core/instructions/": 9296520095.0,
+          "task-clock": 2615.7599999999993,
+          "context-switches": 28763.0,
+          "syscalls:sys_enter_recvfrom": 102482.0,
+          "syscalls:sys_enter_sendto": 166107.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 217.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7130900804.0,
+          "cpu_core/instructions/": 11362618035.0,
+          "task-clock": 3010.18,
+          "context-switches": 9642.0,
+          "syscalls:sys_enter_recvfrom": 266715.0,
+          "syscalls:sys_enter_sendto": 780494.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 1160.0
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-04-candidate",
+      "seconds": 3.8575332164764404,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 7292447913.0,
+          "cpu_core/instructions/": 10935499072.0,
+          "task-clock": 3124.5000000000005,
+          "context-switches": 27041.0,
+          "syscalls:sys_enter_recvfrom": 205122.0,
+          "syscalls:sys_enter_sendto": 220429.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 68.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7687364741.0,
+          "cpu_core/instructions/": 11268207520.0,
+          "task-clock": 3317.4200000000014,
+          "context-switches": 38873.0,
+          "syscalls:sys_enter_recvfrom": 309160.0,
+          "syscalls:sys_enter_sendto": 309195.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 577.0
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-01-baseline",
+      "seconds": 4.135136365890503,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 6296040881.0,
+          "cpu_core/instructions/": 9605805074.0,
+          "task-clock": 2713.1900000000005,
+          "context-switches": 27551.0,
+          "syscalls:sys_enter_recvfrom": 114692.0,
+          "syscalls:sys_enter_sendto": 173452.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 196.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7589917658.0,
+          "cpu_core/instructions/": 11828904684.0,
+          "task-clock": 3258.4000000000005,
+          "context-switches": 28909.0,
+          "syscalls:sys_enter_recvfrom": 282858.0,
+          "syscalls:sys_enter_sendto": 807403.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 3460.0
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-02-candidate",
+      "seconds": 3.8526697158813477,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 7323426255.0,
+          "cpu_core/instructions/": 10956576153.0,
+          "task-clock": 3135.3500000000013,
+          "context-switches": 26285.0,
+          "syscalls:sys_enter_recvfrom": 207681.0,
+          "syscalls:sys_enter_sendto": 222237.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 84.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7680840675.0,
+          "cpu_core/instructions/": 11188567334.0,
+          "task-clock": 3303.460000000001,
+          "context-switches": 33974.0,
+          "syscalls:sys_enter_recvfrom": 304809.0,
+          "syscalls:sys_enter_sendto": 304842.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 571.0
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-03-candidate",
+      "seconds": 3.889077663421631,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 7346312600.0,
+          "cpu_core/instructions/": 10956707357.0,
+          "task-clock": 3146.2300000000005,
+          "context-switches": 26870.0,
+          "syscalls:sys_enter_recvfrom": 204065.0,
+          "syscalls:sys_enter_sendto": 219517.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 86.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7678622093.0,
+          "cpu_core/instructions/": 11268970157.0,
+          "task-clock": 3312.84,
+          "context-switches": 38026.0,
+          "syscalls:sys_enter_recvfrom": 308620.0,
+          "syscalls:sys_enter_sendto": 308655.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 556.0
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-04-baseline",
+      "seconds": 4.200368404388428,
+      "counters": {
+        "server": {
+          "cpu_core/cycles/": 5923609996.0,
+          "cpu_core/instructions/": 8944395776.0,
+          "task-clock": 2576.480000000001,
+          "context-switches": 34192.0,
+          "syscalls:sys_enter_recvfrom": 98258.0,
+          "syscalls:sys_enter_sendto": 167269.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 274.0
+        },
+        "client": {
+          "cpu_core/cycles/": 7582084167.0,
+          "cpu_core/instructions/": 11824139003.0,
+          "task-clock": 3246.309999999999,
+          "context-switches": 25139.0,
+          "syscalls:sys_enter_recvfrom": 272767.0,
+          "syscalls:sys_enter_sendto": 797569.0,
+          "syscalls:sys_enter_read": 0.0,
+          "syscalls:sys_enter_write": 4469.0
+        }
+      }
+    }
+  ]
+}

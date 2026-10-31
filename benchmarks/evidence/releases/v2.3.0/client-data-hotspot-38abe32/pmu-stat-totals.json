@@ -1,0 +1,149 @@
+{
+  "purpose": "Diagnostic whole-client lifetime totals; setup and data phases combined, not a per-case acceptance comparison",
+  "slots": [
+    {
+      "slot": "block-01-slot-01-baseline.stat",
+      "validIntervals": 552,
+      "totals": {
+        "cpu_core/cycles/": 1488779709.0,
+        "cpu_core/instructions/": 1998407131.0,
+        "task-clock": 709.6400000000001,
+        "context-switches": 5542.0,
+        "cpu-migrations": 275.0,
+        "minor-faults": 3507.0
+      }
+    },
+    {
+      "slot": "block-01-slot-02-candidate.stat",
+      "validIntervals": 126,
+      "totals": {
+        "cpu_core/cycles/": 1888625724.0,
+        "cpu_core/instructions/": 2722887483.0,
+        "task-clock": 620.2499999999999,
+        "context-switches": 3576.0,
+        "cpu-migrations": 343.0,
+        "minor-faults": 1507.0
+      }
+    },
+    {
+      "slot": "block-01-slot-03-candidate.stat",
+      "validIntervals": 150,
+      "totals": {
+        "cpu_core/cycles/": 1896925808.0,
+        "cpu_core/instructions/": 2717298002.0,
+        "task-clock": 622.13,
+        "context-switches": 3703.0,
+        "cpu-migrations": 300.0,
+        "minor-faults": 1515.0
+      }
+    },
+    {
+      "slot": "block-01-slot-04-baseline.stat",
+      "validIntervals": 534,
+      "totals": {
+        "cpu_core/cycles/": 1477945708.0,
+        "cpu_core/instructions/": 1995689379.0,
+        "task-clock": 689.9100000000001,
+        "context-switches": 4570.0,
+        "cpu-migrations": 132.0,
+        "minor-faults": 3429.0
+      }
+    },
+    {
+      "slot": "block-02-slot-01-candidate.stat",
+      "validIntervals": 132,
+      "totals": {
+        "cpu_core/cycles/": 1881560701.0,
+        "cpu_core/instructions/": 2710198920.0,
+        "task-clock": 613.31,
+        "context-switches": 3511.0,
+        "cpu-migrations": 376.0,
+        "minor-faults": 1488.0
+      }
+    },
+    {
+      "slot": "block-02-slot-02-baseline.stat",
+      "validIntervals": 546,
+      "totals": {
+        "cpu_core/cycles/": 1527921890.0,
+        "cpu_core/instructions/": 2026191676.0,
+        "task-clock": 738.0400000000002,
+        "context-switches": 6500.0,
+        "cpu-migrations": 278.0,
+        "minor-faults": 3464.0
+      }
+    },
+    {
+      "slot": "block-02-slot-03-baseline.stat",
+      "validIntervals": 558,
+      "totals": {
+        "cpu_core/cycles/": 1488341336.0,
+        "cpu_core/instructions/": 1995495094.0,
+        "task-clock": 720.9999999999999,
+        "context-switches": 5121.0,
+        "cpu-migrations": 204.0,
+        "minor-faults": 3481.0
+      }
+    },
+    {
+      "slot": "block-02-slot-04-candidate.stat",
+      "validIntervals": 139,
+      "totals": {
+        "cpu_core/cycles/": 1894781059.0,
+        "cpu_core/instructions/": 2725591997.0,
+        "task-clock": 624.28,
+        "context-switches": 2954.0,
+        "cpu-migrations": 224.0,
+        "minor-faults": 1485.0
+      }
+    },
+    {
+      "slot": "block-03-slot-01-baseline.stat",
+      "validIntervals": 534,
+      "totals": {
+        "cpu_core/cycles/": 1498901880.0,
+        "cpu_core/instructions/": 2017009642.0,
+        "task-clock": 728.7800000000002,
+        "context-switches": 6357.0,
+        "cpu-migrations": 335.0,
+        "minor-faults": 3559.0
+      }
+    },
+    {
+      "slot": "block-03-slot-02-candidate.stat",
+      "validIntervals": 138,
+      "totals": {
+        "cpu_core/cycles/": 1876935609.0,
+        "cpu_core/instructions/": 2715735832.0,
+        "task-clock": 613.4200000000001,
+        "context-switches": 3961.0,
+        "cpu-migrations": 390.0,
+        "minor-faults": 1470.0
+      }
+    },
+    {
+      "slot": "block-03-slot-03-candidate.stat",
+      "validIntervals": 150,
+      "totals": {
+        "cpu_core/cycles/": 1894582013.0,
+        "cpu_core/instructions/": 2705565706.0,
+        "task-clock": 615.0899999999998,
+        "context-switches": 3494.0,
+        "cpu-migrations": 280.0,
+        "minor-faults": 1523.0
+      }
+    },
+    {
+      "slot": "block-03-slot-04-baseline.stat",
+      "validIntervals": 540,
+      "totals": {
+        "cpu_core/cycles/": 1491834976.0,
+        "cpu_core/instructions/": 2000002066.0,
+        "task-clock": 721.1699999999998,
+        "context-switches": 6035.0,
+        "cpu-migrations": 330.0,
+        "minor-faults": 3430.0
+      }
+    }
+  ]
+}

@@ -605,6 +605,25 @@ fn serve_upload_connection(
     client: IpAddr,
     length: u64,
 ) {
+    // curl waits before sending a large PUT body when it advertises this
+    // expectation. A missing interim response measures that client-side wait
+    // instead of origin/tunnel transfer capacity.
+    if request.version == "HTTP/1.1"
+        && request
+            .headers
+            .get("expect")
+            .is_some_and(|value| value.eq_ignore_ascii_case("100-continue"))
+    {
+        let stream = reader.get_mut();
+        if stream
+            .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
+            .and_then(|()| stream.flush())
+            .is_err()
+        {
+            shared.stats.errors.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+    }
     let mut remaining = length;
     let mut buffer = vec![0_u8; COPY_BUFFER_BYTES];
     let mut received = 0_u64;
@@ -717,6 +736,30 @@ mod tests {
         let put_rows = std::fs::read_to_string(&put_log).unwrap();
         assert!(put_rows.contains("\"bytes\":5"), "{put_rows}");
 
+        // Withhold the upload body until the origin acknowledges Expect.
+        // This catches the apparatus deadlock without a timing performance assertion.
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        stream.write_all(b"PUT /upload/expect HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n").unwrap();
+        let mut stream = BufReader::new(stream);
+        let mut line = String::new();
+        stream.read_line(&mut line).unwrap();
+        assert_eq!(line, "HTTP/1.1 100 Continue\r\n");
+        line.clear();
+        stream.read_line(&mut line).unwrap();
+        assert_eq!(line, "\r\n");
+        stream.get_mut().write_all(b"body").unwrap();
+        line.clear();
+        stream.read_line(&mut line).unwrap();
+        assert_eq!(line, "HTTP/1.1 200 OK\r\n");
+        let put_rows = std::fs::read_to_string(&put_log).unwrap();
+        assert!(
+            put_rows.contains("\"path\":\"/upload/expect\",\"bytes\":4"),
+            "{put_rows}"
+        );
+
         // The stats endpoint reports the counters the guards read.
         let outcome = std::process::Command::new("curl")
             .args([
@@ -728,7 +771,7 @@ mod tests {
             .unwrap();
         let stats = String::from_utf8_lossy(&outcome.stdout);
         assert!(stats.contains("\"gets\":1"), "{stats}");
-        assert!(stats.contains("\"puts\":1"), "{stats}");
+        assert!(stats.contains("\"puts\":2"), "{stats}");
         assert!(stats.contains("\"errors\":0"), "{stats}");
 
         // A missing payload is a client-visible 404, not an origin saturation

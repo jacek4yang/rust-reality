@@ -1,0 +1,5 @@
+{
+  "verdict": "INVALID_CONTROLLER_PHASE",
+  "reason": "Bidi follows Direct upload in the actual collector schedule. The trigger attached after the target was already complete, immediately signalling profilers before output creation. Correct trigger is final framed-upload sample. Attempt interrupted; all CPU policies restored. No PMU evidence claimed.",
+  "correction": "Require target completion receipt absent at attachment; require both profiler output files on detach."
+}

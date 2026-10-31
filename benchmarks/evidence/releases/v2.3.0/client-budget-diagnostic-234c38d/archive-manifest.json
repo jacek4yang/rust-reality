@@ -1,0 +1,83 @@
+{
+  "scope": "Rejected cooperative-budget diagnostic only; three blocks cannot establish acceptance. All slot JSON measurements and identities retained; process text logs and private runtime inputs excluded.",
+  "assessment": "data-assessment.json",
+  "verdict": "REJECTED_NO_REPEATABLE_BENEFIT",
+  "sampleBatches": 180,
+  "individualRequests": 13824,
+  "archives": [
+    {
+      "archive": "block-01-slot-01-baseline.tar.gz",
+      "sha256": "79b6e391d60e474dc43401ffa4a318164e7359f485e6257f450531506af7354b",
+      "memberManifest": "block-01-members.json"
+    },
+    {
+      "archive": "block-01-slot-02-candidate.tar.gz",
+      "sha256": "dee99c49187709a2ddabb0966b09b2dfa2c7de3169dc7ece762e033681decc98",
+      "memberManifest": "block-01-members.json"
+    },
+    {
+      "archive": "block-01-slot-03-candidate.tar.gz",
+      "sha256": "9c7439e6dd7590364ec156e41cc4df0c68ffa605a6c2d5fd8e92cf616f2766a9",
+      "memberManifest": "block-01-members.json"
+    },
+    {
+      "archive": "block-01-slot-04-baseline.tar.gz",
+      "sha256": "266424f9ca32b569a96cb7bdaf949fdb155d2881aac48dc26691631cd5a3beba",
+      "memberManifest": "block-01-members.json"
+    },
+    {
+      "archive": "block-02-slot-01-candidate.tar.gz",
+      "sha256": "c39d86427d836c4f994ff164bd9f31cdd1b30be1bfc70eb8c0ccc5e0452f7f3b",
+      "memberManifest": "block-02-members.json"
+    },
+    {
+      "archive": "block-02-slot-02-baseline.tar.gz",
+      "sha256": "131eb1f7e309207401a8f781b9e447e14a0456e97eb8b6d08cc312a6b748ac9f",
+      "memberManifest": "block-02-members.json"
+    },
+    {
+      "archive": "block-02-slot-03-baseline.tar.gz",
+      "sha256": "53b0be75b062427c7bc450bf2fbfbd011444dc015640ae8a94194c4fe585a3f5",
+      "memberManifest": "block-02-members.json"
+    },
+    {
+      "archive": "block-02-slot-04-candidate.tar.gz",
+      "sha256": "ddfd1a2024ef161b761874789a399a97651f84af2d57ba3e009bd449ebeda352",
+      "memberManifest": "block-02-members.json"
+    },
+    {
+      "archive": "block-03-slot-01-baseline.tar.gz",
+      "sha256": "58989aecfe4f95c97285dcbe135c0fda3b55e51dbd388ce5725c48bfa3479a15",
+      "memberManifest": "block-03-members.json"
+    },
+    {
+      "archive": "block-03-slot-02-candidate.tar.gz",
+      "sha256": "d546579815968707ecff2b8957d21546c0a8dd6d520315c213e3b9850c2ff690",
+      "memberManifest": "block-03-members.json"
+    },
+    {
+      "archive": "block-03-slot-03-candidate.tar.gz",
+      "sha256": "964dcd261d3ba368bb46ba599277c2bec1084fc00b220673eae1513653bbaf06",
+      "memberManifest": "block-03-members.json"
+    },
+    {
+      "archive": "block-03-slot-04-baseline.tar.gz",
+      "sha256": "2ac157284b17e79def06d4c5fbd6510ee36fc757da87550f92f9497432f41077",
+      "memberManifest": "block-03-members.json"
+    }
+  ],
+  "compressedJsonLines": [
+    {
+      "name": "conntrack.jsonl.gz",
+      "decodedSha256": "4e93ed5fd69660a144e3ed4b5a047400d78bf2d601b4f3851c09105c17682c3b",
+      "decodedBytes": 12310,
+      "records": 288
+    },
+    {
+      "name": "raw-samples.jsonl.gz",
+      "decodedSha256": "c5a977ce4c44c5cca801f23566cc3669d4d3f51e78937e041fe27f51544d9a4f",
+      "decodedBytes": 70254,
+      "records": 36
+    }
+  ]
+}

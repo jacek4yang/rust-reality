@@ -493,29 +493,26 @@ impl VisionEncoder {
         if output.len() != plan.wire_len() || content.len() != usize::from(plan.content_length) {
             return;
         }
-        let mut cursor = 0;
-        if plan.include_user_id {
-            let Some(region) = output.get_mut(cursor..cursor + UUID_SIZE) else {
-                return;
-            };
-            region.copy_from_slice(self.user_id.as_bytes());
-            cursor += UUID_SIZE;
-        }
-        let Some(header) = output.get_mut(cursor..cursor + HEADER_SIZE) else {
+        let prefix = HEADER_SIZE + usize::from(plan.include_user_id) * UUID_SIZE;
+        output[prefix..prefix + content.len()].copy_from_slice(content);
+        self.assemble_layout(plan, output);
+    }
+
+    /// Completes a frame whose body already occupies its final position.
+    /// The body is preserved; only the UUID, header and padding are written.
+    pub(crate) fn assemble_layout(&self, plan: &VisionFramePlan, output: &mut [u8]) {
+        if output.len() != plan.wire_len() {
             return;
-        };
+        }
+        let prefix = usize::from(plan.include_user_id) * UUID_SIZE;
+        if plan.include_user_id {
+            output[..UUID_SIZE].copy_from_slice(self.user_id.as_bytes());
+        }
+        let header = &mut output[prefix..prefix + HEADER_SIZE];
         header[0] = plan.command as u8;
         header[1..3].copy_from_slice(&plan.content_length.to_be_bytes());
         header[3..5].copy_from_slice(&plan.padding_length.to_be_bytes());
-        cursor += HEADER_SIZE;
-        let Some(body) = output.get_mut(cursor..cursor + content.len()) else {
-            return;
-        };
-        body.copy_from_slice(content);
-        cursor += content.len();
-        if let Some(padding) = output.get_mut(cursor..) {
-            padding.fill(0);
-        }
+        output[prefix + HEADER_SIZE + usize::from(plan.content_length)..].fill(0);
     }
 
     /// Advances encoder state after a planned frame has been written.

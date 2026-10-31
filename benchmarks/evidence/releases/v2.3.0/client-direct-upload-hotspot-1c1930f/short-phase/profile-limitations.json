@@ -1,0 +1,4 @@
+{
+  "verdict": "LIMITED_SHORT_PHASE_DIAGNOSTIC",
+  "limitation": "64-MiB c1 phase lasts about 0.4 seconds in candidate. Perf startup leaves some captures with only two samples. Counts are not whole-request costs and no counter ratio is accepted. All original outputs retained. Follow-up expands each payload to 1024 MiB for hotspot attribution, not acceptance."
+}

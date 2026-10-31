@@ -231,3 +231,21 @@ fn check_never_contacts_anything() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn unsupported_line_fingerprint_has_precise_secret_safe_diagnostics() {
+    let json = r#"{"role":"client","listeners":[{"port":10808,"ipv4":"127.0.0.1"}],"lines":[{"address":"127.0.0.1","port":443,"id":"11111111-1111-4111-8111-111111111111","publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","shortId":"0102030405060708","serverName":"browser-capture.test","fingerprint":"safari"}]}"#;
+    let path = workspace("unsupported-browser", json);
+    let output = check(&path);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("lines[0].fingerprint"), "{stderr}");
+    assert!(
+        stderr.contains("chrome") && stderr.contains("firefox"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(":1:") && stderr.contains('^'), "{stderr}");
+    assert!(!stderr.contains("11111111-1111-4111-8111-111111111111"));
+    assert!(!stderr.contains("0102030405060708"));
+}

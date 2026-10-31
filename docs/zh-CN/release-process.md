@@ -102,6 +102,12 @@ SSH/防火墙断言，把本地运行包装成 VPS 运行。
 允许有界连接池保持，不改变容量、期限或生产准入规则。参见
 [ADR 0039](../adr/0039-separate-active-census-from-recovery-ownership.md)。
 
+正式发布前，Release workflow 为精确发布源码选择在 `main` 上显式派发的最新
+Frozen 运行，要求其已完成且成功；随后下载原生包回执，将每个重建归档的 SHA-256
+与回执的前后身份逐一比较。回执缺失、源码被替换、平台重复或重建字节不同都会
+阻止发布。较早的成功记录不能覆盖较新的失败或未完成资格检查。预期平台矩阵
+以汇总 manifest 为唯一来源。
+
 每个受支持层级打包后，运行
 `cargo dev release smoke TAG TIER ASSETS --receipt-dir FRESH_DIRECTORY` 保留绑定
 发布包的执行证明；该目录应放在待汇总的资产目录之外。证据包含归档、实际执行

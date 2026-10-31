@@ -12,10 +12,18 @@ mod selection;
 mod serve;
 mod session;
 mod socks5_inbound;
+mod vision_io;
 mod xudp;
+
+/// Absolute budget for the local proxy request, before LINE authentication.
+const REQUEST_BUDGET: std::time::Duration = std::time::Duration::from_secs(15);
 
 pub use line::{AuthenticatedLine, Line, LineError};
 pub use selection::{LineGroup, LinePool, SelectionPolicy};
 pub use serve::{ClientRuntimeError, run_client};
 pub use session::VisionTunnel;
 pub use xudp::XudpTunnel;
+
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub use vision_io::fuzz_vision_response;

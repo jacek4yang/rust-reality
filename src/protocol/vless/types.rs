@@ -1,11 +1,19 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// VLESS protocol version implemented by current Xray-core releases.
 pub const VERSION: u8 = 0;
 
 /// The 16-byte user identifier carried in a VLESS request.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+///
+/// This is an authentication credential; diagnostic formatting is redacted.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct UserId([u8; 16]);
+
+impl core::fmt::Debug for UserId {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("UserId([REDACTED])")
+    }
+}
 
 impl UserId {
     /// Creates a user identifier from its wire representation.
@@ -85,6 +93,15 @@ impl Destination {
     }
 }
 
+impl From<SocketAddr> for Destination {
+    fn from(address: SocketAddr) -> Self {
+        match address {
+            SocketAddr::V4(address) => Self::new(Address::Ipv4(*address.ip()), address.port()),
+            SocketAddr::V6(address) => Self::new(Address::Ipv6(*address.ip()), address.port()),
+        }
+    }
+}
+
 /// A decoded VLESS request header.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RequestHeader {
@@ -135,5 +152,22 @@ impl RequestHeader {
     /// Returns the destination for commands that carry one.
     pub fn destination(&self) -> Option<&Destination> {
         self.destination.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_debug_does_not_disclose_user_credentials() {
+        let header =
+            |bytes| RequestHeader::new(VERSION, UserId::new(bytes), Vec::new(), Command::Mux, None);
+        let first = header([0x11; 16]);
+        let second = header([0xa5; 16]);
+        assert_ne!(first.user_id(), second.user_id());
+        assert_eq!(format!("{first:?}"), format!("{second:?}"));
+        assert!(format!("{first:?}").contains("[REDACTED]"));
+        assert_eq!(first.user_id().as_bytes(), &[0x11; 16]);
     }
 }

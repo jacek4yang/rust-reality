@@ -5,8 +5,8 @@ use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use crate::{
-    crypto::EphemeralX25519Key,
-    protocol::reality::{AuthKey, ClientHello, X25519_GROUP, X25519_MLKEM768_GROUP},
+    crypto::{EphemeralP256Key, EphemeralX25519Key},
+    protocol::reality::{AuthKey, ClientHello, P256_GROUP, X25519_GROUP, X25519_MLKEM768_GROUP},
 };
 
 use super::{
@@ -620,6 +620,7 @@ impl KeyAgreement {
 }
 
 enum ServerShare {
+    P256([u8; 65]),
     X25519([u8; 32]),
     Hybrid(Vec<u8>),
 }
@@ -627,6 +628,7 @@ enum ServerShare {
 impl ServerShare {
     fn as_slice(&self) -> &[u8] {
         match self {
+            Self::P256(share) => share,
             Self::X25519(share) => share,
             Self::Hybrid(share) => share,
         }
@@ -641,6 +643,20 @@ fn agree_key_share(
         .key_shares()
         .find(|share| share.group() == group)
         .ok_or(RealityHandshakeError::MissingClientKeyShare)?;
+    if group == P256_GROUP {
+        let ephemeral = EphemeralP256Key::generate().map_err(|_| RealityHandshakeError::Random)?;
+        let server_public = ephemeral.public_key();
+        let secret = ephemeral
+            .agree(share.data())
+            .ok_or(RealityHandshakeError::NonContributoryKey)?;
+        let mut shared = Zeroizing::new([0_u8; 64]);
+        shared[..32].copy_from_slice(secret.as_slice());
+        return Ok(KeyAgreement {
+            server_share: ServerShare::P256(server_public),
+            shared,
+            shared_len: 32,
+        });
+    }
     // One ephemeral key per exchange, consumed by exactly one agreement. The
     // private key never exists as raw bytes on this side, and there is nothing
     // to cache or precompute.
@@ -742,6 +758,34 @@ mod tests {
             emit_ccs: true,
             shape,
         }
+    }
+
+    #[test]
+    fn p256_server_agreement_uses_the_advertised_share_and_rejects_invalid_points() {
+        let key = crate::crypto::EphemeralP256Key::generate().unwrap();
+        let client = client_hello(super::P256_GROUP, &key.public_key());
+        let agreed = super::agree_key_share(&client, super::P256_GROUP).unwrap();
+        let expected = key.agree(agreed.server_share.as_slice()).unwrap();
+        assert_eq!(expected.as_slice(), agreed.shared_secret());
+        let target = ServerHelloTemplate::parse(
+            &server_hello(super::P256_GROUP, agreed.server_share.as_slice()),
+            &client,
+        )
+        .unwrap();
+        assert_eq!(target.key_share_group(), super::P256_GROUP);
+        let invalid = client_hello(super::P256_GROUP, &[4; 65]);
+        assert!(matches!(
+            super::agree_key_share(&invalid, super::P256_GROUP),
+            Err(RealityHandshakeError::NonContributoryKey)
+        ));
+        let unoffered = client_hello(X25519_GROUP, &[3; 32]);
+        assert!(
+            ServerHelloTemplate::parse(
+                &server_hello(super::P256_GROUP, agreed.server_share.as_slice()),
+                &unoffered,
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

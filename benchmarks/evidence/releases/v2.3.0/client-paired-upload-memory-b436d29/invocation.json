@@ -1,0 +1,34 @@
+{
+  "scope": "Matched retained-memory and FD diagnostic after genuine verified TLS 1.3 HTTPS transfers through Chrome LINEs. Nine rotated process runs, 128 persistent connections, two exact 1-MiB GETs and one verified 1-MiB PUT per connection; snapshot before/after upload promotion. No timing acceptance or long-term leak claim.",
+  "controllerSha256": "4d5ae1ef3985b95cf7762d85db144925ab9f5a595ed423fda7968bde9010f4b1",
+  "toolSha256": "ca416fcd777db10954ff8d8fec2be314d4c82e99f343089d9b4a2b7cdb7a2bba",
+  "serverSha256": "1af42605b1ec2b883ba854ec10a2bf69759e8c9a461eb8f3a1a4ba98a292511d",
+  "variants": {
+    "d72abc2": {
+      "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+      "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75",
+      "version": "rust-reality 2.2.0\ncommit: d72abc250791f804e310818fdee148540aabfed9\n"
+    },
+    "1c1930f": {
+      "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+      "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f",
+      "version": "rust-reality 2.2.0\ncommit: 1c1930f929d2c6d51a5386ec0a539c30e4903ecd\n"
+    },
+    "b436d29": {
+      "path": "/home/jacek/.cache/rr-v230-candidate-freeze-paired-upload/binary/rust-reality",
+      "sha256": "5ff9c680f019df02ef78abcd2b48795659d042342ad19807b216453b96e39799",
+      "version": "rust-reality 2.2.0\ncommit: b436d294e39be61b982ac90471ec9901fbc2e2f7\n"
+    }
+  },
+  "payloadBytes": 1048576,
+  "payloadSha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+  "affinity": [
+    0,
+    2,
+    4,
+    6
+  ],
+  "netns": "net:[4026533291]",
+  "uid": 1000,
+  "hostLockDeviceInode": "49:34915"
+}

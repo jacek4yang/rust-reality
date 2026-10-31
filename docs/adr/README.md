@@ -103,4 +103,9 @@ of the law is what it is.
 | [0059](0059-asymmetric-stock-xray-interop.md) | Asymmetric stock Xray interop (Xray client → RR required; RR client → Xray not required) | Accepted |
 | [0060](0060-xudp-over-nxr-and-handoff.md) | XUDP over NXR and Handoff (TCP framed NXR carrier; Handoff policy snapshot) | Accepted |
 | [0061](0061-independent-browser-fingerprint-evidence.md) | Independent native-browser fingerprint evidence boundary | Accepted |
+| [0062](0062-p256-for-browser-tls-key-shares.md) | P-256 for browser TLS key shares | Accepted |
 | [0063](0063-stock-xray-benchmark-identity.md) | Stock Xray benchmark identity | Accepted |
+| [0064](0064-retain-full-client-delivery-capacity.md) | Retain full client delivery capacity | Accepted |
+| [0065](0065-reject-full-read-upload-window-growth.md) | Reject full-read upload window growth | Rejected |
+| [0066](0066-reject-duplicated-upload-storage.md) | Reject duplicated upload storage | Rejected |
+| [0067](0067-xudp-global-id-leases-follow-association-lifetime.md) | XUDP GlobalID leases follow association lifetime | Accepted |

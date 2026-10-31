@@ -1,0 +1,36 @@
+{
+  "scope": "Real byte-binding check only, using two independent package builds at the same historical source; not final release acceptance. Exact-main selection separately tested with adversarial metadata.",
+  "source": "ba4b39d9f936ea178b9713c96043014a5172d636",
+  "qualifiedRun": 40962614786,
+  "independentPackageRun": 40961026487,
+  "guardSha256": "ccdc7990724d4b1f4ad5626348c40ead81945c0aeed2489d70d72fb12129483e",
+  "exitCode": 0,
+  "output": "",
+  "artifacts": [
+    {
+      "tier": "linux-aarch64-generic",
+      "qualifiedArchiveSha256": "3314b76bbff8a4a449f1ead8b79c4d04390678098b0a4ad5c61528a012c4175d",
+      "independentArchiveSha256": "3314b76bbff8a4a449f1ead8b79c4d04390678098b0a4ad5c61528a012c4175d",
+      "match": true
+    },
+    {
+      "tier": "linux-x86_64-generic",
+      "qualifiedArchiveSha256": "605efb5ab415ffadd8f771d02062b954dcddd7313c5c45cba9e270fc32abe3cd",
+      "independentArchiveSha256": "605efb5ab415ffadd8f771d02062b954dcddd7313c5c45cba9e270fc32abe3cd",
+      "match": true
+    },
+    {
+      "tier": "linux-x86_64-musl",
+      "qualifiedArchiveSha256": "bf1308d42f9123dd0f895ee712930b7668fe5d259830988ecd861b04f3330ae0",
+      "independentArchiveSha256": "bf1308d42f9123dd0f895ee712930b7668fe5d259830988ecd861b04f3330ae0",
+      "match": true
+    },
+    {
+      "tier": "linux-x86_64-v3",
+      "qualifiedArchiveSha256": "b883920ee2bbe33d880dd242b0a3159578324f33fcf658bda00984de50fcd9f2",
+      "independentArchiveSha256": "b883920ee2bbe33d880dd242b0a3159578324f33fcf658bda00984de50fcd9f2",
+      "match": true
+    }
+  ],
+  "versionLabelScope": "These version labels belong to development candidate packages, not the published v2.2.0 assets."
+}

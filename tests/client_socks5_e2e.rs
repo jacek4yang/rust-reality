@@ -26,13 +26,9 @@ impl Drop for KillOnDrop {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
+#[path = "support/ports.rs"]
+mod ports;
+use ports::free_port;
 
 fn wait_port(port: u16, budget: Duration) {
     let deadline = Instant::now() + budget;
@@ -115,6 +111,15 @@ fn spawn_logged(name: &str, mut command: Command, log: &Path) -> KillOnDrop {
 
 #[test]
 fn curl_through_single_line_socks5_to_isolated_origin() {
+    run_socks5("chrome");
+}
+
+#[test]
+fn firefox_through_single_line_socks5_to_isolated_origin() {
+    run_socks5("firefox");
+}
+
+fn run_socks5(fingerprint: &str) {
     let openssl = which("openssl").expect("openssl required for cover");
     let python = which("python3").expect("python3 required for origin");
     let curl = which("curl").expect("curl required");
@@ -244,7 +249,8 @@ fn curl_through_single_line_socks5_to_isolated_origin() {
     "id": "{user_id}",
     "publicKey": "{public_key}",
     "shortId": "{short_id}",
-    "serverName": "localhost"
+    "serverName": "localhost",
+    "fingerprint": "{fingerprint}"
   }}]
 }}
 "#
@@ -312,8 +318,9 @@ fn curl_through_single_line_socks5_to_isolated_origin() {
         .env_remove("HTTPS_PROXY")
         .env_remove("ALL_PROXY")
         .env_remove("all_proxy")
-        .env("NO_PROXY", "*")
-        .env("no_proxy", "*");
+        .args(["--noproxy", ""])
+        .env("NO_PROXY", "")
+        .env("no_proxy", "");
     let status = curl_cmd.status().expect("curl");
     if !status.success() {
         let entry_log = fs::read_to_string(root.join("entry.log")).unwrap_or_default();

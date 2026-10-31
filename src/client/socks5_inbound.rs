@@ -56,7 +56,18 @@ pub(super) async fn handle_connection(
     bound: SocketAddr,
     group: &LineGroup,
 ) -> Result<(), Socks5Error> {
-    match negotiate_and_read_request(&mut local).await? {
+    let request = tokio::time::timeout(
+        super::REQUEST_BUDGET,
+        negotiate_and_read_request(&mut local),
+    )
+    .await
+    .map_err(|_| {
+        Socks5Error::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "SOCKS5 request timed out",
+        ))
+    })??;
+    match request {
         SocksRequest::Connect(destination) => {
             handle_connect(&mut local, bound, group, destination).await
         }

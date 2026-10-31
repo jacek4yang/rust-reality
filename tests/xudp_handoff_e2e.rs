@@ -11,10 +11,13 @@
 //! UDP/443 + genuine HTTP/3 and stock Xray cases are `#[ignore]` and wired
 //! into Exact-head Native like the NXR XUDP gates.
 
+#[path = "support/socks_tcp.rs"]
+mod socks_tcp;
+
 use std::{
     fs,
     io::{ErrorKind, Read, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket as StdUdpSocket},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket as StdUdpSocket},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -45,12 +48,19 @@ impl Drop for DirGuard {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind((LINE_IP, 0))
-        .expect("ephemeral")
-        .local_addr()
-        .expect("addr")
-        .port()
+#[path = "support/ports.rs"]
+mod ports;
+use ports::free_port;
+
+#[path = "support/xudp_reordering.rs"]
+mod xudp_reordering;
+
+#[test]
+fn handoff_xudp_delayed_replies_preserve_sources() {
+    let root = std::env::temp_dir().join(format!("rr-handoff-reordering-{}", free_port()));
+    let _guard = DirGuard(root.clone());
+    let stack = start_handoff_line_landing(&root, false, "chrome");
+    xudp_reordering::delayed_replies_preserve_sources(stack.socks_port, LANDING_IP);
 }
 
 fn wait_tcp(ip: Ipv4Addr, port: u16, budget: Duration) {
@@ -194,7 +204,7 @@ struct HandoffStack {
     entry_pid: u32,
 }
 
-fn start_handoff_line_landing(root: &Path, allow_udp_443: bool) -> HandoffStack {
+fn start_handoff_line_landing(root: &Path, allow_udp_443: bool, fingerprint: &str) -> HandoffStack {
     fs::create_dir_all(root).unwrap();
     let (cover_port, cover) = start_openssl_cover(root);
     let (reality_private, reality_public) = generate_x25519();
@@ -280,7 +290,8 @@ fn start_handoff_line_landing(root: &Path, allow_udp_443: bool) -> HandoffStack 
     "id": "{user_id}",
     "publicKey": "{reality_public}",
     "shortId": "{short_id}",
-    "serverName": "localhost"{allow_line}
+    "serverName": "localhost",
+    "fingerprint": "{fingerprint}"{allow_line}
   }}]
 }}
 "#,
@@ -504,9 +515,18 @@ fn assert_landing_is_udp_sender(echo: &EchoPeer, landing_pid: u32, entry_pid: u3
 
 #[test]
 fn rust_client_handoff_udp_echo_landing_is_sender() {
+    browser_udp_echo("chrome");
+}
+
+#[test]
+fn firefox_handoff_udp_echo_landing_is_sender() {
+    browser_udp_echo("firefox");
+}
+
+fn browser_udp_echo(fingerprint: &str) {
     let root = std::env::temp_dir().join(format!("rr-handoff-echo-{}", free_port()));
     let _guard = DirGuard(root.clone());
-    let stack = start_handoff_line_landing(&root, false);
+    let stack = start_handoff_line_landing(&root, false, fingerprint);
     let echo = spawn_udp_echo_on(SocketAddr::from((LINE_IP, 0)));
     let dest = SocketAddr::from((LINE_IP, echo.port));
     let body = socks5_udp_round_trip(stack.socks_port, dest, MARKER).unwrap_or_else(|e| {
@@ -530,7 +550,7 @@ fn rust_client_handoff_udp_echo_landing_is_sender() {
 fn rust_client_handoff_multi_dest_rewrite_and_block_zero_packets() {
     let root = std::env::temp_dir().join(format!("rr-handoff-multi-{}", free_port()));
     let _guard = DirGuard(root.clone());
-    let stack = start_handoff_line_landing(&root, false);
+    let stack = start_handoff_line_landing(&root, false, "chrome");
 
     let echo_a = spawn_udp_echo_on(SocketAddr::from((LINE_IP, 0)));
     let echo_b = spawn_udp_echo_on(SocketAddr::from((LINE_IP, 0)));
@@ -600,7 +620,7 @@ fn rust_client_handoff_udp443_allow_policy() {
     {
         let root = std::env::temp_dir().join(format!("rr-handoff-443-deny-{}", free_port()));
         let _guard = DirGuard(root.clone());
-        let stack = start_handoff_line_landing(&root, false);
+        let stack = start_handoff_line_landing(&root, false, "chrome");
         let echo = bind_udp(DEST_443);
         echo.set_read_timeout(Some(Duration::from_millis(300))).ok();
         let hits = Arc::new(AtomicUsize::new(0));
@@ -632,7 +652,7 @@ fn rust_client_handoff_udp443_allow_policy() {
     {
         let root = std::env::temp_dir().join(format!("rr-handoff-443-allow-{}", free_port()));
         let _guard = DirGuard(root.clone());
-        let stack = start_handoff_line_landing(&root, true);
+        let stack = start_handoff_line_landing(&root, true, "chrome");
         let echo = spawn_udp_echo_on(DEST_443);
         let body = socks5_udp_round_trip(stack.socks_port, DEST_443, MARKER)
             .expect("UDP/443 with allowUdp443 via Handoff");
@@ -806,4 +826,15 @@ fn stock_xray_client_handoff_udp_echo_landing_is_sender() {
     assert_landing_is_udp_sender(&echo, landing_pid, entry_pid);
     eprintln!("stock_xray_client_handoff_udp_echo_landing_is_sender PASS");
     let _ = (landing, entry);
+}
+
+#[test]
+fn browser_profiles_handoff_tcp_preserve_bytes_and_half_close() {
+    for fingerprint in ["chrome", "firefox"] {
+        let root = std::env::temp_dir().join(format!("rr-handoff-tcp-browser-{}", free_port()));
+        let _guard = DirGuard(root.clone());
+        let stack = start_handoff_line_landing(&root, false, fingerprint);
+        socks_tcp::assert_echo(stack.socks_port);
+        socks_tcp::assert_reverse_half_close(stack.socks_port);
+    }
 }

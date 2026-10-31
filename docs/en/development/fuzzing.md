@@ -16,7 +16,7 @@ sharded smoke passes over all targets on every PR. The current set covers:
 
 - VLESS request decode/client encode round trips and response decode, REALITY
   ClientHello record/message parse and extension walk, NXR header/decode round trips and NXR UDP frames (`wire_parsers`, `nxr_round_trip`, `nxr_udp_frames`);
-- Vision decoder single-shot and fragmented transitions
+- Vision decoder single-shot, bounded client VLESS response reassembly, and fragmented transitions
   (`vision_decoder`, `vision_transitions`);
 - Handoff header, blob, authenticated transfer open, and round trip
   (`handoff_header`, `handoff_blob`, `handoff_open_transfer`, `handoff_round_trip`);
@@ -32,6 +32,13 @@ sharded smoke passes over all targets on every PR. The current set covers:
 
 The independent browser capture decoder is covered by `fingerprint_capture`. It
 rejects malformed framing and lengths while preserving all observable wire bytes.
+`p256_agreement` exercises the TLS SEC1 share boundary and agreement with a
+fixed fuzz-only scalar, including invalid lengths, infinity and off-curve input.
+
+`nxr_udp_frames` exercises both the raw authenticated-frame decoder and the
+same bounded body parser directly through a test-only hook. This prevents MAC
+rejection from hiding malformed flags, addresses, and payload lengths from
+fuzzing; production parsing still verifies the MAC before decoding the body.
 
 ## Commands
 
@@ -54,3 +61,7 @@ directly (`cargo fuzz run <target>`) against `fuzz/`.
   bytes come from the network.
 
 The `nested_tls_prefix` target checks destination TLS header-prefix classification at every fragment boundary against the complete-header predicate. Async open-origin progress and pending-read cancellation are covered by socket regression tests.
+
+`browser_offer` exercises both production browser serializers with variable SNI
+input and independently decodes successful records. `fingerprint_capture` also
+exercises the structural comparison policy with malformed captures.

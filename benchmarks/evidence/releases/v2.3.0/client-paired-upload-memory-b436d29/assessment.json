@@ -1,0 +1,99 @@
+{
+  "verdict": "REJECTED_RESOURCE_DIAGNOSTIC",
+  "reason": "Pairing improves upload CPU but retaining both a larger local plaintext buffer and a larger AEAD buffer raises post-upload residency. Do not accept this duplicated storage or weaken the protected memory contract. Revisit with one retained upload buffer and unchanged cryptographic/cancellation behavior. Three repeats are resource diagnostics, not a long-term leak verdict.",
+  "rows": [
+    {
+      "variant": "d72abc2",
+      "anonymousKiB": {
+        "before": [
+          580,
+          580,
+          580
+        ],
+        "held": [
+          10304,
+          9848,
+          10400
+        ],
+        "reused": [
+          10304,
+          9848,
+          10400
+        ],
+        "uploaded": [
+          11048,
+          10448,
+          10856
+        ],
+        "closed": [
+          8648,
+          8040,
+          9528
+        ]
+      },
+      "fdRecovery": true
+    },
+    {
+      "variant": "1c1930f",
+      "anonymousKiB": {
+        "before": [
+          584,
+          584,
+          588
+        ],
+        "held": [
+          8232,
+          8116,
+          8196
+        ],
+        "reused": [
+          8232,
+          8116,
+          8196
+        ],
+        "uploaded": [
+          10480,
+          10376,
+          10328
+        ],
+        "closed": [
+          7820,
+          7704,
+          7856
+        ]
+      },
+      "fdRecovery": true
+    },
+    {
+      "variant": "b436d29",
+      "anonymousKiB": {
+        "before": [
+          580,
+          588,
+          588
+        ],
+        "held": [
+          8096,
+          8284,
+          8272
+        ],
+        "reused": [
+          8096,
+          8284,
+          8272
+        ],
+        "uploaded": [
+          15648,
+          15676,
+          15724
+        ],
+        "closed": [
+          8036,
+          7868,
+          8004
+        ]
+      },
+      "fdRecovery": true
+    }
+  ]
+}

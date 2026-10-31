@@ -291,15 +291,19 @@ impl NxrLandingHandler {
                     }
                 }
                 recv = udp.recv_from(&mut udp_buf) => {
-                    let (n, _from) = recv.map_err(NxrLandingError::UdpIo)?;
-                    let payload = &udp_buf[..n.min(NXR_UDP_MAX_PAYLOAD)];
+                    let (n, from) = recv.map_err(NxrLandingError::UdpIo)?;
+                    let source = Destination::from(from);
+                    if n > NXR_UDP_MAX_PAYLOAD {
+                        return Err(NxrLandingError::UdpProtocol(NxrUdpError::Payload));
+                    }
+                    let payload = &udp_buf[..n];
                     let seq = seq_out.next_out();
                     encode_frame(
                         &session,
                         DIR_LANDING_TO_LINE,
                         FRAME_TYPE_DATAGRAM,
                         seq,
-                        None,
+                        Some(&source),
                         payload,
                         &mut frame_out,
                     )
@@ -813,8 +817,28 @@ mod udp_association_tests {
             }
         };
         assert_eq!(reply.payload, b"echo-ok");
+        assert_eq!(reply.destination, Some(dest));
 
-        land_task.abort();
+        // An oversized UDP reply must not become a valid truncated datagram.
+        echo.send_to(&vec![0x5a; super::NXR_UDP_MAX_PAYLOAD + 1], from)
+            .await
+            .unwrap();
+        assert_eq!(
+            time::timeout(Duration::from_secs(2), client.read(&mut scratch))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        assert!(matches!(
+            time::timeout(Duration::from_secs(2), land_task)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(super::NxrLandingError::UdpProtocol(
+                super::NxrUdpError::Payload
+            ))
+        ));
     }
 
     #[tokio::test]

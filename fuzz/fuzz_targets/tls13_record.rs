@@ -68,6 +68,42 @@ fuzz_target!(|input: RecordInput| {
         return;
     };
 
+    let Some(mut filled_sealer) = layer(suite, &input.key, input.iv) else {
+        return;
+    };
+    let Some(mut assembled_sealer) = layer(suite, &input.key, input.iv) else {
+        return;
+    };
+    let Some(mut filled_opener) = layer(suite, &input.key, input.iv) else {
+        return;
+    };
+    // Exercise the slot writer used by bounded assembled batches independently
+    // against contiguous assembly, with identical sequence and zero padding.
+    let mut slot = vec![0_u8; 5 + MAX_PLAINTEXT + 1 + 16];
+    let mut assembled = Vec::new();
+    for spec in input.records.iter().take(MAX_RECORDS) {
+        let plaintext = &spec.plaintext[..spec.plaintext.len().min(MAX_PLAINTEXT)];
+        slot[5..5 + plaintext.len()].copy_from_slice(plaintext);
+        let length = filled_sealer
+            .seal_filled(ContentType::ApplicationData, plaintext.len(), &mut slot)
+            .unwrap();
+        assembled_sealer
+            .seal_assembled(
+                ContentType::ApplicationData,
+                plaintext.len(),
+                0,
+                &mut assembled,
+                |out| out.copy_from_slice(plaintext),
+            )
+            .unwrap();
+        assert_eq!(&slot[..length], assembled);
+        let mut wire = slot[..length].to_vec();
+        assert_eq!(
+            filled_opener.open_in_place(&mut wire).unwrap().plaintext(),
+            plaintext
+        );
+    }
+
     // Phase 1: seal→open round trip per record.
     let mut sealed_records = Vec::new();
     for spec in input.records.iter().take(MAX_RECORDS) {

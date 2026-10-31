@@ -219,14 +219,15 @@ fn parse_frame_body(body: &[u8]) -> Result<NxrUdpFrame, NxrUdpError> {
         return Err(NxrUdpError::FrameType);
     }
     let flags = body[1];
+    if flags & !FRAME_FLAG_DESTINATION != 0 {
+        return Err(NxrUdpError::Flags);
+    }
     let seq = u32::from_be_bytes(body[2..6].try_into().map_err(|_| NxrUdpError::Length)?);
     let mut offset = 6;
     let destination = if flags & FRAME_FLAG_DESTINATION != 0 {
         let (dest, consumed) = decode_destination(&body[offset..])?;
         offset = offset.checked_add(consumed).ok_or(NxrUdpError::Length)?;
         Some(dest)
-    } else if flags != 0 {
-        return Err(NxrUdpError::Flags);
     } else {
         None
     };
@@ -339,9 +340,13 @@ pub(super) fn read_u64(input: &[u8], offset: usize) -> Result<u64, NxrUdpError> 
     Ok(u64::from_be_bytes(bytes))
 }
 
-/// Fuzz entry: decode arbitrary bytes as a UDP frame under a fixed session.
+/// Fuzz both arbitrary authenticated bodies and raw frames under a fixed session.
 #[cfg(any(test, feature = "fuzzing"))]
 pub fn fuzz_decode_frame(input: &[u8]) -> Result<(), NxrUdpError> {
+    // Arbitrary raw frames almost always fail their MAC. Exercise the same body
+    // parser independently in this test-only entry, without changing production
+    // decode ordering or accepting unauthenticated network input.
+    let _ = parse_frame_body(input);
     let key = NxrKey::new([0x11; 32]);
     let session = NxrUdpSessionKey::derive(&key, b"fuzz-open-prefix");
     let _ = drain_frames(&mut input.to_vec(), &session, DIR_LINE_TO_LANDING)?;

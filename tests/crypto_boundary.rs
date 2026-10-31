@@ -34,6 +34,8 @@ use std::{collections::BTreeSet, fs, path::Path};
 /// Sorted by path within each crate. Adding or removing a file here is a
 /// deliberate architectural act; the test fails until the list matches.
 const PROVIDERS: &[(&str, &[&str])] = &[
+    // ADR 0062: only the owned TLS P-256 boundary names this provider.
+    ("p256", &["src/crypto/p256_ecdh.rs"]),
     // The protocol wrapper is the production entrance. The cover-profile
     // fixture names the implementation directly only inside cfg(test).
     (

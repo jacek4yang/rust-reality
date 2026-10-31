@@ -1,0 +1,30 @@
+{
+  "releaseTag": "v26.10.31",
+  "releasePublishedAt": "2026-10-31T13:37:42Z",
+  "prerelease": false,
+  "archiveSha256": "e4bd9119f50ae7c41658b1abd0679ae06f98bd864a2907ff33f2f2cf7081b214",
+  "digestFileSha256": "ec4362a9737cafc92e637a41565c8509020e69ae13974e0f78a682992ee89a39",
+  "binarySha256": "cc4b84d3069569f297a61f04b914f2bb37e9d202fd7b84cb50def1fc30fd40e1",
+  "sourceCommit": "a4a3dff5b20c2faae567b742c172c7b95e75c083",
+  "utlsCommit": "aa6edf4b11af82e110eea845bb2983d30138d651",
+  "releaseUrl": "https://github.com/XTLS/Xray-core/releases/tag/v26.10.31",
+  "archiveUrl": "https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip",
+  "aliases": {
+    "chrome": "HelloChrome_133",
+    "firefox": "HelloFirefox_148"
+  },
+  "sourceFiles": [
+    {
+      "path": "go.mod",
+      "sha256": "ad8701ad59ba44b28c4c8adf924271e0df9c8b0a854662cfda9a61996a42d882"
+    },
+    {
+      "path": "transport/internet/tls/tls.go",
+      "sha256": "7bf0d41bfd245ed2bdebcac35ca32678048b7a279cb659707eaaf2aa9a996e78"
+    },
+    {
+      "path": "utls/u_common.go",
+      "sha256": "e42122a474d87d7b6ad959532c0e0f32e39a9514f714fa25a4a3f62d8113e545"
+    }
+  ]
+}

@@ -4,6 +4,20 @@ All notable user-facing changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- Add per-LINE `fingerprint` selection: Chrome 156.0.8078.74 (default) and
+  Firefox 159.0, grounded in native Windows browser captures. Unknown profile
+  names fail configuration loading. Configuration formatting now emits the
+  selected profile explicitly.
+- Preserve Firefox's P-256 and shared hybrid X25519 key shares; retain private
+  agreement state and consume it at TLS negotiation. Browser tooling remains
+  outside the production dependency graph.
+
+- Fix client TCP half-close handling in both directions and oversized Vision
+  frames. Client TCP and XUDP now reuse the canonical cancellation-safe TLS
+  record I/O, including authenticated alerts and KeyUpdate handling. Share
+  Vision framing between TCP and XUDP, preserve Direct-boundary read-ahead,
+  and keep each direction's framing independent.
+
 ## [2.2.0] - 2026-10-22
 
 XUDP over NXR and Handoff. Direct, NXR, and Handoff all carry SOCKS5 UDP

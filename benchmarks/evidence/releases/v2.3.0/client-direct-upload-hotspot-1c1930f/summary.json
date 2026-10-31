@@ -1,0 +1,36 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "sourceCommit": "1c1930f929d2c6d51a5386ec0a539c30e4903ecd",
+  "attempts": [
+    {
+      "name": "long-phase",
+      "verdict": "DIAGNOSTIC_ONLY",
+      "observations": 52,
+      "slots": 12
+    },
+    {
+      "name": "short-phase",
+      "verdict": "LIMITED_SHORT_PHASE_DIAGNOSTIC",
+      "observations": 50,
+      "slots": 12
+    },
+    {
+      "name": "wrong-phase",
+      "verdict": "INVALID_CONTROLLER_PHASE",
+      "observations": 7,
+      "slots": 4
+    },
+    {
+      "name": "stale-lock",
+      "verdict": "PREFLIGHT_REJECTED",
+      "observations": 2,
+      "slots": 0
+    }
+  ],
+  "interpretation": "First long-phase candidate client sample has 564 leaf samples: 71.95% weighted cycles in kernel and 15.05% in ring AES-GCM VAES. This motivates testing bounded read-and-write coalescing; it neither proves root causality for the 16-MiB regression nor establishes performance acceptance.",
+  "frequencyRestoration": "Every attempt restored exact prior CPU policies; receipts retained.",
+  "sourceHashes": {
+    "rr-v230-direct-upload-c1-profile-controller-long.py": "1198276c4671344db16045bfe7223886d9a3353c6c60abf613316d9de7abd014",
+    "rr-v230-direct-upload-c1-profile-supervisor-long.py": "ddf539e81fbf63c05255414aaece81b6bc314779f588825ad0bc0aa9d3dc7ece"
+  }
+}

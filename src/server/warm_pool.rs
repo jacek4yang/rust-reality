@@ -1436,11 +1436,14 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn failed_refill_backs_off_and_recovers_when_cover_returns() {
-        let probe = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .expect("port probe must bind");
+        // Own the endpoint while it refuses connections. Releasing a port
+        // probe lets another test (or an ephemeral connect) reuse the address.
+        let probe = tokio::net::TcpSocket::new_v4().expect("cover socket must exist");
+        probe
+            .bind((Ipv4Addr::LOCALHOST, 0).into())
+            .expect("cover endpoint must bind without listening");
         let address = probe.local_addr().expect("probe address must exist");
-        drop(probe);
+        assert!(TcpListener::bind(address).await.is_err());
         let mut policy = policy();
         policy.min_ready = 1;
         policy.max_connecting = 1;
@@ -1469,9 +1472,9 @@ mod tests {
             "exponential backoff must prevent a tight speculative dial loop"
         );
 
-        let listener = TcpListener::bind(address)
-            .await
-            .expect("cover must be able to return on the same endpoint");
+        let listener = probe
+            .listen(128)
+            .expect("owned cover endpoint must become a listener");
         let accept = tokio::spawn(async move { listener.accept().await });
         wait_for(|| pool.snapshot().ready == 1).await;
         let accepted = accept

@@ -46,7 +46,7 @@ pub enum ClientRole {
 }
 
 /// One REALITY-authenticated LINE to an entry.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
+#[derive(Clone, Eq, PartialEq, Deserialize, JsonSchema, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct LineConfig {
     /// Label for diagnostics and `lineGroups`. Required when `lineGroups` is set.
@@ -64,10 +64,23 @@ pub struct LineConfig {
     pub short_id: String,
     /// Server-accepted SNI / serverName.
     pub server_name: String,
+    /// Browser ClientHello profile. Omission selects Chrome 156.0.8078.74.
+    #[serde(default)]
+    pub fingerprint: crate::protocol::reality::BrowserFingerprint,
     /// When true, UDP/443 is permitted under XUDP (stock `xtls-rprx-vision-udp443` policy).
     /// Wire Addons still carry `xtls-rprx-vision`. Default false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_udp_443: bool,
+}
+
+impl std::fmt::Debug for LineConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LineConfig")
+            .field("tag", &self.tag)
+            .field("fingerprint", &self.fingerprint)
+            .finish_non_exhaustive()
+    }
 }
 
 /// A named set of LINE tags used for sticky + hedge selection.
@@ -116,6 +129,28 @@ mod tests {
         assert_eq!(parsed.listeners.len(), 1);
         assert_eq!(parsed.lines.len(), 1);
         assert_eq!(parsed.lines[0].port, 8443);
+        assert_eq!(
+            parsed.lines[0].fingerprint,
+            crate::protocol::reality::BrowserFingerprint::Chrome
+        );
+        for name in ["chrome", "firefox"] {
+            let explicit = json.replace(
+                "\"port\": 8443,",
+                &format!("\"port\": 8443, \"fingerprint\": \"{name}\","),
+            );
+            let config: ClientConfig = serde_json::from_str(&explicit).unwrap();
+            assert_eq!(
+                serde_json::to_value(&config).unwrap()["lines"][0]["fingerprint"],
+                name
+            );
+        }
+        for name in ["safari", "random", "hellofirefox_120", "Chrome", ""] {
+            let explicit = json.replace(
+                "\"port\": 8443,",
+                &format!("\"port\": 8443, \"fingerprint\": \"{name}\","),
+            );
+            assert!(serde_json::from_str::<ClientConfig>(&explicit).is_err());
+        }
     }
 
     #[test]
@@ -140,5 +175,39 @@ mod tests {
         assert_eq!(parsed.lines.len(), 2);
         assert_eq!(parsed.line_groups.as_ref().unwrap()[0].name, "edge");
         assert_eq!(parsed.selection.as_ref().unwrap().hedge_ms, Some(200));
+    }
+
+    #[test]
+    fn client_debug_omits_line_credentials_without_changing_serialization() {
+        let mut first: ClientConfig = serde_json::from_value(serde_json::json!({
+            "role": "client",
+            "listeners": [{"port": 10808}],
+            "lines": [{
+                "tag": "line-a", "address": "private-entry.test", "port": 443,
+                "id": "11111111-1111-4111-8111-111111111111",
+                "publicKey": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "shortId": "0102030405060708", "serverName": "private-cover.test"
+            }]
+        }))
+        .unwrap();
+        let mut second = first.clone();
+        second.lines[0].id = "22222222-2222-4222-8222-222222222222".to_owned();
+        second.lines[0].short_id = "1122334455667788".to_owned();
+        second.lines[0].public_key = "another-public-key".to_owned();
+        second.lines[0].address = "another-entry.test".to_owned();
+        second.lines[0].server_name = "another-cover.test".to_owned();
+        let diagnostic = format!("{first:?}");
+        assert_eq!(diagnostic, format!("{second:?}"));
+        assert!(!diagnostic.contains(&first.lines[0].id));
+        assert!(!diagnostic.contains(&first.lines[0].short_id));
+        assert!(!diagnostic.contains("private-"));
+        assert!(diagnostic.contains("line-a"));
+        assert!(diagnostic.contains("Chrome"));
+        let serialized = serde_json::to_value(&first).unwrap();
+        assert_eq!(serialized["lines"][0]["id"], first.lines[0].id);
+        assert_eq!(serialized["lines"][0]["shortId"], first.lines[0].short_id);
+        first.lines[0].fingerprint = crate::protocol::reality::BrowserFingerprint::Firefox;
+        assert_ne!(diagnostic, format!("{first:?}"));
+        assert!(format!("{first:?}").contains("Firefox"));
     }
 }

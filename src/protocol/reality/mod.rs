@@ -1,6 +1,8 @@
 //! Bounded REALITY wire parsing and handshake state.
 
 mod auth;
+mod browser_profile;
+pub use browser_profile::BrowserFingerprint;
 mod client_handshake;
 mod client_hello;
 mod client_offer;
@@ -18,8 +20,8 @@ pub use auth::{
 };
 pub use client_hello::{
     ClientHello, ClientHelloClassError, ClientHelloError, KeyShare, MAX_CLIENT_HELLO_BYTES,
-    MLKEM768_ENCAP_KEY_LEN, NormalizedClientHelloClass, SESSION_ID_LEN, SESSION_ID_OFFSET,
-    X25519_GROUP, X25519_MLKEM768_GROUP, X25519_MLKEM768_SHARE_LEN,
+    MLKEM768_ENCAP_KEY_LEN, NormalizedClientHelloClass, P256_GROUP, SESSION_ID_LEN,
+    SESSION_ID_OFFSET, X25519_GROUP, X25519_MLKEM768_GROUP, X25519_MLKEM768_SHARE_LEN,
 };
 pub(crate) use client_hello::{CoverProbe, CoverProbeTemplate};
 pub use read::{

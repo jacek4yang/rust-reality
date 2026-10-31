@@ -1,0 +1,87 @@
+{
+  "scope": "Three rotated repeats; medians of three snapshots per phase. Exact TLS 1.3 payload verification. Residency, not allocation count or long-term leak proof. No timing acceptance.",
+  "results": [
+    {
+      "variant": "d72abc2",
+      "runs": 3,
+      "memoryKiB": {
+        "before": {
+          "VmRSS": 8012,
+          "RssAnon": 580,
+          "Pss": 5480
+        },
+        "held": {
+          "VmRSS": 19364,
+          "RssAnon": 11248,
+          "Pss": 16832
+        },
+        "reused": {
+          "VmRSS": 19364,
+          "RssAnon": 11248,
+          "Pss": 16832
+        },
+        "closed": {
+          "VmRSS": 17576,
+          "RssAnon": 9164,
+          "Pss": 15044
+        }
+      },
+      "fdRecovered": true
+    },
+    {
+      "variant": "7e4d89d",
+      "runs": 3,
+      "memoryKiB": {
+        "before": {
+          "VmRSS": 7820,
+          "RssAnon": 588,
+          "Pss": 5285
+        },
+        "held": {
+          "VmRSS": 14184,
+          "RssAnon": 6060,
+          "Pss": 11699
+        },
+        "reused": {
+          "VmRSS": 14184,
+          "RssAnon": 6060,
+          "Pss": 11699
+        },
+        "closed": {
+          "VmRSS": 13960,
+          "RssAnon": 5836,
+          "Pss": 11425
+        }
+      },
+      "fdRecovered": true
+    },
+    {
+      "variant": "04a1dc5",
+      "runs": 3,
+      "memoryKiB": {
+        "before": {
+          "VmRSS": 7852,
+          "RssAnon": 592,
+          "Pss": 5317
+        },
+        "held": {
+          "VmRSS": 16392,
+          "RssAnon": 8236,
+          "Pss": 13885
+        },
+        "reused": {
+          "VmRSS": 16392,
+          "RssAnon": 8236,
+          "Pss": 13885
+        },
+        "closed": {
+          "VmRSS": 15476,
+          "RssAnon": 7328,
+          "Pss": 12918
+        }
+      },
+      "fdRecovered": true
+    }
+  ],
+  "verifiedTransfers": 2304
+}

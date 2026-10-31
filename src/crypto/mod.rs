@@ -3,7 +3,7 @@
 //! # What lives here, and what does not
 //!
 //! This module owns the operations whose *provider* is a decision rather than
-//! a detail — today entropy and X25519. Hashing, HMAC, HKDF, the record AEAD,
+//! a detail — today entropy, X25519 and P-256. Hashing, HMAC, HKDF, the record AEAD,
 //! Ed25519 and ML-KEM are still called directly from the protocol modules that
 //! need them, against RustCrypto, `ring`, `ed25519-dalek` and `ml-kem`. That is
 //! recorded rather than hidden: `tests/crypto_boundary.rs` lists exactly which
@@ -62,10 +62,14 @@
 
 pub mod entropy;
 mod keygen;
+mod p256_ecdh;
 mod x25519;
 
 pub use entropy::EntropyError;
 pub use keygen::{
     X25519KeyPair, generate_node_key, generate_short_id, generate_uuid, generate_x25519_key_pair,
 };
+#[cfg(any(test, feature = "fuzzing"))]
+pub use p256_ecdh::fuzz_p256_agreement;
+pub use p256_ecdh::{EphemeralP256Key, P256Error};
 pub use x25519::{EphemeralX25519Key, SharedSecret, StaticX25519Key, X25519Error};

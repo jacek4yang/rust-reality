@@ -1,0 +1,18 @@
+{
+  "sourceCommit": "38abe32697a701d0c4450688df02cc0719f4d963",
+  "frozenBinarySha256": "817c61ef36bd2aa802ec08cfdb6f24f57cc76318777fb7b1f83529f153bd9e6a",
+  "unstrippedBinarySha256": "58961887d09e87cb9abf3953578072e20247a9abffbbb40374af6863277bfff4",
+  "textSectionSha256": "b479ce566ed0b96300a3785f86347256fb41716b26f5f42452bcfd8857a68ff8",
+  "textSectionsByteEqual": true,
+  "textVirtualAddress": "0x1de740",
+  "textBytes": 5829238,
+  "inspection": [
+    "Upload assembly closure 0x4a3050 size 0x260: two direct content memcpy call sites into AEAD destination, padding memset, no allocator calls in the assembly closure. Cold record-buffer growth remains owned by the canonical writer.",
+    "Read future 0x4cf0b0 size 0x3c3: raw branch prepares retained Vec spare capacity and calls TcpStream::poll_read_priv directly; no post-read scratch-to-delivery memcpy. A reserve branch remains for an exhausted vector; normal drained delivery buffers retain capacity.",
+    "Buffered downlink no-allocation and close_notify prefix delivery covered by focused test and full gate. Machine code equality does not substitute for runtime performance acceptance."
+  ],
+  "assemblyFiles": {
+    "upload-assembly.txt": "0e690ce392cc5022a9364766dbbaf896257565b80c4c30c869bbbf2c01453ab8",
+    "read-assembly.txt": "18ad118392e3fcd88a3c3640e519511253df6e48dd45f1d8e6fa0da2cdea61c7"
+  }
+}

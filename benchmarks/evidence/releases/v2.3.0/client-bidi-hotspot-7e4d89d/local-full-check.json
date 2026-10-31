@@ -1,0 +1,129 @@
+{
+  "sourceCommit": "7e4d89db8a5c88b9608a90f8d1cc50cfcece5e16",
+  "command": [
+    "cargo",
+    "dev",
+    "check",
+    "--all"
+  ],
+  "exitCode": 0,
+  "seconds": 468.6,
+  "summaryLogSha256": "b85603843818b02d341bd2adceb2bba392fbf3c0416decdba0e9c8bdeb32a718",
+  "stages": [
+    {
+      "ordinal": 1,
+      "name": "cargo dev repo check",
+      "elapsed": "73ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 2,
+      "name": "cargo dev docs check",
+      "elapsed": "20ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 3,
+      "name": "fuzz target manifest",
+      "elapsed": "0ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 4,
+      "name": "active-probe manifest",
+      "elapsed": "9.6s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 5,
+      "name": "performance/cache contract",
+      "elapsed": "0ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 6,
+      "name": "deployment summary contract",
+      "elapsed": "2ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 7,
+      "name": "cargo fmt --all --check",
+      "elapsed": "661ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 8,
+      "name": "cargo fmt --manifest-path tools/Cargo.toml --all --check",
+      "elapsed": "1.3s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 9,
+      "name": "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+      "elapsed": "6.7s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 10,
+      "name": "cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings",
+      "elapsed": "7.2s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 11,
+      "name": "cargo deny --all-features check bans licenses sources",
+      "elapsed": "345ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 12,
+      "name": "cargo doc --workspace --all-features --locked --no-deps",
+      "elapsed": "2.4s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 13,
+      "name": "cargo nextest run --workspace --all-features --locked",
+      "elapsed": "26.7s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 14,
+      "name": "cargo test --manifest-path tools/Cargo.toml --workspace --all-features --locked",
+      "elapsed": "103.3s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 15,
+      "name": "cargo test --workspace --no-default-features --locked",
+      "elapsed": "55.8s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 16,
+      "name": "cargo test --workspace --doc --all-features --locked",
+      "elapsed": "848ms",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 17,
+      "name": "cargo test --workspace --release --all-features --locked",
+      "elapsed": "248.7s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 18,
+      "name": "cargo test --workspace --benches --all-features --locked --no-run",
+      "elapsed": "2.1s",
+      "verdict": "PASS"
+    },
+    {
+      "ordinal": 19,
+      "name": "cargo audit --deny warnings",
+      "elapsed": "2.9s",
+      "verdict": "PASS"
+    }
+  ],
+  "scope": "Local full gate on the feature head; not final-main release qualification."
+}

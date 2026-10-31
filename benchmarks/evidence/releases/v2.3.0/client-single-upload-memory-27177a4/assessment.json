@@ -1,0 +1,99 @@
+{
+  "verdict": "RESOURCE_REGRESSION_UNRESOLVED",
+  "reason": "Single-buffer ownership removes the duplicate but upload-time capacity growth still has higher observed post-upload residency than d72/1c. Do not claim preservation. Investigate reserving maximum capacity once while initializing only the first slot; then repeat the same test. No full throughput campaign was run on this candidate.",
+  "rows": [
+    {
+      "variant": "d72abc2",
+      "anonymousKiB": {
+        "before": [
+          580,
+          580,
+          580
+        ],
+        "held": [
+          10200,
+          10208,
+          10428
+        ],
+        "reused": [
+          10200,
+          10208,
+          10428
+        ],
+        "uploaded": [
+          10828,
+          10760,
+          11080
+        ],
+        "closed": [
+          8440,
+          9080,
+          8948
+        ]
+      },
+      "fdRecovery": true
+    },
+    {
+      "variant": "1c1930f",
+      "anonymousKiB": {
+        "before": [
+          588,
+          588,
+          588
+        ],
+        "held": [
+          8132,
+          8052,
+          8280
+        ],
+        "reused": [
+          8132,
+          8052,
+          8280
+        ],
+        "uploaded": [
+          10344,
+          10332,
+          10428
+        ],
+        "closed": [
+          7688,
+          7548,
+          8276
+        ]
+      },
+      "fdRecovery": true
+    },
+    {
+      "variant": "27177a4",
+      "anonymousKiB": {
+        "before": [
+          596,
+          592,
+          592
+        ],
+        "held": [
+          8096,
+          8108,
+          8220
+        ],
+        "reused": [
+          8096,
+          8108,
+          8220
+        ],
+        "uploaded": [
+          11080,
+          11244,
+          11296
+        ],
+        "closed": [
+          6888,
+          6504,
+          6924
+        ]
+      },
+      "fdRecovery": true
+    }
+  ]
+}

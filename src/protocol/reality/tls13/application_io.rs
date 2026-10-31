@@ -458,16 +458,37 @@ pub fn resume_application_halves<R, W>(
     key_update_response_pending: bool,
 ) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
     let (client_records, server_records) = tls.into_record_layers();
+    application_halves(
+        reader,
+        pending_ciphertext,
+        writer,
+        client_records,
+        server_records,
+        key_update_response_pending,
+        SOCKET_BUFFER_CAPACITY,
+    )
+}
+
+/// Attaches owned traffic directions without assuming which peer is the server.
+pub(crate) fn application_halves<R, W>(
+    reader: R,
+    pending_ciphertext: Vec<u8>,
+    writer: W,
+    read_records: super::Tls13RecordLayer,
+    write_records: super::Tls13RecordLayer,
+    key_update_response_pending: bool,
+    initial_read_capacity: usize,
+) -> (TlsApplicationReader<R>, TlsApplicationWriter<W>) {
     let buffered_end = pending_ciphertext.len();
     let mut socket_buffer = pending_ciphertext;
     // Best-effort headroom for the first refill; the grow-on-demand refill
     // policy stays correct even when this reservation fails.
-    let _ignored = socket_buffer.try_reserve(SOCKET_BUFFER_CAPACITY);
+    let _ignored = socket_buffer.try_reserve(initial_read_capacity);
     let key_update_coordination = Arc::new(KeyUpdateCoordination::new(key_update_response_pending));
     (
         TlsApplicationReader {
             io: reader,
-            records: client_records,
+            records: read_records,
             socket_buffer,
             buffered_start: 0,
             buffered_end,
@@ -477,7 +498,7 @@ pub fn resume_application_halves<R, W>(
         },
         TlsApplicationWriter {
             io: writer,
-            records: server_records,
+            records: write_records,
             write_record: Vec::new(),
             idle: IdleDeadline::new(),
             key_update_coordination,
@@ -792,15 +813,20 @@ where
             self.buffered_end = buffered;
         }
         if self.buffered_end == self.socket_buffer.len() {
-            // Unreachable for validated record lengths (one record never
-            // exceeds a quarter of the buffer): a single record larger than
-            // the whole buffer grows the storage once, following the same
-            // reserve-then-zero-fill pattern as the initial allocation.
+            // A client starts with a smaller idle-session window. Its first
+            // large record promotes storage to the normal batching capacity.
+            // Server readers already have that capacity; validated records
+            // never require growth beyond it.
+            let growth = SOCKET_BUFFER_CAPACITY.saturating_sub(self.socket_buffer.len());
+            if growth == 0 {
+                return Err(TlsApplicationIoError::Record(
+                    Tls13RecordError::InvalidLength,
+                ));
+            }
             self.socket_buffer
-                .try_reserve_exact(SOCKET_BUFFER_CAPACITY)
+                .try_reserve_exact(growth)
                 .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
-            self.socket_buffer
-                .resize(self.socket_buffer.len() + SOCKET_BUFFER_CAPACITY, 0);
+            self.socket_buffer.resize(SOCKET_BUFFER_CAPACITY, 0);
         }
         self.idle
             .reset(timeout)
@@ -848,6 +874,8 @@ where
                 .map_err(|_| TlsApplicationIoError::Record(Tls13RecordError::BufferAllocation))?;
             buffer.resize(SOCKET_BUFFER_CAPACITY, 0);
             self.socket_buffer = buffer;
+        } else if self.socket_buffer.is_empty() {
+            self.socket_buffer.resize(self.socket_buffer.capacity(), 0);
         }
         Ok(())
     }
@@ -1071,6 +1099,17 @@ where
         if read == 0 {
             return Ok(0);
         }
+        self.write_filled_batch(read, timeout).await?;
+        Ok(read)
+    }
+
+    /// Seals the filled prefix of the existing record-slot layout, preserving
+    /// record boundaries and flushing before any intervening KeyUpdate.
+    async fn write_filled_batch(
+        &mut self,
+        read: usize,
+        timeout: Duration,
+    ) -> Result<(), TlsApplicationIoError> {
         let mut write = SealedWrite::new(&mut self.records)?;
         let mut sealed_len = 0_usize;
         let mut wire_start = 0_usize;
@@ -1140,7 +1179,44 @@ where
             .await
             .map_err(idle_failure)?;
         write.complete();
-        Ok(read)
+        Ok(())
+    }
+
+    /// Transfers idle write storage to the connection's upload reader.
+    /// The caller returns it for sealing through `write_filled_storage`.
+    pub(crate) fn take_write_storage(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.write_record)
+    }
+
+    /// Seals one or two already assembled record slots in caller-owned storage.
+    /// Swapping ownership avoids retaining a second plaintext/ciphertext buffer.
+    /// Cancellation retains storage in this writer and the canonical sealed-write
+    /// guard invalidates the write direction. Successful completion returns it.
+    pub(crate) async fn write_filled_storage(
+        &mut self,
+        storage: &mut Vec<u8>,
+        plaintext_len: usize,
+        timeout: Duration,
+    ) -> Result<(), TlsApplicationIoError> {
+        let slots = plaintext_len.div_ceil(MAX_PLAINTEXT_LEN);
+        if slots == 0
+            || slots > 2
+            || storage.len() < slots * super::record::RECORD_SLOT_WIRE_CAPACITY
+        {
+            return Err(TlsApplicationIoError::Record(
+                Tls13RecordError::InvalidLength,
+            ));
+        }
+        self.records
+            .ensure_write_ready()
+            .map_err(TlsApplicationIoError::Record)?;
+        self.idle
+            .reset(timeout)
+            .map_err(|_| TlsApplicationIoError::Timeout)?;
+        std::mem::swap(storage, &mut self.write_record);
+        let result = self.write_filled_batch(plaintext_len, timeout).await;
+        std::mem::swap(storage, &mut self.write_record);
+        result
     }
 
     /// Encrypts one record whose plaintext is assembled in final AEAD storage.
@@ -1549,8 +1625,8 @@ mod tests {
     };
     use crate::protocol::reality::tls13::{
         CipherSuite, ContentType, EstablishedTls, ExportedRecordState, MAX_PLAINTEXT_LEN,
-        Tls13KeySchedule, Tls13RecordError, Tls13RecordLayer, TlsRecordReadErrorKind,
-        read_tls_record,
+        TLS_RECORD_HEADER_LEN, Tls13KeySchedule, Tls13RecordError, Tls13RecordLayer,
+        TlsRecordReadErrorKind, read_tls_record,
     };
 
     const TIMEOUT: Duration = Duration::from_secs(1);
@@ -2723,14 +2799,16 @@ mod tests {
     enum WritePath {
         Copied,
         Assembled,
+        FilledStorage,
         ReadFrom,
         Batched,
         Shutdown,
     }
 
-    const WRITE_PATHS: [WritePath; 5] = [
+    const WRITE_PATHS: [WritePath; 6] = [
         WritePath::Copied,
         WritePath::Assembled,
+        WritePath::FilledStorage,
         WritePath::ReadFrom,
         WritePath::Batched,
         WritePath::Shutdown,
@@ -2748,6 +2826,17 @@ mod tests {
             WritePath::Assembled => {
                 writer
                     .write_assembled(5, |region| region.copy_from_slice(b"reply"), TIMEOUT)
+                    .await
+            }
+            WritePath::FilledStorage => {
+                let mut storage = writer.take_write_storage();
+                storage.resize(2 * RECORD_SLOT_WIRE_CAPACITY, 0x6a);
+                for slot in storage.as_chunks_mut::<RECORD_SLOT_WIRE_CAPACITY>().0 {
+                    slot[TLS_RECORD_HEADER_LEN..TLS_RECORD_HEADER_LEN + MAX_PLAINTEXT_LEN]
+                        .fill(0x6a);
+                }
+                writer
+                    .write_filled_storage(&mut storage, 2 * MAX_PLAINTEXT_LEN, TIMEOUT)
                     .await
             }
             WritePath::ReadFrom => {
@@ -2911,7 +3000,7 @@ mod tests {
                 }
                 assert!(updates > 0, "{path:?} must send an update");
                 match path {
-                    WritePath::Batched => {
+                    WritePath::Batched | WritePath::FilledStorage => {
                         assert_eq!(application, vec![0x6a; 2 * MAX_PLAINTEXT_LEN])
                     }
                     WritePath::Shutdown => assert!(application.is_empty()),
@@ -3437,6 +3526,78 @@ mod tests {
             .expect("remaining batch data must use the next key");
         assert_eq!(opened.content_type(), ContentType::ApplicationData);
         assert_eq!(opened.plaintext(), &plaintext[MAX_PLAINTEXT_LEN..]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn caller_owned_upload_storage_returns_without_retained_duplicate() {
+        let (established, mut client_read) = batched_writer_states();
+        let sink = RecordingSink::default();
+        let (_reader, mut writer) = TlsApplicationIo::new(sink.clone(), established).into_split();
+        let mut storage = writer.take_write_storage();
+        storage.resize(2 * RECORD_SLOT_WIRE_CAPACITY, 0);
+        let address = storage.as_ptr();
+        let capacity = storage.capacity();
+        let mut expected = Vec::new();
+        for length in [
+            1,
+            MAX_PLAINTEXT_LEN,
+            MAX_PLAINTEXT_LEN + 1,
+            2 * MAX_PLAINTEXT_LEN,
+        ] {
+            storage.fill(0x71);
+            writer
+                .write_filled_storage(&mut storage, length, TIMEOUT)
+                .await
+                .unwrap();
+            assert_eq!(storage.as_ptr(), address);
+            assert_eq!(storage.capacity(), capacity);
+            assert_eq!(writer.write_record.capacity(), 0);
+            expected.extend(std::iter::repeat_n(0x71, length));
+        }
+        let wire = sink.wire().clone();
+        assert_eq!(
+            open_wire_records(&mut client_read, &wire).concat(),
+            expected
+        );
+        for length in [0, 2 * MAX_PLAINTEXT_LEN + 1, usize::MAX] {
+            assert!(
+                writer
+                    .write_filled_storage(&mut storage, length, TIMEOUT)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(storage.as_ptr(), address);
+        }
+        assert_eq!(*sink.wire(), wire);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_caller_storage_second_record_rejects_every_retry() {
+        for prefix in [RECORD_SLOT_WIRE_CAPACITY, RECORD_SLOT_WIRE_CAPACITY + 7] {
+            let (established, _client_write, _client_read) = key_update_states();
+            let sink = PartialWriteSink::new(prefix, InterruptedWrite::Pending);
+            let (_reader, mut writer) = resume_application_halves(
+                tokio::io::empty(),
+                Vec::new(),
+                sink.clone(),
+                established,
+                false,
+            );
+            let mut write = Box::pin(write_path(&mut writer, WritePath::FilledStorage));
+            poll_fn(|context| {
+                assert!(write.as_mut().poll(context).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+            drop(write);
+            assert_eq!(sink.wire().len(), prefix);
+            sink.complete();
+            for retry in WRITE_PATHS {
+                assert!(write_path(&mut writer, retry).await.is_err());
+            }
+            assert_eq!(sink.wire().len(), prefix);
+            assert!(writer.into_handoff_parts().1.into_exported_state().is_err());
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -1,0 +1,30 @@
+{
+  "verdict": "PREFLIGHT_REJECTED",
+  "scope": "Direct-upload c1 hotspot diagnostics, not release acceptance. Attachment startup/stop latency means counters describe an observed phase subset, not exact whole-request costs. Every available slot JSON receipt is retained. Perf data contains frame-pointer code addresses, not raw user stacks. Private runtime configurations and payloads excluded.",
+  "encoding": "Concatenate listed gzipParts, decode gzip, and verify decoded SHA-256.",
+  "observations": [
+    {
+      "name": "exit-code.txt",
+      "decodedSha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "decodedBytes": 2,
+      "gzipParts": [
+        {
+          "name": "exit-code.txt.gz",
+          "sha256": "c28cc69d141393e44a931229323624ef7b8c5bde3ee047ca9b87332daef23c82"
+        }
+      ]
+    },
+    {
+      "name": "run.log",
+      "decodedSha256": "5b0bf2ce7be1a2b235bc9948846d3966ddbd6bd9d77238f0a0a7d7d398739576",
+      "decodedBytes": 147,
+      "gzipParts": [
+        {
+          "name": "run.log.gz",
+          "sha256": "0a7f4b3d02f8fc93336b914e4fa531e2009af61551f10579598b177907044de8"
+        }
+      ]
+    }
+  ],
+  "slotMeasurements": []
+}

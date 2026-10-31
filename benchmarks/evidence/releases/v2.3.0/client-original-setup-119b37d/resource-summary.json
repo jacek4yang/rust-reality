@@ -1,0 +1,411 @@
+{
+  "scope": "Descriptive anonymous residency and descriptor observations; no allocation count, slope extrapolation or statistical memory verdict. Increment uses each process post-setup zero-held baseline.",
+  "arms": {
+    "baseline": {
+      "slots": [
+        {
+          "slot": "block-01-slot-01-baseline",
+          "beforeKiB": 5716,
+          "heldKiB": 10020,
+          "recoveredKiB": 9844,
+          "incrementKiBPerConnection": 33.625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-01-slot-04-baseline",
+          "beforeKiB": 7080,
+          "heldKiB": 10888,
+          "recoveredKiB": 10460,
+          "incrementKiBPerConnection": 29.75,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-02-slot-02-baseline",
+          "beforeKiB": 6640,
+          "heldKiB": 10748,
+          "recoveredKiB": 10168,
+          "incrementKiBPerConnection": 32.09375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-02-slot-03-baseline",
+          "beforeKiB": 6928,
+          "heldKiB": 10676,
+          "recoveredKiB": 9276,
+          "incrementKiBPerConnection": 29.28125,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-03-slot-01-baseline",
+          "beforeKiB": 5272,
+          "heldKiB": 9248,
+          "recoveredKiB": 9248,
+          "incrementKiBPerConnection": 31.0625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-03-slot-04-baseline",
+          "beforeKiB": 5592,
+          "heldKiB": 9716,
+          "recoveredKiB": 9684,
+          "incrementKiBPerConnection": 32.21875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-04-slot-02-baseline",
+          "beforeKiB": 6492,
+          "heldKiB": 10488,
+          "recoveredKiB": 10428,
+          "incrementKiBPerConnection": 31.21875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-04-slot-03-baseline",
+          "beforeKiB": 7000,
+          "heldKiB": 10960,
+          "recoveredKiB": 10892,
+          "incrementKiBPerConnection": 30.9375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-05-slot-01-baseline",
+          "beforeKiB": 6004,
+          "heldKiB": 10132,
+          "recoveredKiB": 9272,
+          "incrementKiBPerConnection": 32.25,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-05-slot-04-baseline",
+          "beforeKiB": 6076,
+          "heldKiB": 10312,
+          "recoveredKiB": 9264,
+          "incrementKiBPerConnection": 33.09375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-06-slot-02-baseline",
+          "beforeKiB": 6480,
+          "heldKiB": 10476,
+          "recoveredKiB": 10452,
+          "incrementKiBPerConnection": 31.21875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-06-slot-03-baseline",
+          "beforeKiB": 6164,
+          "heldKiB": 10304,
+          "recoveredKiB": 10164,
+          "incrementKiBPerConnection": 32.34375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-07-slot-01-baseline",
+          "beforeKiB": 5872,
+          "heldKiB": 9876,
+          "recoveredKiB": 9596,
+          "incrementKiBPerConnection": 31.28125,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-07-slot-04-baseline",
+          "beforeKiB": 5952,
+          "heldKiB": 9688,
+          "recoveredKiB": 9328,
+          "incrementKiBPerConnection": 29.1875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-08-slot-02-baseline",
+          "beforeKiB": 7088,
+          "heldKiB": 10992,
+          "recoveredKiB": 10924,
+          "incrementKiBPerConnection": 30.5,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-08-slot-03-baseline",
+          "beforeKiB": 5924,
+          "heldKiB": 10088,
+          "recoveredKiB": 9600,
+          "incrementKiBPerConnection": 32.53125,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-09-slot-01-baseline",
+          "beforeKiB": 5968,
+          "heldKiB": 9724,
+          "recoveredKiB": 9428,
+          "incrementKiBPerConnection": 29.34375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-09-slot-04-baseline",
+          "beforeKiB": 5988,
+          "heldKiB": 9916,
+          "recoveredKiB": 9848,
+          "incrementKiBPerConnection": 30.6875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-10-slot-02-baseline",
+          "beforeKiB": 6004,
+          "heldKiB": 9736,
+          "recoveredKiB": 9604,
+          "incrementKiBPerConnection": 29.15625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-10-slot-03-baseline",
+          "beforeKiB": 5296,
+          "heldKiB": 9316,
+          "recoveredKiB": 9316,
+          "incrementKiBPerConnection": 31.40625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-11-slot-01-baseline",
+          "beforeKiB": 5560,
+          "heldKiB": 9536,
+          "recoveredKiB": 9328,
+          "incrementKiBPerConnection": 31.0625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-11-slot-04-baseline",
+          "beforeKiB": 6684,
+          "heldKiB": 10524,
+          "recoveredKiB": 10424,
+          "incrementKiBPerConnection": 30.0,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-12-slot-02-baseline",
+          "beforeKiB": 6376,
+          "heldKiB": 10212,
+          "recoveredKiB": 9928,
+          "incrementKiBPerConnection": 29.96875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-12-slot-03-baseline",
+          "beforeKiB": 6256,
+          "heldKiB": 10196,
+          "recoveredKiB": 10196,
+          "incrementKiBPerConnection": 30.78125,
+          "recoveredFdDelta": 0
+        }
+      ],
+      "medians": {
+        "beforeKiB": 6040.0,
+        "heldKiB": 10164.0,
+        "recoveredKiB": 9764.0,
+        "incrementKiBPerConnection": 31.0625,
+        "recoveredFdDelta": 0.0
+      }
+    },
+    "candidate": {
+      "slots": [
+        {
+          "slot": "block-01-slot-02-candidate",
+          "beforeKiB": 4552,
+          "heldKiB": 8776,
+          "recoveredKiB": 8776,
+          "incrementKiBPerConnection": 33.0,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-01-slot-03-candidate",
+          "beforeKiB": 5864,
+          "heldKiB": 9652,
+          "recoveredKiB": 9652,
+          "incrementKiBPerConnection": 29.59375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-02-slot-01-candidate",
+          "beforeKiB": 4792,
+          "heldKiB": 8872,
+          "recoveredKiB": 8816,
+          "incrementKiBPerConnection": 31.875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-02-slot-04-candidate",
+          "beforeKiB": 4304,
+          "heldKiB": 8712,
+          "recoveredKiB": 8712,
+          "incrementKiBPerConnection": 34.4375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-03-slot-02-candidate",
+          "beforeKiB": 4600,
+          "heldKiB": 8672,
+          "recoveredKiB": 8672,
+          "incrementKiBPerConnection": 31.8125,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-03-slot-03-candidate",
+          "beforeKiB": 4976,
+          "heldKiB": 9144,
+          "recoveredKiB": 8924,
+          "incrementKiBPerConnection": 32.5625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-04-slot-01-candidate",
+          "beforeKiB": 4628,
+          "heldKiB": 8496,
+          "recoveredKiB": 8492,
+          "incrementKiBPerConnection": 30.21875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-04-slot-04-candidate",
+          "beforeKiB": 4352,
+          "heldKiB": 8608,
+          "recoveredKiB": 8460,
+          "incrementKiBPerConnection": 33.25,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-05-slot-02-candidate",
+          "beforeKiB": 4572,
+          "heldKiB": 8704,
+          "recoveredKiB": 8640,
+          "incrementKiBPerConnection": 32.28125,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-05-slot-03-candidate",
+          "beforeKiB": 5040,
+          "heldKiB": 9420,
+          "recoveredKiB": 9420,
+          "incrementKiBPerConnection": 34.21875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-06-slot-01-candidate",
+          "beforeKiB": 4776,
+          "heldKiB": 9204,
+          "recoveredKiB": 9204,
+          "incrementKiBPerConnection": 34.59375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-06-slot-04-candidate",
+          "beforeKiB": 4496,
+          "heldKiB": 8696,
+          "recoveredKiB": 8632,
+          "incrementKiBPerConnection": 32.8125,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-07-slot-02-candidate",
+          "beforeKiB": 4736,
+          "heldKiB": 8860,
+          "recoveredKiB": 8860,
+          "incrementKiBPerConnection": 32.21875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-07-slot-03-candidate",
+          "beforeKiB": 4568,
+          "heldKiB": 8816,
+          "recoveredKiB": 8780,
+          "incrementKiBPerConnection": 33.1875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-08-slot-01-candidate",
+          "beforeKiB": 4848,
+          "heldKiB": 9148,
+          "recoveredKiB": 9124,
+          "incrementKiBPerConnection": 33.59375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-08-slot-04-candidate",
+          "beforeKiB": 3604,
+          "heldKiB": 8216,
+          "recoveredKiB": 8212,
+          "incrementKiBPerConnection": 36.03125,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-09-slot-02-candidate",
+          "beforeKiB": 4352,
+          "heldKiB": 8472,
+          "recoveredKiB": 8472,
+          "incrementKiBPerConnection": 32.1875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-09-slot-03-candidate",
+          "beforeKiB": 4004,
+          "heldKiB": 8160,
+          "recoveredKiB": 8140,
+          "incrementKiBPerConnection": 32.46875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-10-slot-01-candidate",
+          "beforeKiB": 4040,
+          "heldKiB": 8196,
+          "recoveredKiB": 8196,
+          "incrementKiBPerConnection": 32.46875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-10-slot-04-candidate",
+          "beforeKiB": 4468,
+          "heldKiB": 8876,
+          "recoveredKiB": 8876,
+          "incrementKiBPerConnection": 34.4375,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-11-slot-02-candidate",
+          "beforeKiB": 4452,
+          "heldKiB": 8824,
+          "recoveredKiB": 8824,
+          "incrementKiBPerConnection": 34.15625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-11-slot-03-candidate",
+          "beforeKiB": 4404,
+          "heldKiB": 8588,
+          "recoveredKiB": 8436,
+          "incrementKiBPerConnection": 32.6875,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-12-slot-01-candidate",
+          "beforeKiB": 4092,
+          "heldKiB": 8368,
+          "recoveredKiB": 8364,
+          "incrementKiBPerConnection": 33.40625,
+          "recoveredFdDelta": 0
+        },
+        {
+          "slot": "block-12-slot-04-candidate",
+          "beforeKiB": 4824,
+          "heldKiB": 9048,
+          "recoveredKiB": 8576,
+          "incrementKiBPerConnection": 33.0,
+          "recoveredFdDelta": 0
+        }
+      ],
+      "medians": {
+        "beforeKiB": 4560.0,
+        "heldKiB": 8744.0,
+        "recoveredKiB": 8692.0,
+        "incrementKiBPerConnection": 32.90625,
+        "recoveredFdDelta": 0.0
+      }
+    }
+  }
+}

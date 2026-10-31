@@ -1,0 +1,1207 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "slots": 12,
+  "collectorExitCode": 0,
+  "profiles": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 1,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61002,
+          "socks": 61003
+        },
+        "position": 1,
+        "process": {
+          "clientPid": 2487093
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2487093,
+          "startTicks": "193140065",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            2487093,
+            2487098,
+            2487099,
+            2487100,
+            2487101
+          ]
+        },
+        "server": {
+          "pid": 2487092,
+          "startTicks": "193140065",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2487092,
+            2487094,
+            2487095,
+            2487096,
+            2487097
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463500.5216768,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2487093,2487098,2487099,2487100,2487101,2487092,2487094,2487095,2487096,2487097",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-01-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2487093,2487098,2487099,2487100,2487101,2487092,2487094,2487095,2487096,2487097",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-01-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463501.499369,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "441c79d937a14f88b0a1aec32409859bc5d04639",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f"
+        },
+        "block": 1,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61004,
+          "socks": 61005
+        },
+        "position": 2,
+        "process": {
+          "clientPid": 2488105
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2488105,
+          "startTicks": "193144127",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "tids": [
+            2488105,
+            2488110,
+            2488111,
+            2488112,
+            2488113
+          ]
+        },
+        "server": {
+          "pid": 2488104,
+          "startTicks": "193144127",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2488104,
+            2488106,
+            2488107,
+            2488108,
+            2488109
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463523.5488312,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2488105,2488110,2488111,2488112,2488113,2488104,2488106,2488107,2488108,2488109",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-02-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2488105,2488110,2488111,2488112,2488113,2488104,2488106,2488107,2488108,2488109",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-02-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463523.9975867,
+      "profilerExitCodes": [
+        0,
+        -15
+      ]
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "441c79d937a14f88b0a1aec32409859bc5d04639",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f"
+        },
+        "block": 1,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61006,
+          "socks": 61007
+        },
+        "position": 3,
+        "process": {
+          "clientPid": 2489073
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2489073,
+          "startTicks": "193145810",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "tids": [
+            2489073,
+            2489074,
+            2489075,
+            2489076,
+            2489077
+          ]
+        },
+        "server": {
+          "pid": 2489072,
+          "startTicks": "193145810",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2489072,
+            2489078,
+            2489079,
+            2489080,
+            2489081
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463540.3871086,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2489073,2489074,2489075,2489076,2489077,2489072,2489078,2489079,2489080,2489081",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-03-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2489073,2489074,2489075,2489076,2489077,2489072,2489078,2489079,2489080,2489081",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-03-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463540.8162196,
+      "profilerExitCodes": [
+        0,
+        -15
+      ]
+    },
+    {
+      "slot": "block-01-slot-04-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 1,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61008,
+          "socks": 61009
+        },
+        "position": 4,
+        "process": {
+          "clientPid": 2490035
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2490035,
+          "startTicks": "193147489",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            2490035,
+            2490040,
+            2490041,
+            2490042,
+            2490043
+          ]
+        },
+        "server": {
+          "pid": 2490034,
+          "startTicks": "193147489",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2490034,
+            2490036,
+            2490037,
+            2490038,
+            2490039
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463574.7601814,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2490035,2490040,2490041,2490042,2490043,2490034,2490036,2490037,2490038,2490039",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-04-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2490035,2490040,2490041,2490042,2490043,2490034,2490036,2490037,2490038,2490039",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-01-slot-04-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463575.7413874,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-02-slot-01-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "441c79d937a14f88b0a1aec32409859bc5d04639",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f"
+        },
+        "block": 2,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61010,
+          "socks": 61011
+        },
+        "position": 1,
+        "process": {
+          "clientPid": 2491096
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2491096,
+          "startTicks": "193151557",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "tids": [
+            2491096,
+            2491101,
+            2491102,
+            2491103,
+            2491104
+          ]
+        },
+        "server": {
+          "pid": 2491095,
+          "startTicks": "193151557",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2491095,
+            2491097,
+            2491098,
+            2491099,
+            2491100
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463597.877165,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2491096,2491101,2491102,2491103,2491104,2491095,2491097,2491098,2491099,2491100",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-01-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2491096,2491101,2491102,2491103,2491104,2491095,2491097,2491098,2491099,2491100",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-01-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463598.2916052,
+      "profilerExitCodes": [
+        0,
+        -15
+      ]
+    },
+    {
+      "slot": "block-02-slot-02-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 2,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61012,
+          "socks": 61013
+        },
+        "position": 2,
+        "process": {
+          "clientPid": 2492059
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2492059,
+          "startTicks": "193153237",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            2492059,
+            2492064,
+            2492065,
+            2492066,
+            2492067
+          ]
+        },
+        "server": {
+          "pid": 2492058,
+          "startTicks": "193153237",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2492058,
+            2492060,
+            2492061,
+            2492062,
+            2492063
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463632.275152,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2492059,2492064,2492065,2492066,2492067,2492058,2492060,2492061,2492062,2492063",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-02-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2492059,2492064,2492065,2492066,2492067,2492058,2492060,2492061,2492062,2492063",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-02-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463633.2825632,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-02-slot-03-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 2,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61014,
+          "socks": 61015
+        },
+        "position": 3,
+        "process": {
+          "clientPid": 2493059
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2493059,
+          "startTicks": "193157306",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            2493059,
+            2493064,
+            2493065,
+            2493066,
+            2493067
+          ]
+        },
+        "server": {
+          "pid": 2493058,
+          "startTicks": "193157306",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2493058,
+            2493060,
+            2493061,
+            2493062,
+            2493063
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463672.951352,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2493059,2493064,2493065,2493066,2493067,2493058,2493060,2493061,2493062,2493063",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-03-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2493059,2493064,2493065,2493066,2493067,2493058,2493060,2493061,2493062,2493063",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-03-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463673.9356112,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-02-slot-04-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "441c79d937a14f88b0a1aec32409859bc5d04639",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f"
+        },
+        "block": 2,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61016,
+          "socks": 61017
+        },
+        "position": 4,
+        "process": {
+          "clientPid": 2494087
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2494087,
+          "startTicks": "193161370",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "tids": [
+            2494087,
+            2494092,
+            2494093,
+            2494094,
+            2494095
+          ]
+        },
+        "server": {
+          "pid": 2494086,
+          "startTicks": "193161370",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2494086,
+            2494088,
+            2494089,
+            2494090,
+            2494091
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463695.9745278,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2494087,2494092,2494093,2494094,2494095,2494086,2494088,2494089,2494090,2494091",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-04-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2494087,2494092,2494093,2494094,2494095,2494086,2494088,2494089,2494090,2494091",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-02-slot-04-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463696.4276454,
+      "profilerExitCodes": [
+        0,
+        -15
+      ]
+    },
+    {
+      "slot": "block-03-slot-01-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 3,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61018,
+          "socks": 61019
+        },
+        "position": 1,
+        "process": {
+          "clientPid": 2495049
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2495049,
+          "startTicks": "193163055",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            2495049,
+            2495054,
+            2495055,
+            2495056,
+            2495057
+          ]
+        },
+        "server": {
+          "pid": 2495048,
+          "startTicks": "193163055",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2495048,
+            2495050,
+            2495051,
+            2495052,
+            2495053
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463730.4409688,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2495049,2495054,2495055,2495056,2495057,2495048,2495050,2495051,2495052,2495053",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-01-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2495049,2495054,2495055,2495056,2495057,2495048,2495050,2495051,2495052,2495053",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-01-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463731.4276822,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    },
+    {
+      "slot": "block-03-slot-02-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "441c79d937a14f88b0a1aec32409859bc5d04639",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f"
+        },
+        "block": 3,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61020,
+          "socks": 61021
+        },
+        "position": 2,
+        "process": {
+          "clientPid": 2496047
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2496047,
+          "startTicks": "193167121",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "tids": [
+            2496047,
+            2496052,
+            2496053,
+            2496054,
+            2496055
+          ]
+        },
+        "server": {
+          "pid": 2496046,
+          "startTicks": "193167121",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2496046,
+            2496048,
+            2496049,
+            2496050,
+            2496051
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463753.5028079,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2496047,2496052,2496053,2496054,2496055,2496046,2496048,2496049,2496050,2496051",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-02-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2496047,2496052,2496053,2496054,2496055,2496046,2496048,2496049,2496050,2496051",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-02-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463753.9611378,
+      "profilerExitCodes": [
+        0,
+        -15
+      ]
+    },
+    {
+      "slot": "block-03-slot-03-candidate",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "441c79d937a14f88b0a1aec32409859bc5d04639",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "sha256": "620220b793266a2eda1693a9e72512c2fc3ed44b3f874f254a373ec50646b43f"
+        },
+        "block": 3,
+        "implementation": "candidate",
+        "ports": {
+          "server": 61022,
+          "socks": 61023
+        },
+        "position": 3,
+        "process": {
+          "clientPid": 2497054
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2497054,
+          "startTicks": "193168799",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-1c1930f/binary/rust-reality",
+          "tids": [
+            2497054,
+            2497055,
+            2497056,
+            2497058,
+            2497060
+          ]
+        },
+        "server": {
+          "pid": 2497053,
+          "startTicks": "193168799",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2497053,
+            2497057,
+            2497059,
+            2497061,
+            2497062
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463770.2933893,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2497054,2497055,2497056,2497058,2497060,2497053,2497057,2497059,2497061,2497062",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-03-candidate.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2497054,2497055,2497056,2497058,2497060,2497053,2497057,2497059,2497061,2497062",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-03-candidate.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463770.727484,
+      "profilerExitCodes": [
+        0,
+        -15
+      ]
+    },
+    {
+      "slot": "block-03-slot-04-baseline",
+      "binaryIdentity": {
+        "binary": {
+          "buildId": "4f002b7ec5ebf7ab530a0aed49bfb1b61223f375",
+          "path": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "sha256": "3e5a5028a931d99e7c2d5dc1768e555b7433d55b5ed5e9950403551242caed75"
+        },
+        "block": 3,
+        "implementation": "baseline",
+        "ports": {
+          "server": 61024,
+          "socks": 61025
+        },
+        "position": 4,
+        "process": {
+          "clientPid": 2498016
+        }
+      },
+      "roles": {
+        "client": {
+          "pid": 2498016,
+          "startTicks": "193170477",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-d72abc2/binary/rust-reality",
+          "tids": [
+            2498016,
+            2498021,
+            2498022,
+            2498023,
+            2498024
+          ]
+        },
+        "server": {
+          "pid": 2498015,
+          "startTicks": "193170477",
+          "exe": "/home/jacek/.cache/rr-v230-candidate-freeze-c02e488/binary/rust-reality",
+          "tids": [
+            2498015,
+            2498017,
+            2498018,
+            2498019,
+            2498020
+          ]
+        }
+      },
+      "attachedAtUnix": 1793463804.6878095,
+      "commands": [
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "stat",
+          "--no-inherit",
+          "--per-thread",
+          "-I",
+          "100",
+          "-x",
+          ";",
+          "-e",
+          "cpu_core/cycles/,cpu_core/instructions/,task-clock,context-switches,syscalls:sys_enter_recvfrom,syscalls:sys_enter_sendto,syscalls:sys_enter_read,syscalls:sys_enter_write",
+          "-t",
+          "2498016,2498021,2498022,2498023,2498024,2498015,2498017,2498018,2498019,2498020",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-04-baseline.stat.csv",
+          "--",
+          "sleep",
+          "60"
+        ],
+        [
+          "sudo",
+          "-n",
+          "env",
+          "LD_LIBRARY_PATH=/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/lib/x86_64-linux-gnu",
+          "/home/jacek/.cache/rr-v230-perf-tool/extracted/usr/bin/perf",
+          "record",
+          "--no-inherit",
+          "-F",
+          "199",
+          "-e",
+          "cpu_core/cycles/",
+          "--call-graph",
+          "fp",
+          "-t",
+          "2498016,2498021,2498022,2498023,2498024,2498015,2498017,2498018,2498019,2498020",
+          "-o",
+          "/home/jacek/.cache/rr-v230-direct-upload-c1-profile-d72-1c1930f-v3/block-03-slot-04-baseline.perf.data",
+          "--",
+          "sleep",
+          "60"
+        ]
+      ],
+      "scope": "DIAGNOSTIC ONLY. Direct-upload c1 phase: attach after final framed-upload sample, detach after final Direct-upload sample. Includes the Direct-upload warm-up and three 64-MiB sample batches. PMU/syscall counts and frame-pointer profiles of exact existing client/server threads. Instrumented timing is not acceptance.",
+      "detachedAtUnix": 1793463805.6797757,
+      "profilerExitCodes": [
+        0,
+        -2
+      ]
+    }
+  ]
+}

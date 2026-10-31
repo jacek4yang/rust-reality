@@ -107,6 +107,43 @@ mod tests {
     }
 
     #[test]
+    fn authenticated_frames_reject_every_unknown_flag_with_or_without_address() {
+        let session = NxrUdpSessionKey::derive(&key(), b"flag-boundary");
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 53);
+        for direction in [DIR_LINE_TO_LANDING, DIR_LANDING_TO_LINE] {
+            for address in [None, Some(&destination)] {
+                let mut wire = Vec::new();
+                encode_frame(
+                    &session,
+                    direction,
+                    FRAME_TYPE_DATAGRAM,
+                    0,
+                    address,
+                    b"payload",
+                    &mut wire,
+                )
+                .unwrap();
+                let body_end = wire.len() - SESSION_TAG_LEN;
+                for unknown in 0_u8..=127 {
+                    wire[FRAME_LEN_SIZE + 1] =
+                        (unknown << 1) | (u8::from(address.is_some()) * FRAME_FLAG_DESTINATION);
+                    let tag = session.frame_tag(direction, &wire[FRAME_LEN_SIZE..body_end]);
+                    wire[body_end..].copy_from_slice(&tag);
+                    let decoded = decode_frame(&wire, &session, direction);
+                    if unknown == 0 {
+                        let (frame, consumed) = decoded.unwrap();
+                        assert_eq!(consumed, wire.len());
+                        assert_eq!(frame.destination.as_ref(), address);
+                        assert_eq!(frame.payload, b"payload");
+                    } else {
+                        assert_eq!(decoded, Err(NxrUdpError::Flags));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn drain_handles_split_and_coalesced_frames() {
         let session = NxrUdpSessionKey::derive(&key(), b"prefix");
         let mut a = Vec::new();
