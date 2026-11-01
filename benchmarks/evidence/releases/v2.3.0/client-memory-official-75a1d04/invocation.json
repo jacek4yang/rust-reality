@@ -1,0 +1,29 @@
+{
+  "scope": "Matched retained-memory and FD diagnostic after genuine verified TLS 1.3 HTTPS transfers through Chrome LINEs. Eight ABBA process runs, 128 persistent connections, two exact 1-MiB GETs and one verified 1-MiB PUT per connection; snapshot before/after upload promotion. No timing acceptance or long-term leak claim.",
+  "controllerSha256": "f6769d84569265c99d3349c2b5c1b4c338bce1efba9eb14e302c1dbb2ad77aca",
+  "toolSha256": "ca416fcd777db10954ff8d8fec2be314d4c82e99f343089d9b4a2b7cdb7a2bba",
+  "serverSha256": "1af42605b1ec2b883ba854ec10a2bf69759e8c9a461eb8f3a1a4ba98a292511d",
+  "variants": {
+    "baseline": {
+      "path": "/home/jacek/.cache/rr-v230-official-baseline-d72/binary/rust-reality",
+      "sha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+      "version": "rust-reality 2.2.0\ncommit: d72abc250791f804e310818fdee148540aabfed9\n"
+    },
+    "candidate": {
+      "path": "/home/jacek/.cache/rr-v230-official-candidate-75a1/rust-reality",
+      "sha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+      "version": "rust-reality 2.3.0\ncommit: 75a1d04075a7b26282fd36a67348fbbc5a7f47da\n"
+    }
+  },
+  "payloadBytes": 1048576,
+  "payloadSha256": "fbbab289f7f94b25736c58be46a994c441fd02552cc6022352e3d86d2fab7c83",
+  "affinity": [
+    0,
+    2,
+    4,
+    6
+  ],
+  "netns": "net:[4026533291]",
+  "uid": 1000,
+  "hostLockDeviceInode": "49:42620"
+}

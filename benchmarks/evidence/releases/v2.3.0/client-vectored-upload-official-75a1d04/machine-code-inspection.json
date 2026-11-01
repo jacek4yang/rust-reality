@@ -1,0 +1,9 @@
+{
+  "source": "75a1d04075a7b26282fd36a67348fbbc5a7f47da",
+  "binarySha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+  "function": "UploadRecord::complete_in_place",
+  "actualAddress": "0x537030",
+  "method": "Unique 128-byte function-prefix match, followed by inspection of actual hosted executable instructions and dynamic relocations. No whole-binary address equivalence claimed.",
+  "inspection": "Header stores and padding memset through GOT 0x7b2918; no call to memmove GOT 0x7b2ae8 in this function. This is mechanism evidence, not a performance verdict.",
+  "disassemblySha256": "d263591249389a37de14f35c292189a72f359fcc914d149a2ceb25688d9da246"
+}
