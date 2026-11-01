@@ -1,0 +1,13 @@
+{
+  "address": "0x537030",
+  "prefixBytes": 128,
+  "uniqueMatches": 1,
+  "referenceAddress": "0x537030",
+  "referenceBinary": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+  "candidateBinary": "d37ea2bf06ad419f89f49071091d30ccbce3094e45c8f878095edf8990442b59",
+  "function": "UploadRecord::complete_in_place",
+  "inspection": "Actual candidate function uses header stores and padding memset through GOT 0x7b2918; no call to memmove GOT 0x7b2ae8 in this function. Mechanism evidence only; no CPU or throughput verdict.",
+  "disassemblySha256": "1b23fbb7a28787a6890c06f446a2288eca9812e35b1a992aef2066bf33a0aa8a",
+  "displayedDisassemblySha256": "aa3b117f57e65066117e1bdeeafcc8b06e18d40a19de9dc73f6e0c0eff3d2bf8",
+  "normalization": "Only the objdump executable path is replaced with QUALIFIED_CANDIDATE; original disassembly digest retained."
+}
