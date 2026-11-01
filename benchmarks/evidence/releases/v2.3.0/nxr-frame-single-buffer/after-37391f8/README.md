@@ -51,3 +51,9 @@ ARM native execution is attested by its matching hosted runner; local ARM
 execution is explicitly not run. These are candidate assets, not a published
 release. The full local check passes all 19 stages at the runtime source,
 with hosted CI and Security PASS; Native/Frozen qualification remains separate.
+
+The independently downloaded Native artifact from run 41280033428 verifies
+3,120 members and its nested checksum manifest; see `native-verification.json`.
+`frozen-packages-comparison.json` verifies that all six assets from the separate
+Frozen package build match the candidate-package workflow bytes. This package
+comparison does not claim the complete Frozen coordinator has passed.

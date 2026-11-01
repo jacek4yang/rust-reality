@@ -1,0 +1,48 @@
+{
+  "scope": "Full protected client comparison of the exact combined NXR/upload official GNU candidate against pinned official d72 baseline. Separate source and executable identity from prior 76dd measurements; no pooling. Final main binary still requires its own qualification.",
+  "candidateSource": "37391f86c8d58ade672c25453a855b69e7d81932",
+  "candidateSha256": "cba868a43e3f1fbd0d2a7bdb4cd7bd1113359f201bc1bec55d8b877c5b836182",
+  "baselineSource": "d72abc250791f804e310818fdee148540aabfed9",
+  "baselineSha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+  "blocks": 20,
+  "order": "ABBA",
+  "slots": 80,
+  "samplesPerCell": 5,
+  "concurrencies": [
+    1,
+    8,
+    32,
+    64
+  ],
+  "connectionsPerSetupBatch": 128,
+  "dataMiB": 16,
+  "shapes": [
+    "direct-download",
+    "direct-upload",
+    "framed-download",
+    "framed-upload",
+    "bidi"
+  ],
+  "protectedDataGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99
+  },
+  "protectedSetupGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99,
+    "p50Upper": 1.01,
+    "p99Upper": 1.02
+  },
+  "decision": "Use unchanged qualified collector bootstrap95 intervals. Every protected interval must meet its guard. Crossing a guard is UNRESOLVED, not PASS; retain every result, no early stopping, no pooling, no unchanged repeated acceptance retries. Investigate a discriminating cause before collecting a replacement campaign.",
+  "host": "P-core policies 0..7 fixed 2.4GHz and affinity 0,2,4,6, isolated network namespace, no local compilation or archive verification during collection; bounded 12000s supervisor with exact restoration.",
+  "dataBatches": 8000,
+  "verifiedDataRequests": 252000,
+  "setupBatches": 1600,
+  "collectorResolvingMinimum": 12,
+  "helperSha256": {
+    "controller.py": "9980496191190b331b160eb0688e161073154651a05c9b84517c586c16643095",
+    "frequency-supervisor.py": "54570f473d121e1f0b6a8f738e79bdab9297f5c3f0000635d33196d351a5da71",
+    "assess.py": "2d44f98d898bab3e3cd4b7124e60a2c8e1b1aecff981a8d5dd6ce09055ec46c1"
+  },
+  "preflightCorrection": "Attempt 1 inherited root HOME after setpriv and failed before collection. Reset the child login environment with supported setpriv --reset-env. No samples collected; exact CPU restoration verified. Workload and acceptance thresholds unchanged."
+}

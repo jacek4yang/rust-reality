@@ -1,0 +1,29 @@
+from pathlib import Path
+import json,math,collections
+r=Path.home()/'.cache/rr-v230-data-official-37391f8'
+assert (r/'exit-code.txt').read_text().strip()=='0'
+x=json.loads((r/'run/summary.json').read_text());f=json.loads((r/'frequency-restoration.json').read_text())
+assert x['status']=='COMPLETE' and x['slotCount']==80 and x['failures']==0
+assert x['rawSampleCount']==1600 and f['restoredExactly'] and not f['errors'] and f['collectorExit']==0
+concurrencies=['1','8','32','64'];shapes=['bidi','direct-download','direct-upload','framed-download','framed-upload']
+assert set(x['clientData'])=={s+':c'+c for s in shapes for c in concurrencies}
+rows=[]
+def assess(scope,cell,metric,v,bound,higher=False):
+ assert v['blockCount']==20 and 'bootstrap95' in v
+ lo,hi=v['bootstrap95'];median=v['medianCandidateVsBaseline'];assert all(math.isfinite(n) for n in [lo,hi,median]) and lo<=hi
+ if higher: verdict='PASS' if lo>=bound else 'FAIL' if hi<bound else 'UNRESOLVED'
+ else: verdict='PASS' if hi<=bound else 'FAIL' if lo>bound else 'UNRESOLVED'
+ rows.append({'scope':scope,'cell':cell,'metric':metric,'median':median,'bootstrap95':[lo,hi],'bound':bound,'direction':'higher' if higher else 'lower','verdict':verdict})
+for name,metrics in sorted(x['clientData'].items()):
+ assess('data',name,'cpuSecondsPerGiB',metrics['cpuSecondsPerGiB'],1.01)
+ assess('data',name,'mibPerSecond',metrics['mibPerSecond'],.99,True)
+for c in concurrencies:
+ assess('setup',c,'connectionsPerSecond',x['cells'][c],.99,True)
+ assess('setup',c,'clientCpuPerConnection',x['clientCpuPerConcurrency'][c],1.01)
+ assess('setup',c,'p50Seconds',x['latency'][c]['p50Seconds'],1.01)
+ assess('setup',c,'p99Seconds',x['latency'][c]['p99Seconds'],1.02)
+counts={scope:dict(collections.Counter(z['verdict'] for z in rows if z['scope']==scope)) for scope in ['data','setup']}
+verdict='FAIL' if any(z['verdict']=='FAIL' for z in rows) else 'UNRESOLVED' if any(z['verdict']=='UNRESOLVED' for z in rows) else 'PASS'
+result={'scope':'Full protected client performance comparison on exact official GNU candidates, fixed-clock local hardware. Ratios candidate/baseline. Final-main identity still requires qualification.','source':'Qualified immutable collector 38abe32 bootstrap95; no recomputed or pooled intervals.','candidateSource':json.loads((r/'invocation.json').read_text())['candidateSource'],'baselineSource':'d72abc250791f804e310818fdee148540aabfed9','counts':counts,'verdict':verdict,'cells':rows}
+result['decision'] = 'PROTECTED_CLIENT_METRICS_PASS' if verdict=='PASS' else 'BLOCKED_INVESTIGATE_OR_REJECT'
+(r/'performance-assessment.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))

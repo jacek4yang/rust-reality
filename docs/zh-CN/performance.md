@@ -362,12 +362,35 @@ ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 cl
 
 ## v2.3.0 发布证据
 
-v2.3.0 保留上面的完整客户端比较及其原始源码提交、可执行文件哈希、流量形态和
-统计界限。通过的预留上传缓冲区比较明确对应 `0c5b1dc`，不会静默替换成后续源码
-或最终安装包身份。原生浏览器指纹自身的成本与实现回退分开评估。当前 stock Xray
-兼容性使用 `tools/fixtures/stock-xray.json` 中的官方固定参考进行验证；下方旧 Xray
-表格仍为历史比较。最终发布要求精确 main 资格验证与安装包执行证明，不代表生产
-WAN 行为。
+保留的比较明确绑定源码、可执行文件、工作负载和统计范围。
+[`76dd5448` 官方安装包比较](../../benchmarks/evidence/releases/v2.3.0/client-data-combined-official-76dd544/performance-assessment.json)
+相对固定的官方 `d72abc25` 基线通过全部 56 项受保护客户端指标：20 组 ABBA，
+并发度 1/8/32/64，以及五种 16 MiB 流量形态。该候选早于 NXR 帧写入器优化，
+不能替代后续源码或最终发布可执行文件的结果。相对 `d72abc25` 的大幅吞吐提升
+在 vectored upload 改动之前已存在，不能全部归因于该改动。
+
+[`37391f86` 合并候选官方包](../../benchmarks/evidence/releases/v2.3.0/client-data-official-37391f8/README.md)
+在独立的 20 组 ABBA 测量中也通过全部 56 项受保护指标，使用相同基线和阈值。
+该候选包含 NXR 帧写入器改动。80 个 slot 全部完成，没有与旧测量合并统计区间。
+这仍是指定候选的证据，不替代最终 main 资格验证。
+
+[`76dd5448` 分配与资源诊断](../../benchmarks/evidence/releases/v2.3.0/client-allocation-combined-76dd544/README.md)
+保留了测得的取舍：完整生命周期的分配调用次数增加约 1.08%，而跟踪的峰值堆
+从 17.88 MB 降至 9.29 MB。插桩内存和时间不作为生产验收指标。独立的非插桩
+观测中，80 个 slot 的描述符均恢复；在规定流量之后，每个 slot 按持有连接数
+计算的匿名驻留增量中位数为每连接 39 KiB，基线为 82.44 KiB。这是特定负载的
+观测，不是冷对象大小，也不能证明长期无泄漏。
+
+[`37391f86` NXR 帧写入器诊断](../../benchmarks/evidence/releases/v2.3.0/nxr-frame-single-buffer/after-37391f8/README.md)
+消除了无地址帧每次一次、带地址帧每次两次的临时分配。调用方缓冲区已预留时，
+15 种地址和报文大小组合的编码器增量分配均为零。独立的 20 组 ABBA CPU 比较
+测得编码器 CPU 降低 1.9%–10.4%。这不表示整个 UDP 会话零分配，也不表示网络
+吞吐有同等幅度的提升。帧字节和 MAC 语义保持不变，NXR UDP 仍通过 TCP 承载。
+
+原生浏览器指纹自身的成本与实现回退分开评估。当前 stock Xray 兼容性使用
+`tools/fixtures/stock-xray.json` 中的官方固定参考；旧 Xray 表格仍为历史比较。
+最终发布要求精确 main 资格验证和实际安装包执行。回环与隔离虚机结果不代表
+生产 WAN 行为，也不构成完整浏览器网络行为的等价性证明。
 
 ## v2.2.0 发布证据
 

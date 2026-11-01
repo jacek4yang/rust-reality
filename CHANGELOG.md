@@ -2,7 +2,7 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [2.3.0] - 2026-10-31
+## [2.3.0] - 2026-11-01
 
 - Add per-LINE `fingerprint` selection: Chrome 156.0.8078.74 (default) and
   Firefox 159.0, grounded in native Windows browser captures. Unknown profile
@@ -27,7 +27,10 @@ All notable user-facing changes to this project are documented in this file.
   Reject oversized NXR replies and unknown authenticated frame flags. Close
   NXR UDP associations when their frame sequence space is exhausted instead of
   wrapping and allowing old authenticated sequence values to repeat.
-- Reuse bounded upload storage across Vision framing and TLS sealing. Retain
+- Read TCP uploads into bounded Vision record storage with vectored I/O and
+  reuse it for TLS sealing. Encode NXR UDP frames directly into caller storage,
+  removing temporary destination and body allocations without changing the wire
+  format or TCP carrier. Retain
   complete measured performance comparisons, rejected experiments and binary
   identities in the performance reference; ClientHello matching is not a
   claim of complete browser traffic indistinguishability.
