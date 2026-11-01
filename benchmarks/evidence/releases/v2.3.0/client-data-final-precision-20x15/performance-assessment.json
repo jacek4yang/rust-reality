@@ -1,0 +1,200 @@
+{
+  "scope": "Independent 20-block, 15-sample concurrency-1 precision follow-up on the same packaged binaries; not overall release qualification. Ratios candidate/baseline.",
+  "source": "Qualified immutable collector 38abe32 bootstrap95; no recomputed or pooled intervals.",
+  "candidateSource": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "baselineSource": "d72abc250791f804e310818fdee148540aabfed9",
+  "counts": {
+    "data": {
+      "PASS": 9,
+      "UNRESOLVED": 1
+    },
+    "setup": {
+      "PASS": 4
+    }
+  },
+  "verdict": "UNRESOLVED",
+  "cells": [
+    {
+      "scope": "data",
+      "cell": "bidi:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7513683843211922,
+      "bootstrap95": [
+        0.748374748449543,
+        0.75665862139965
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c1",
+      "metric": "mibPerSecond",
+      "median": 4.3105911942771815,
+      "bootstrap95": [
+        3.914559253062508,
+        4.652281512832497
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9156047950482462,
+      "bootstrap95": [
+        0.9129679577111056,
+        0.9189922111050559
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c1",
+      "metric": "mibPerSecond",
+      "median": 4.976120113014879,
+      "bootstrap95": [
+        4.973413495825509,
+        4.980013405847497
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0108742162333013,
+      "bootstrap95": [
+        0.987844905315721,
+        1.0152364718389042
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "UNRESOLVED"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 6.274932728243513,
+      "bootstrap95": [
+        6.267802407587055,
+        6.285647002861263
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9765027770022161,
+      "bootstrap95": [
+        0.9735674385916501,
+        0.9814336553628171
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c1",
+      "metric": "mibPerSecond",
+      "median": 4.941884520618263,
+      "bootstrap95": [
+        4.9384637367436355,
+        4.945491339244283
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8040808131099453,
+      "bootstrap95": [
+        0.801199222055564,
+        0.8080339953360036
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 6.931913351353861,
+      "bootstrap95": [
+        6.928662320176945,
+        6.935296009152067
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "connectionsPerSecond",
+      "median": 63.422550574607975,
+      "bootstrap95": [
+        63.26444134381698,
+        63.481889480799104
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "clientCpuPerConnection",
+      "median": 0.5506974769276398,
+      "bootstrap95": [
+        0.5467576993504304,
+        0.5523963941986735
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "p50Seconds",
+      "median": 0.015452822534189462,
+      "bootstrap95": [
+        0.015434633904983414,
+        0.01548041047070086
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "p99Seconds",
+      "median": 0.017840880087783804,
+      "bootstrap95": [
+        0.017771374600541852,
+        0.017937307329955087
+      ],
+      "bound": 1.02,
+      "direction": "lower",
+      "verdict": "PASS"
+    }
+  ]
+}

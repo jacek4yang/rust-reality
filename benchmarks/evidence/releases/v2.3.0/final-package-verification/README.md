@@ -43,3 +43,13 @@ package jobs passed, but the two dependent aggregate jobs were skipped.
 job log was unavailable (HTTP 404 / BlobNotFound). This does not establish a
 product root cause or a passing aggregate. A same-source failed-job rerun leaves
 all deadlines and contract checks unchanged.
+
+The independent 20-block / 15-sample concurrency-1 precision campaign also
+remains **UNRESOLVED**. Its 6,000 data batches represent 7,200 verified data
+requests; 1,200 setup batches are retained. Thirteen metrics pass. Direct
+upload CPU has median 1.0108742 and 95% interval [0.9878449, 1.0152365], still
+crossing the unchanged 1.01 ceiling. CPU policies were restored exactly.
+`../client-data-final-precision-20x15/` preserves every slot. No further
+acceptance retry by increasing sample count is authorized by this plan; the
+next step is causal profiling or a demonstrated measurement defect. Neither
+unresolved campaign establishes a passing release performance claim.
