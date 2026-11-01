@@ -1,0 +1,14 @@
+{
+  "source": "37391f86c8d58ade672c25453a855b69e7d81932",
+  "protocolTests": 11,
+  "adversarialLifecycleTests": 19,
+  "nxrIntegrationTests": 8,
+  "stockXraySha256": "cc4b84d3069569f297a61f04b914f2bb37e9d202fd7b84cb50def1fc30fd40e1",
+  "udp443FirstAttempt": "EACCES binding port 443 before product traffic; host port floor 1024.",
+  "udp443Correction": "Exact unchanged test passed in owned network namespace with namespace-local port floor zero and original unprivileged uid. Host network unchanged.",
+  "focusedFuzzSmoke": "nxr_udp_frames PASS",
+  "strictClippy": "PASS",
+  "fullLocalGate": "PENDING at archival time",
+  "securityRun": 41280033381,
+  "securityConclusion": "success"
+}

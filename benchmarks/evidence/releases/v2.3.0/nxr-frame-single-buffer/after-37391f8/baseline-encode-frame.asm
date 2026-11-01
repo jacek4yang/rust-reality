@@ -13,7 +13,7 @@ Disassembly of section .text:
    55b09:	53                   	push   %rbx
    55b0a:	48 83 ec 78          	sub    $0x78,%rsp
    55b0e:	48 8b 9c 24 b0 00 00 	mov    0xb0(%rsp),%rbx
-   55b15:	00 
+   55b15:	00
    55b16:	b0 0a                	mov    $0xa,%al
    55b18:	48 81 fb 66 1d 00 00 	cmp    $0x1d66,%rbx
    55b1f:	0f 87 e8 03 00 00    	ja     55f0d <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x40d>
@@ -29,7 +29,7 @@ Disassembly of section .text:
    55b46:	49 8b 00             	mov    (%r8),%rax
    55b49:	4d 8b 58 10          	mov    0x10(%r8),%r11
    55b4d:	49 ba 00 00 00 00 00 	movabs $0x8000000000000000,%r10
-   55b54:	00 00 80 
+   55b54:	00 00 80
    55b57:	49 31 c2             	xor    %rax,%r10
    55b5a:	48 85 c0             	test   %rax,%rax
    55b5d:	41 bc 01 00 00 00    	mov    $0x1,%r12d
@@ -80,7 +80,7 @@ Disassembly of section .text:
    55c20:	66 41 c1 c5 08       	rol    $0x8,%r13w
    55c25:	66 44 89 68 03       	mov    %r13w,0x3(%rax)
    55c2a:	48 c7 44 24 50 05 00 	movq   $0x5,0x50(%rsp)
-   55c31:	00 00 
+   55c31:	00 00
    55c33:	49 89 c6             	mov    %rax,%r14
    55c36:	49 c1 ee 08          	shr    $0x8,%r14
    55c3a:	4c 8b 44 24 60       	mov    0x60(%rsp),%r8
@@ -156,11 +156,11 @@ Disassembly of section .text:
    55d59:	89 74 24 08          	mov    %esi,0x8(%rsp)
    55d5d:	48 89 7c 24 38       	mov    %rdi,0x38(%rsp)
    55d62:	48 c7 44 24 18 00 00 	movq   $0x0,0x18(%rsp)
-   55d69:	00 00 
+   55d69:	00 00
    55d6b:	48 c7 44 24 20 01 00 	movq   $0x1,0x20(%rsp)
-   55d72:	00 00 
+   55d72:	00 00
    55d74:	48 c7 44 24 28 00 00 	movq   $0x0,0x28(%rsp)
-   55d7b:	00 00 
+   55d7b:	00 00
    55d7d:	48 8d 7c 24 40       	lea    0x40(%rsp),%rdi
    55d82:	ba 01 00 00 00       	mov    $0x1,%edx
    55d87:	31 f6                	xor    %esi,%esi
@@ -189,7 +189,7 @@ Disassembly of section .text:
    55de7:	48 8d 7c 24 18       	lea    0x18(%rsp),%rdi
    55dec:	67 e8 7e 71 ff ff    	addr32 call 4cf70 <_RNvMs4_NtCsgFX3jaOk65H_5alloc7raw_vecINtB5_6RawVechE8grow_oneB7_>
    55df2:	48 8b ac 24 b8 00 00 	mov    0xb8(%rsp),%rbp
-   55df9:	00 
+   55df9:	00
    55dfa:	48 8b 44 24 20       	mov    0x20(%rsp),%rax
    55dff:	46 88 6c 20 01       	mov    %r13b,0x1(%rax,%r12,1)
    55e04:	49 83 c4 02          	add    $0x2,%r12
@@ -229,7 +229,7 @@ Disassembly of section .text:
    55e98:	48 8b 74 24 28       	mov    0x28(%rsp),%rsi
    55e9d:	48 83 c6 24          	add    $0x24,%rsi
    55ea1:	48 c7 45 10 00 00 00 	movq   $0x0,0x10(%rbp)
-   55ea8:	00 
+   55ea8:	00
    55ea9:	48 89 ef             	mov    %rbp,%rdi
    55eac:	e8 0f f0 ff ff       	call   54ec0 <_RNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecNtB5_11RawVecInner17try_reserve_exactCsHnFHAC5PMO_12rust_reality>
    55eb1:	48 89 c1             	mov    %rax,%rcx

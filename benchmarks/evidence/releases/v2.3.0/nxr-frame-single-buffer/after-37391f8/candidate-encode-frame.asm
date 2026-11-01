@@ -13,7 +13,7 @@ Disassembly of section .text:
    55349:	53                   	push   %rbx
    5534a:	48 81 ec c8 01 00 00 	sub    $0x1c8,%rsp
    55351:	4c 8b b4 24 00 02 00 	mov    0x200(%rsp),%r14
-   55358:	00 
+   55358:	00
    55359:	b0 0a                	mov    $0xa,%al
    5535b:	49 81 fe 66 1d 00 00 	cmp    $0x1d66,%r14
    55362:	0f 87 77 0a 00 00    	ja     55ddf <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0xa9f>
@@ -28,7 +28,7 @@ Disassembly of section .text:
    55387:	74 45                	je     553ce <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x8e>
    55389:	49 8b 00             	mov    (%r8),%rax
    5538c:	49 ba 00 00 00 00 00 	movabs $0x8000000000000000,%r10
-   55393:	00 00 80 
+   55393:	00 00 80
    55396:	49 31 c2             	xor    %rax,%r10
    55399:	48 85 c0             	test   %rax,%rax
    5539c:	b8 01 00 00 00       	mov    $0x1,%eax
@@ -65,15 +65,15 @@ Disassembly of section .text:
    55419:	31 c0                	xor    %eax,%eax
    5541b:	e9 bf 09 00 00       	jmp    55ddf <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0xa9f>
    55420:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55427:	00 
+   55427:	00
    55428:	4c 8d 63 24          	lea    0x24(%rbx),%r12
    5542c:	49 c7 42 10 00 00 00 	movq   $0x0,0x10(%r10)
-   55433:	00 
+   55433:	00
    55434:	49 8b 02             	mov    (%r10),%rax
    55437:	49 39 c4             	cmp    %rax,%r12
    5543a:	89 b4 24 fc 00 00 00 	mov    %esi,0xfc(%rsp)
    55441:	48 89 bc 24 98 01 00 	mov    %rdi,0x198(%rsp)
-   55448:	00 
+   55448:	00
    55449:	4c 89 4c 24 10       	mov    %r9,0x10(%rsp)
    5544e:	4c 89 44 24 18       	mov    %r8,0x18(%rsp)
    55453:	0f 87 98 09 00 00    	ja     55df1 <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0xab1>
@@ -93,7 +93,7 @@ Disassembly of section .text:
    55486:	48 89 d3             	mov    %rdx,%rbx
    55489:	67 e8 81 7a ff ff    	addr32 call 4cf10 <_RNvMs4_NtCsgFX3jaOk65H_5alloc7raw_vecINtB5_6RawVechE8grow_oneB7_>
    5548f:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55496:	00 
+   55496:	00
    55497:	48 89 da             	mov    %rbx,%rdx
    5549a:	44 89 e1             	mov    %r12d,%ecx
    5549d:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
@@ -108,7 +108,7 @@ Disassembly of section .text:
    554c0:	89 cb                	mov    %ecx,%ebx
    554c2:	67 e8 48 7a ff ff    	addr32 call 4cf10 <_RNvMs4_NtCsgFX3jaOk65H_5alloc7raw_vecINtB5_6RawVechE8grow_oneB7_>
    554c8:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   554cf:	00 
+   554cf:	00
    554d0:	89 d9                	mov    %ebx,%ecx
    554d2:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
    554d7:	4c 8b 4c 24 10       	mov    0x10(%rsp),%r9
@@ -124,7 +124,7 @@ Disassembly of section .text:
    554ff:	45 89 f4             	mov    %r14d,%r12d
    55502:	49 8d 47 04          	lea    0x4(%r15),%rax
    55506:	48 bd 00 00 00 00 00 	movabs $0x8000000000000000,%rbp
-   5550d:	00 00 80 
+   5550d:	00 00 80
    55510:	49 8b 52 08          	mov    0x8(%r10),%rdx
    55514:	42 89 0c 3a          	mov    %ecx,(%rdx,%r15,1)
    55518:	49 89 42 10          	mov    %rax,0x10(%r10)
@@ -135,7 +135,7 @@ Disassembly of section .text:
    5552a:	4c 89 d7             	mov    %r10,%rdi
    5552d:	67 e8 dd 79 ff ff    	addr32 call 4cf10 <_RNvMs4_NtCsgFX3jaOk65H_5alloc7raw_vecINtB5_6RawVechE8grow_oneB7_>
    55533:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   5553a:	00 
+   5553a:	00
    5553b:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
    55540:	49 8b 42 08          	mov    0x8(%r10),%rax
    55544:	0f b6 4c 24 0f       	movzbl 0xf(%rsp),%ecx
@@ -188,7 +188,7 @@ Disassembly of section .text:
    555fa:	4c 89 c6             	mov    %r8,%rsi
    555fd:	e8 de f1 ff ff       	call   547e0 <_RNvMs_NtCsgFX3jaOk65H_5alloc3vecINtB4_3VechE15append_elementsCsHnFHAC5PMO_12rust_reality>
    55602:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55609:	00 
+   55609:	00
    5560a:	4c 8b 4c 24 10       	mov    0x10(%rsp),%r9
    5560f:	66 41 c1 c4 08       	rol    $0x8,%r12w
    55614:	49 8b 02             	mov    (%r10),%rax
@@ -212,7 +212,7 @@ Disassembly of section .text:
    55657:	4c 89 f2             	mov    %r14,%rdx
    5565a:	ff 15 50 6d 00 00    	call   *0x6d50(%rip)        # 5c3b0 <memcpy@GLIBC_2.14>
    55660:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55667:	00 
+   55667:	00
    55668:	4d 01 f7             	add    %r14,%r15
    5566b:	4d 89 7a 10          	mov    %r15,0x10(%r10)
    5566f:	49 83 ff 04          	cmp    $0x4,%r15
@@ -222,156 +222,156 @@ Disassembly of section .text:
    55680:	0f 29 44 24 50       	movaps %xmm0,0x50(%rsp)
    55685:	0f 29 44 24 40       	movaps %xmm0,0x40(%rsp)
    5568a:	48 8b 84 24 98 01 00 	mov    0x198(%rsp),%rax
-   55691:	00 
+   55691:	00
    55692:	0f 10 08             	movups (%rax),%xmm1
    55695:	0f 10 50 10          	movups 0x10(%rax),%xmm2
    55699:	0f 29 94 24 10 01 00 	movaps %xmm2,0x110(%rsp)
-   556a0:	00 
+   556a0:	00
    556a1:	0f 29 8c 24 00 01 00 	movaps %xmm1,0x100(%rsp)
-   556a8:	00 
+   556a8:	00
    556a9:	0f 29 84 24 20 01 00 	movaps %xmm0,0x120(%rsp)
-   556b0:	00 
+   556b0:	00
    556b1:	0f 29 84 24 30 01 00 	movaps %xmm0,0x130(%rsp)
-   556b8:	00 
+   556b8:	00
    556b9:	0f 28 05 80 fd fa ff 	movaps -0x50280(%rip),%xmm0        # 5440 <__abi_tag+0x5144>
    556c0:	0f 57 c8             	xorps  %xmm0,%xmm1
    556c3:	0f 57 d0             	xorps  %xmm0,%xmm2
    556c6:	0f 29 8c 24 00 01 00 	movaps %xmm1,0x100(%rsp)
-   556cd:	00 
+   556cd:	00
    556ce:	0f 29 94 24 10 01 00 	movaps %xmm2,0x110(%rsp)
-   556d5:	00 
+   556d5:	00
    556d6:	0f 29 84 24 20 01 00 	movaps %xmm0,0x120(%rsp)
-   556dd:	00 
+   556dd:	00
    556de:	0f 29 84 24 30 01 00 	movaps %xmm0,0x130(%rsp)
-   556e5:	00 
+   556e5:	00
    556e6:	0f 10 05 23 18 fb ff 	movups -0x4e7dd(%rip),%xmm0        # 6f10 <__abi_tag+0x6c14>
    556ed:	0f 29 84 24 b0 01 00 	movaps %xmm0,0x1b0(%rsp)
-   556f4:	00 
+   556f4:	00
    556f5:	0f 10 05 04 18 fb ff 	movups -0x4e7fc(%rip),%xmm0        # 6f00 <__abi_tag+0x6c04>
    556fc:	0f 29 84 24 a0 01 00 	movaps %xmm0,0x1a0(%rsp)
-   55703:	00 
+   55703:	00
    55704:	48 c7 84 24 c0 01 00 	movq   $0x1,0x1c0(%rsp)
-   5570b:	00 01 00 00 00 
+   5570b:	00 01 00 00 00
    55710:	48 8d 1d 79 09 00 00 	lea    0x979(%rip),%rbx        # 56090 <_RNvNtCsf16BXcWIZfP_4sha26sha25611compress256>
    55717:	48 8d bc 24 a0 01 00 	lea    0x1a0(%rsp),%rdi
-   5571e:	00 
+   5571e:	00
    5571f:	48 8d ac 24 00 01 00 	lea    0x100(%rsp),%rbp
-   55726:	00 
+   55726:	00
    55727:	ba 01 00 00 00       	mov    $0x1,%edx
    5572c:	48 89 ee             	mov    %rbp,%rsi
    5572f:	ff d3                	call   *%rbx
    55731:	0f 28 05 78 fc fa ff 	movaps -0x50388(%rip),%xmm0        # 53b0 <__abi_tag+0x50b4>
    55738:	0f 28 8c 24 00 01 00 	movaps 0x100(%rsp),%xmm1
-   5573f:	00 
+   5573f:	00
    55740:	0f 57 c8             	xorps  %xmm0,%xmm1
    55743:	0f 28 94 24 10 01 00 	movaps 0x110(%rsp),%xmm2
-   5574a:	00 
+   5574a:	00
    5574b:	0f 57 d0             	xorps  %xmm0,%xmm2
    5574e:	0f 29 8c 24 00 01 00 	movaps %xmm1,0x100(%rsp)
-   55755:	00 
+   55755:	00
    55756:	0f 29 94 24 10 01 00 	movaps %xmm2,0x110(%rsp)
-   5575d:	00 
+   5575d:	00
    5575e:	0f 28 8c 24 20 01 00 	movaps 0x120(%rsp),%xmm1
-   55765:	00 
+   55765:	00
    55766:	0f 57 c8             	xorps  %xmm0,%xmm1
    55769:	0f 57 84 24 30 01 00 	xorps  0x130(%rsp),%xmm0
-   55770:	00 
+   55770:	00
    55771:	0f 29 8c 24 20 01 00 	movaps %xmm1,0x120(%rsp)
-   55778:	00 
+   55778:	00
    55779:	0f 29 84 24 30 01 00 	movaps %xmm0,0x130(%rsp)
-   55780:	00 
+   55780:	00
    55781:	4d 8d 67 fc          	lea    -0x4(%r15),%r12
    55785:	4d 8d 6e 04          	lea    0x4(%r14),%r13
    55789:	0f 10 05 80 17 fb ff 	movups -0x4e880(%rip),%xmm0        # 6f10 <__abi_tag+0x6c14>
    55790:	0f 29 84 24 c0 00 00 	movaps %xmm0,0xc0(%rsp)
-   55797:	00 
+   55797:	00
    55798:	0f 10 05 61 17 fb ff 	movups -0x4e89f(%rip),%xmm0        # 6f00 <__abi_tag+0x6c04>
    5579f:	0f 29 84 24 b0 00 00 	movaps %xmm0,0xb0(%rsp)
-   557a6:	00 
+   557a6:	00
    557a7:	48 c7 84 24 d0 00 00 	movq   $0x1,0xd0(%rsp)
-   557ae:	00 01 00 00 00 
+   557ae:	00 01 00 00 00
    557b3:	48 8d bc 24 b0 00 00 	lea    0xb0(%rsp),%rdi
-   557ba:	00 
+   557ba:	00
    557bb:	ba 01 00 00 00       	mov    $0x1,%edx
    557c0:	48 89 ee             	mov    %rbp,%rsi
    557c3:	ff d3                	call   *%rbx
    557c5:	48 8b 84 24 d0 00 00 	mov    0xd0(%rsp),%rax
-   557cc:	00 
+   557cc:	00
    557cd:	48 89 44 24 68       	mov    %rax,0x68(%rsp)
    557d2:	0f 28 84 24 b0 00 00 	movaps 0xb0(%rsp),%xmm0
-   557d9:	00 
+   557d9:	00
    557da:	0f 28 8c 24 c0 00 00 	movaps 0xc0(%rsp),%xmm1
-   557e1:	00 
+   557e1:	00
    557e2:	0f 11 4c 24 58       	movups %xmm1,0x58(%rsp)
    557e7:	0f 11 44 24 48       	movups %xmm0,0x48(%rsp)
    557ec:	48 8b 84 24 c0 01 00 	mov    0x1c0(%rsp),%rax
-   557f3:	00 
+   557f3:	00
    557f4:	48 89 44 24 40       	mov    %rax,0x40(%rsp)
    557f9:	0f 28 84 24 a0 01 00 	movaps 0x1a0(%rsp),%xmm0
-   55800:	00 
+   55800:	00
    55801:	0f 28 8c 24 b0 01 00 	movaps 0x1b0(%rsp),%xmm1
-   55808:	00 
+   55808:	00
    55809:	0f 29 4c 24 30       	movaps %xmm1,0x30(%rsp)
    5580e:	0f 29 44 24 20       	movaps %xmm0,0x20(%rsp)
    55813:	0f 29 84 24 40 01 00 	movaps %xmm0,0x140(%rsp)
-   5581a:	00 
+   5581a:	00
    5581b:	0f 29 8c 24 50 01 00 	movaps %xmm1,0x150(%rsp)
-   55822:	00 
+   55822:	00
    55823:	48 8b 44 24 40       	mov    0x40(%rsp),%rax
    55828:	48 89 84 24 60 01 00 	mov    %rax,0x160(%rsp)
-   5582f:	00 
+   5582f:	00
    55830:	48 8b 44 24 48       	mov    0x48(%rsp),%rax
    55835:	48 89 84 24 68 01 00 	mov    %rax,0x168(%rsp)
-   5583c:	00 
+   5583c:	00
    5583d:	0f 28 44 24 50       	movaps 0x50(%rsp),%xmm0
    55842:	0f 29 84 24 70 01 00 	movaps %xmm0,0x170(%rsp)
-   55849:	00 
+   55849:	00
    5584a:	0f 28 44 24 60       	movaps 0x60(%rsp),%xmm0
    5584f:	0f 29 84 24 80 01 00 	movaps %xmm0,0x180(%rsp)
-   55856:	00 
+   55856:	00
    55857:	0f 10 05 bb 13 fb ff 	movups -0x4ec45(%rip),%xmm0        # 6c19 <__abi_tag+0x691d>
    5585e:	0f 29 84 24 10 01 00 	movaps %xmm0,0x110(%rsp)
-   55865:	00 
+   55865:	00
    55866:	0f 10 05 9c 13 fb ff 	movups -0x4ec64(%rip),%xmm0        # 6c09 <__abi_tag+0x690d>
    5586d:	0f 29 84 24 00 01 00 	movaps %xmm0,0x100(%rsp)
-   55874:	00 
+   55874:	00
    55875:	66 c7 84 24 20 01 00 	movw   $0x63,0x120(%rsp)
-   5587c:	00 63 00 
+   5587c:	00 63 00
    5587f:	8b 84 24 fc 00 00 00 	mov    0xfc(%rsp),%eax
    55886:	88 84 24 22 01 00 00 	mov    %al,0x122(%rsp)
    5588d:	49 83 fc 1c          	cmp    $0x1c,%r12
    55891:	77 25                	ja     558b8 <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x578>
    55893:	48 8d bc 24 23 01 00 	lea    0x123(%rsp),%rdi
-   5589a:	00 
+   5589a:	00
    5589b:	4c 89 ee             	mov    %r13,%rsi
    5589e:	4c 89 e2             	mov    %r12,%rdx
    558a1:	ff 15 09 6b 00 00    	call   *0x6b09(%rip)        # 5c3b0 <memcpy@GLIBC_2.14>
    558a7:	41 80 c4 23          	add    $0x23,%r12b
    558ab:	44 88 a4 24 3f 01 00 	mov    %r12b,0x13f(%rsp)
-   558b2:	00 
+   558b2:	00
    558b3:	e9 a9 00 00 00       	jmp    55961 <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x621>
    558b8:	4c 8d a4 24 40 01 00 	lea    0x140(%rsp),%r12
-   558bf:	00 
+   558bf:	00
    558c0:	49 83 c7 df          	add    $0xffffffffffffffdf,%r15
    558c4:	41 0f 10 45 00       	movups 0x0(%r13),%xmm0
    558c9:	41 0f 10 4d 0d       	movups 0xd(%r13),%xmm1
    558ce:	0f 11 8c 24 30 01 00 	movups %xmm1,0x130(%rsp)
-   558d5:	00 
+   558d5:	00
    558d6:	0f 11 84 24 23 01 00 	movups %xmm0,0x123(%rsp)
-   558dd:	00 
+   558dd:	00
    558de:	48 ff 84 24 60 01 00 	incq   0x160(%rsp)
-   558e5:	00 
+   558e5:	00
    558e6:	48 8d b4 24 00 01 00 	lea    0x100(%rsp),%rsi
-   558ed:	00 
+   558ed:	00
    558ee:	ba 01 00 00 00       	mov    $0x1,%edx
    558f3:	4c 89 e7             	mov    %r12,%rdi
    558f6:	67 e8 94 07 00 00    	addr32 call 56090 <_RNvNtCsf16BXcWIZfP_4sha26sha25611compress256>
    558fc:	c6 84 24 3f 01 00 00 	movb   $0x0,0x13f(%rsp)
-   55903:	00 
+   55903:	00
    55904:	4c 89 fa             	mov    %r15,%rdx
    55907:	48 c1 ea 06          	shr    $0x6,%rdx
    5590b:	48 b8 00 00 00 00 00 	movabs $0x8000000000000000,%rax
-   55912:	00 00 80 
+   55912:	00 00 80
    55915:	48 83 c0 c0          	add    $0xffffffffffffffc0,%rax
    55919:	4c 21 f8             	and    %r15,%rax
    5591c:	41 83 e7 3f          	and    $0x3f,%r15d
@@ -381,26 +381,26 @@ Disassembly of section .text:
    5592b:	74 18                	je     55945 <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x605>
    5592d:	49 83 c6 21          	add    $0x21,%r14
    55931:	48 01 94 24 60 01 00 	add    %rdx,0x160(%rsp)
-   55938:	00 
+   55938:	00
    55939:	4c 89 e7             	mov    %r12,%rdi
    5593c:	4c 89 f6             	mov    %r14,%rsi
    5593f:	67 e8 4b 07 00 00    	addr32 call 56090 <_RNvNtCsf16BXcWIZfP_4sha26sha25611compress256>
    55945:	44 88 bc 24 3f 01 00 	mov    %r15b,0x13f(%rsp)
-   5594c:	00 
+   5594c:	00
    5594d:	48 8d bc 24 00 01 00 	lea    0x100(%rsp),%rdi
-   55954:	00 
+   55954:	00
    55955:	4c 89 ee             	mov    %r13,%rsi
    55958:	4c 89 fa             	mov    %r15,%rdx
    5595b:	ff 15 4f 6a 00 00    	call   *0x6a4f(%rip)        # 5c3b0 <memcpy@GLIBC_2.14>
    55961:	48 8d 7c 24 20       	lea    0x20(%rsp),%rdi
    55966:	48 8d b4 24 00 01 00 	lea    0x100(%rsp),%rsi
-   5596d:	00 
+   5596d:	00
    5596e:	ba 90 00 00 00       	mov    $0x90,%edx
    55973:	ff 15 37 6a 00 00    	call   *0x6a37(%rip)        # 5c3b0 <memcpy@GLIBC_2.14>
    55979:	4c 8d 74 24 60       	lea    0x60(%rsp),%r14
    5597e:	0f b6 5c 24 5f       	movzbl 0x5f(%rsp),%ebx
    55983:	4c 8b a4 24 80 00 00 	mov    0x80(%rsp),%r12
-   5598a:	00 
+   5598a:	00
    5598b:	49 89 df             	mov    %rbx,%r15
    5598e:	49 83 f7 3f          	xor    $0x3f,%r15
    55992:	c6 44 1c 20 80       	movb   $0x80,0x20(%rsp,%rbx,1)
@@ -416,15 +416,15 @@ Disassembly of section .text:
    559ba:	0f 28 54 24 40       	movaps 0x40(%rsp),%xmm2
    559bf:	66 0f 6f 5c 24 50    	movdqa 0x50(%rsp),%xmm3
    559c5:	66 0f 7f 9c 24 e0 00 	movdqa %xmm3,0xe0(%rsp)
-   559cc:	00 00 
+   559cc:	00 00
    559ce:	0f 29 94 24 d0 00 00 	movaps %xmm2,0xd0(%rsp)
-   559d5:	00 
+   559d5:	00
    559d6:	0f 29 8c 24 c0 00 00 	movaps %xmm1,0xc0(%rsp)
-   559dd:	00 
+   559dd:	00
    559de:	0f 29 84 24 b0 00 00 	movaps %xmm0,0xb0(%rsp)
-   559e5:	00 
+   559e5:	00
    559e6:	48 8d b4 24 b0 00 00 	lea    0xb0(%rsp),%rsi
-   559ed:	00 
+   559ed:	00
    559ee:	ba 01 00 00 00       	mov    $0x1,%edx
    559f3:	4c 89 f7             	mov    %r14,%rdi
    559f6:	67 e8 94 06 00 00    	addr32 call 56090 <_RNvNtCsf16BXcWIZfP_4sha26sha25611compress256>
@@ -433,7 +433,7 @@ Disassembly of section .text:
    55a04:	0f 29 44 24 30       	movaps %xmm0,0x30(%rsp)
    55a09:	0f 29 44 24 40       	movaps %xmm0,0x40(%rsp)
    55a0e:	48 c7 44 24 50 00 00 	movq   $0x0,0x50(%rsp)
-   55a15:	00 00 
+   55a15:	00 00
    55a17:	49 c1 e4 09          	shl    $0x9,%r12
    55a1b:	c1 e3 03             	shl    $0x3,%ebx
    55a1e:	4c 09 e3             	or     %r12,%rbx
@@ -441,21 +441,21 @@ Disassembly of section .text:
    55a24:	48 89 5c 24 58       	mov    %rbx,0x58(%rsp)
    55a29:	48 8b 44 24 50       	mov    0x50(%rsp),%rax
    55a2e:	48 89 84 24 e0 00 00 	mov    %rax,0xe0(%rsp)
-   55a35:	00 
+   55a35:	00
    55a36:	48 8b 44 24 58       	mov    0x58(%rsp),%rax
    55a3b:	48 89 84 24 e8 00 00 	mov    %rax,0xe8(%rsp)
-   55a42:	00 
+   55a42:	00
    55a43:	0f 28 44 24 20       	movaps 0x20(%rsp),%xmm0
    55a48:	0f 28 4c 24 30       	movaps 0x30(%rsp),%xmm1
    55a4d:	0f 28 54 24 40       	movaps 0x40(%rsp),%xmm2
    55a52:	0f 29 94 24 d0 00 00 	movaps %xmm2,0xd0(%rsp)
-   55a59:	00 
+   55a59:	00
    55a5a:	0f 29 8c 24 c0 00 00 	movaps %xmm1,0xc0(%rsp)
-   55a61:	00 
+   55a61:	00
    55a62:	0f 29 84 24 b0 00 00 	movaps %xmm0,0xb0(%rsp)
-   55a69:	00 
+   55a69:	00
    55a6a:	48 8d b4 24 b0 00 00 	lea    0xb0(%rsp),%rsi
-   55a71:	00 
+   55a71:	00
    55a72:	ba 01 00 00 00       	mov    $0x1,%edx
    55a77:	4c 89 f7             	mov    %r14,%rdi
    55a7a:	48 8d 1d 0f 06 00 00 	lea    0x60f(%rip),%rbx        # 56090 <_RNvNtCsf16BXcWIZfP_4sha26sha25611compress256>
@@ -485,128 +485,128 @@ Disassembly of section .text:
    55aec:	66 0f 67 ca          	packuswb %xmm2,%xmm1
    55af0:	66 0f 7f 4c 24 30    	movdqa %xmm1,0x30(%rsp)
    55af6:	48 8b 84 24 a8 00 00 	mov    0xa8(%rsp),%rax
-   55afd:	00 
+   55afd:	00
    55afe:	c6 44 24 40 80       	movb   $0x80,0x40(%rsp)
    55b03:	f3 0f 7f 5c 24 41    	movdqu %xmm3,0x41(%rsp)
    55b09:	48 c7 44 24 50 00 00 	movq   $0x0,0x50(%rsp)
-   55b10:	00 00 
+   55b10:	00 00
    55b12:	4c 8d bc 24 88 00 00 	lea    0x88(%rsp),%r15
-   55b19:	00 
+   55b19:	00
    55b1a:	48 c1 e0 09          	shl    $0x9,%rax
    55b1e:	48 0d 00 01 00 00    	or     $0x100,%rax
    55b24:	48 0f c8             	bswap  %rax
    55b27:	48 89 44 24 58       	mov    %rax,0x58(%rsp)
    55b2c:	48 8b 44 24 50       	mov    0x50(%rsp),%rax
    55b31:	48 89 84 24 e0 00 00 	mov    %rax,0xe0(%rsp)
-   55b38:	00 
+   55b38:	00
    55b39:	48 8b 44 24 58       	mov    0x58(%rsp),%rax
    55b3e:	48 89 84 24 e8 00 00 	mov    %rax,0xe8(%rsp)
-   55b45:	00 
+   55b45:	00
    55b46:	0f b6 44 24 40       	movzbl 0x40(%rsp),%eax
    55b4b:	88 84 24 d0 00 00 00 	mov    %al,0xd0(%rsp)
    55b52:	48 8b 44 24 41       	mov    0x41(%rsp),%rax
    55b57:	48 89 84 24 d1 00 00 	mov    %rax,0xd1(%rsp)
-   55b5e:	00 
+   55b5e:	00
    55b5f:	8b 44 24 49          	mov    0x49(%rsp),%eax
    55b63:	89 84 24 d9 00 00 00 	mov    %eax,0xd9(%rsp)
    55b6a:	0f b7 44 24 4d       	movzwl 0x4d(%rsp),%eax
    55b6f:	66 89 84 24 dd 00 00 	mov    %ax,0xdd(%rsp)
-   55b76:	00 
+   55b76:	00
    55b77:	0f b6 44 24 4f       	movzbl 0x4f(%rsp),%eax
    55b7c:	88 84 24 df 00 00 00 	mov    %al,0xdf(%rsp)
    55b83:	66 0f 7f 8c 24 c0 00 	movdqa %xmm1,0xc0(%rsp)
-   55b8a:	00 00 
+   55b8a:	00 00
    55b8c:	66 0f 7f 84 24 b0 00 	movdqa %xmm0,0xb0(%rsp)
-   55b93:	00 00 
+   55b93:	00 00
    55b95:	48 8d b4 24 b0 00 00 	lea    0xb0(%rsp),%rsi
-   55b9c:	00 
+   55b9c:	00
    55b9d:	ba 01 00 00 00       	mov    $0x1,%edx
    55ba2:	4c 89 ff             	mov    %r15,%rdi
    55ba5:	ff d3                	call   *%rbx
    55ba7:	c6 44 24 5f 00       	movb   $0x0,0x5f(%rsp)
    55bac:	c7 44 24 60 00 00 00 	movl   $0x0,0x60(%rsp)
-   55bb3:	00 
+   55bb3:	00
    55bb4:	f3 0f 6f 8c 24 88 00 	movdqu 0x88(%rsp),%xmm1
-   55bbb:	00 00 
+   55bbb:	00 00
    55bbd:	f3 0f 6f 84 24 98 00 	movdqu 0x98(%rsp),%xmm0
-   55bc4:	00 00 
+   55bc4:	00 00
    55bc6:	c7 44 24 64 00 00 00 	movl   $0x0,0x64(%rsp)
-   55bcd:	00 
+   55bcd:	00
    55bce:	c7 44 24 68 00 00 00 	movl   $0x0,0x68(%rsp)
-   55bd5:	00 
+   55bd5:	00
    55bd6:	c7 44 24 6c 00 00 00 	movl   $0x0,0x6c(%rsp)
-   55bdd:	00 
+   55bdd:	00
    55bde:	c7 44 24 70 00 00 00 	movl   $0x0,0x70(%rsp)
-   55be5:	00 
+   55be5:	00
    55be6:	48 8d 44 24 70       	lea    0x70(%rsp),%rax
    55beb:	c7 44 24 74 00 00 00 	movl   $0x0,0x74(%rsp)
-   55bf2:	00 
+   55bf2:	00
    55bf3:	48 8d 44 24 74       	lea    0x74(%rsp),%rax
    55bf8:	c7 44 24 78 00 00 00 	movl   $0x0,0x78(%rsp)
-   55bff:	00 
+   55bff:	00
    55c00:	48 8d 44 24 78       	lea    0x78(%rsp),%rax
    55c05:	c7 44 24 7c 00 00 00 	movl   $0x0,0x7c(%rsp)
-   55c0c:	00 
+   55c0c:	00
    55c0d:	48 8d 44 24 7c       	lea    0x7c(%rsp),%rax
    55c12:	48 c7 84 24 80 00 00 	movq   $0x0,0x80(%rsp)
-   55c19:	00 00 00 00 00 
+   55c19:	00 00 00 00 00
    55c1e:	48 8d 84 24 80 00 00 	lea    0x80(%rsp),%rax
-   55c25:	00 
+   55c25:	00
    55c26:	c7 84 24 88 00 00 00 	movl   $0x0,0x88(%rsp)
-   55c2d:	00 00 00 00 
+   55c2d:	00 00 00 00
    55c31:	48 8d 84 24 8c 00 00 	lea    0x8c(%rsp),%rax
-   55c38:	00 
+   55c38:	00
    55c39:	c7 84 24 8c 00 00 00 	movl   $0x0,0x8c(%rsp)
-   55c40:	00 00 00 00 
+   55c40:	00 00 00 00
    55c44:	48 8d 84 24 90 00 00 	lea    0x90(%rsp),%rax
-   55c4b:	00 
+   55c4b:	00
    55c4c:	c7 84 24 90 00 00 00 	movl   $0x0,0x90(%rsp)
-   55c53:	00 00 00 00 
+   55c53:	00 00 00 00
    55c57:	48 8d 84 24 94 00 00 	lea    0x94(%rsp),%rax
-   55c5e:	00 
+   55c5e:	00
    55c5f:	c7 84 24 94 00 00 00 	movl   $0x0,0x94(%rsp)
-   55c66:	00 00 00 00 
+   55c66:	00 00 00 00
    55c6a:	48 8d 84 24 98 00 00 	lea    0x98(%rsp),%rax
-   55c71:	00 
+   55c71:	00
    55c72:	c7 84 24 98 00 00 00 	movl   $0x0,0x98(%rsp)
-   55c79:	00 00 00 00 
+   55c79:	00 00 00 00
    55c7d:	48 8d 84 24 9c 00 00 	lea    0x9c(%rsp),%rax
-   55c84:	00 
+   55c84:	00
    55c85:	c7 84 24 9c 00 00 00 	movl   $0x0,0x9c(%rsp)
-   55c8c:	00 00 00 00 
+   55c8c:	00 00 00 00
    55c90:	48 8d 84 24 a0 00 00 	lea    0xa0(%rsp),%rax
-   55c97:	00 
+   55c97:	00
    55c98:	c7 84 24 a0 00 00 00 	movl   $0x0,0xa0(%rsp)
-   55c9f:	00 00 00 00 
+   55c9f:	00 00 00 00
    55ca3:	48 8d 84 24 a4 00 00 	lea    0xa4(%rsp),%rax
-   55caa:	00 
+   55caa:	00
    55cab:	c7 84 24 a4 00 00 00 	movl   $0x0,0xa4(%rsp)
-   55cb2:	00 00 00 00 
+   55cb2:	00 00 00 00
    55cb6:	48 c7 84 24 a8 00 00 	movq   $0x0,0xa8(%rsp)
-   55cbd:	00 00 00 00 00 
+   55cbd:	00 00 00 00 00
    55cc2:	48 8d 84 24 a8 00 00 	lea    0xa8(%rsp),%rax
-   55cc9:	00 
+   55cc9:	00
    55cca:	66 0f ef d2          	pxor   %xmm2,%xmm2
    55cce:	66 0f 7f 94 24 b0 00 	movdqa %xmm2,0xb0(%rsp)
-   55cd5:	00 00 
+   55cd5:	00 00
    55cd7:	66 0f 7f 94 24 c0 00 	movdqa %xmm2,0xc0(%rsp)
-   55cde:	00 00 
+   55cde:	00 00
    55ce0:	66 0f 7f 94 24 d0 00 	movdqa %xmm2,0xd0(%rsp)
-   55ce7:	00 00 
+   55ce7:	00 00
    55ce9:	66 0f 7f 94 24 e0 00 	movdqa %xmm2,0xe0(%rsp)
-   55cf0:	00 00 
+   55cf0:	00 00
    55cf2:	66 0f ef db          	pxor   %xmm3,%xmm3
    55cf6:	0f 28 94 24 b0 00 00 	movaps 0xb0(%rsp),%xmm2
-   55cfd:	00 
+   55cfd:	00
    55cfe:	0f 29 54 24 20       	movaps %xmm2,0x20(%rsp)
    55d03:	0f 28 94 24 c0 00 00 	movaps 0xc0(%rsp),%xmm2
-   55d0a:	00 
+   55d0a:	00
    55d0b:	0f 29 54 24 30       	movaps %xmm2,0x30(%rsp)
    55d10:	0f 28 94 24 d0 00 00 	movaps 0xd0(%rsp),%xmm2
-   55d17:	00 
+   55d17:	00
    55d18:	0f 29 54 24 40       	movaps %xmm2,0x40(%rsp)
    55d1d:	0f 28 94 24 e0 00 00 	movaps 0xe0(%rsp),%xmm2
-   55d24:	00 
+   55d24:	00
    55d25:	0f 29 54 24 50       	movaps %xmm2,0x50(%rsp)
    55d2a:	48 8d 44 24 20       	lea    0x20(%rsp),%rax
    55d2f:	66 0f 6f d1          	movdqa %xmm1,%xmm2
@@ -626,16 +626,16 @@ Disassembly of section .text:
    55d6e:	f3 0f 70 c0 1b       	pshufhw $0x1b,%xmm0,%xmm0
    55d73:	66 0f 67 c2          	packuswb %xmm2,%xmm0
    55d77:	66 0f 7f 8c 24 b0 00 	movdqa %xmm1,0xb0(%rsp)
-   55d7e:	00 00 
+   55d7e:	00 00
    55d80:	66 0f 7f 84 24 c0 00 	movdqa %xmm0,0xc0(%rsp)
-   55d87:	00 00 
+   55d87:	00 00
    55d89:	66 0f 7f 4c 24 20    	movdqa %xmm1,0x20(%rsp)
    55d8f:	66 0f 7f 44 24 30    	movdqa %xmm0,0x30(%rsp)
    55d95:	48 8d bc 24 b0 00 00 	lea    0xb0(%rsp),%rdi
-   55d9c:	00 
+   55d9c:	00
    55d9d:	e8 9e de ff ff       	call   53c40 <_RINvNtCskADBYZwJmSU_4core3ptr9drop_glueINtNtCs2LyUJKmd2Yb_6digest3mac8CtOutputINtCsdqFEojVsrkx_4hmac4HmacNtCsf16BXcWIZfP_4sha26Sha256EEECsHnFHAC5PMO_12rust_reality>
    55da2:	48 8b bc 24 08 02 00 	mov    0x208(%rsp),%rdi
-   55da9:	00 
+   55da9:	00
    55daa:	48 8b 07             	mov    (%rdi),%rax
    55dad:	48 8b 77 10          	mov    0x10(%rdi),%rsi
    55db1:	48 29 f0             	sub    %rsi,%rax
@@ -658,7 +658,7 @@ Disassembly of section .text:
    55def:	5d                   	pop    %rbp
    55df0:	c3                   	ret
    55df1:	48 89 94 24 90 01 00 	mov    %rdx,0x190(%rsp)
-   55df8:	00 
+   55df8:	00
    55df9:	89 8c 24 f8 00 00 00 	mov    %ecx,0xf8(%rsp)
    55e00:	49 8b 52 08          	mov    0x8(%r10),%rdx
    55e04:	48 8d 7c 24 20       	lea    0x20(%rsp),%rdi
@@ -680,7 +680,7 @@ Disassembly of section .text:
    55e3d:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
    55e42:	8b 8c 24 f8 00 00 00 	mov    0xf8(%rsp),%ecx
    55e49:	48 8b 94 24 90 01 00 	mov    0x190(%rsp),%rdx
-   55e50:	00 
+   55e50:	00
    55e51:	e9 06 f6 ff ff       	jmp    5545c <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x11c>
    55e56:	49 89 d4             	mov    %rdx,%r12
    55e59:	ba 04 00 00 00       	mov    $0x4,%edx
@@ -689,7 +689,7 @@ Disassembly of section .text:
    55e64:	41 89 cf             	mov    %ecx,%r15d
    55e67:	e8 d4 de ff ff       	call   53d40 <_RINvNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsHnFHAC5PMO_12rust_reality>
    55e6c:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55e73:	00 
+   55e73:	00
    55e74:	4c 89 e2             	mov    %r12,%rdx
    55e77:	44 89 f9             	mov    %r15d,%ecx
    55e7a:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
@@ -702,7 +702,7 @@ Disassembly of section .text:
    55e98:	89 cb                	mov    %ecx,%ebx
    55e9a:	e8 a1 de ff ff       	call   53d40 <_RINvNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsHnFHAC5PMO_12rust_reality>
    55e9f:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55ea6:	00 
+   55ea6:	00
    55ea7:	89 d9                	mov    %ebx,%ecx
    55ea9:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
    55eae:	4c 8b 4c 24 10       	mov    0x10(%rsp),%r9
@@ -713,7 +713,7 @@ Disassembly of section .text:
    55ec4:	4c 89 fe             	mov    %r15,%rsi
    55ec7:	e8 74 de ff ff       	call   53d40 <_RINvNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsHnFHAC5PMO_12rust_reality>
    55ecc:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55ed3:	00 
+   55ed3:	00
    55ed4:	4c 8b 4c 24 10       	mov    0x10(%rsp),%r9
    55ed9:	4d 8b 7a 10          	mov    0x10(%r10),%r15
    55edd:	e9 46 f7 ff ff       	jmp    55628 <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x2e8>
@@ -722,7 +722,7 @@ Disassembly of section .text:
    55ee8:	4c 89 f2             	mov    %r14,%rdx
    55eeb:	e8 50 de ff ff       	call   53d40 <_RINvNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsHnFHAC5PMO_12rust_reality>
    55ef0:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55ef7:	00 
+   55ef7:	00
    55ef8:	4c 8b 4c 24 10       	mov    0x10(%rsp),%r9
    55efd:	4d 8b 7a 10          	mov    0x10(%r10),%r15
    55f01:	e9 47 f7 ff ff       	jmp    5564d <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x30d>
@@ -734,7 +734,7 @@ Disassembly of section .text:
    55f1e:	ba 20 00 00 00       	mov    $0x20,%edx
    55f23:	e8 18 de ff ff       	call   53d40 <_RINvNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsHnFHAC5PMO_12rust_reality>
    55f28:	48 8b bc 24 08 02 00 	mov    0x208(%rsp),%rdi
-   55f2f:	00 
+   55f2f:	00
    55f30:	48 8b 77 10          	mov    0x10(%rdi),%rsi
    55f34:	e9 85 fe ff ff       	jmp    55dbe <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0xa7e>
    55f39:	ba 02 00 00 00       	mov    $0x2,%edx
@@ -742,7 +742,7 @@ Disassembly of section .text:
    55f41:	4c 89 fe             	mov    %r15,%rsi
    55f44:	e8 f7 dd ff ff       	call   53d40 <_RINvNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsHnFHAC5PMO_12rust_reality>
    55f49:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55f50:	00 
+   55f50:	00
    55f51:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
    55f56:	4d 8b 7a 10          	mov    0x10(%r10),%r15
    55f5a:	e9 0c f6 ff ff       	jmp    5556b <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x22b>
@@ -751,7 +751,7 @@ Disassembly of section .text:
    55f67:	4c 89 fe             	mov    %r15,%rsi
    55f6a:	e8 d1 dd ff ff       	call   53d40 <_RINvNvMs2_NtCsgFX3jaOk65H_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsHnFHAC5PMO_12rust_reality>
    55f6f:	4c 8b 94 24 08 02 00 	mov    0x208(%rsp),%r10
-   55f76:	00 
+   55f76:	00
    55f77:	4c 8b 44 24 18       	mov    0x18(%rsp),%r8
    55f7c:	4d 8b 7a 10          	mov    0x10(%r10),%r15
    55f80:	e9 10 f6 ff ff       	jmp    55595 <_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame+0x255>
