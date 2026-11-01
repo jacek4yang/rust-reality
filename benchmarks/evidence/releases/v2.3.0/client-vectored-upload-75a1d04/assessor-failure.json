@@ -1,0 +1,6 @@
+{
+  "exitCode": 1,
+  "stderr": "Traceback (most recent call last):\n  File \"/home/jacek/.cache/rr-v230-vectored-upload-ab/assess.py\", line 18, in <module>\n    assess('data',name,'cpuSecondsPerGiB',metrics['cpuSecondsPerGiB'],1.01)\n    ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/jacek/.cache/rr-v230-vectored-upload-ab/assess.py\", line 12, in assess\n    assert v['blockCount']==6 and 'bootstrap95' in v\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError\n",
+  "scriptSha256": "cea36d42711afa46a2a394567c06ca4a4c23132d17664f364fb6e870142e7687",
+  "classification": "Diagnostic evaluator/predeclaration contract defect: six blocks do not meet the unchanged qualified collector resolving threshold. No product failure inferred. Original assessor and all observations retained."
+}

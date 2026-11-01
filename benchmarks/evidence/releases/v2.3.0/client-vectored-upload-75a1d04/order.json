@@ -1,0 +1,174 @@
+{
+  "method": "alternating balanced ABBA blocks",
+  "schemaVersion": 1,
+  "slots": [
+    {
+      "block": 1,
+      "implementation": "baseline",
+      "position": 1,
+      "serverPort": 61002,
+      "socksPort": 61003
+    },
+    {
+      "block": 1,
+      "implementation": "candidate",
+      "position": 2,
+      "serverPort": 61004,
+      "socksPort": 61005
+    },
+    {
+      "block": 1,
+      "implementation": "candidate",
+      "position": 3,
+      "serverPort": 61006,
+      "socksPort": 61007
+    },
+    {
+      "block": 1,
+      "implementation": "baseline",
+      "position": 4,
+      "serverPort": 61008,
+      "socksPort": 61009
+    },
+    {
+      "block": 2,
+      "implementation": "candidate",
+      "position": 1,
+      "serverPort": 61010,
+      "socksPort": 61011
+    },
+    {
+      "block": 2,
+      "implementation": "baseline",
+      "position": 2,
+      "serverPort": 61012,
+      "socksPort": 61013
+    },
+    {
+      "block": 2,
+      "implementation": "baseline",
+      "position": 3,
+      "serverPort": 61014,
+      "socksPort": 61015
+    },
+    {
+      "block": 2,
+      "implementation": "candidate",
+      "position": 4,
+      "serverPort": 61016,
+      "socksPort": 61017
+    },
+    {
+      "block": 3,
+      "implementation": "baseline",
+      "position": 1,
+      "serverPort": 61018,
+      "socksPort": 61019
+    },
+    {
+      "block": 3,
+      "implementation": "candidate",
+      "position": 2,
+      "serverPort": 61020,
+      "socksPort": 61021
+    },
+    {
+      "block": 3,
+      "implementation": "candidate",
+      "position": 3,
+      "serverPort": 61022,
+      "socksPort": 61023
+    },
+    {
+      "block": 3,
+      "implementation": "baseline",
+      "position": 4,
+      "serverPort": 61024,
+      "socksPort": 61025
+    },
+    {
+      "block": 4,
+      "implementation": "candidate",
+      "position": 1,
+      "serverPort": 61026,
+      "socksPort": 61027
+    },
+    {
+      "block": 4,
+      "implementation": "baseline",
+      "position": 2,
+      "serverPort": 61028,
+      "socksPort": 61029
+    },
+    {
+      "block": 4,
+      "implementation": "baseline",
+      "position": 3,
+      "serverPort": 61030,
+      "socksPort": 61031
+    },
+    {
+      "block": 4,
+      "implementation": "candidate",
+      "position": 4,
+      "serverPort": 61032,
+      "socksPort": 61033
+    },
+    {
+      "block": 5,
+      "implementation": "baseline",
+      "position": 1,
+      "serverPort": 61034,
+      "socksPort": 61035
+    },
+    {
+      "block": 5,
+      "implementation": "candidate",
+      "position": 2,
+      "serverPort": 61036,
+      "socksPort": 61037
+    },
+    {
+      "block": 5,
+      "implementation": "candidate",
+      "position": 3,
+      "serverPort": 61038,
+      "socksPort": 61039
+    },
+    {
+      "block": 5,
+      "implementation": "baseline",
+      "position": 4,
+      "serverPort": 61040,
+      "socksPort": 61041
+    },
+    {
+      "block": 6,
+      "implementation": "candidate",
+      "position": 1,
+      "serverPort": 61042,
+      "socksPort": 61043
+    },
+    {
+      "block": 6,
+      "implementation": "baseline",
+      "position": 2,
+      "serverPort": 61044,
+      "socksPort": 61045
+    },
+    {
+      "block": 6,
+      "implementation": "baseline",
+      "position": 3,
+      "serverPort": 61046,
+      "socksPort": 61047
+    },
+    {
+      "block": 6,
+      "implementation": "candidate",
+      "position": 4,
+      "serverPort": 61048,
+      "socksPort": 61049
+    }
+  ]
+}

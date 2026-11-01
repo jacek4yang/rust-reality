@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "binarySha256": "ee7e0092849a6e8b35fe1ac31544bad9d254d7a78cef40d8c02818e1588881ed",
+  "archiveSha256": "02ac7027859da698de2c98987e392536497e0f7b537ae11e9c4dbf77a64e1b78",
+  "nativeReceiptArtifactId": 13058576099,
+  "nativeReceiptArtifactSha256": "sha256:463fa490fe8154fe4a01bce7ea179bd32d0c06f00f0dc78fa8e7d1ccf8d8c183",
+  "nativeCommandsPassed": 7,
+  "version": "rust-reality 2.3.0\ncommit: 9265a6b919691e5f377cd5f85ef439415dc7136e\n",
+  "elfNotes": "\nDisplaying notes found in: .note.ABI-tag\n  Owner                Data size \tDescription\n  GNU                  0x00000010\tNT_GNU_ABI_TAG (ABI version tag)\n    OS: Linux, ABI: 3.2.0\n\nDisplaying notes found in: .note.gnu.build-id\n  Owner                Data size \tDescription\n  GNU                  0x00000014\tNT_GNU_BUILD_ID (unique build ID bitstring)\n    Build ID: 45c3678f26067b3f1251d0a1da223712c04ead5d\n",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "target": "x86_64-unknown-linux-gnu",
+  "targetCpu": "x86-64",
+  "cargoFeatures": [
+    "default"
+  ],
+  "scope": "Exact GNU executable from final-main Frozen package; complete Frozen qualification is still pending.",
+  "sha256sumsVerified": true,
+  "checksumProvenance": "Independent native package/manifest verification plus SHA256SUMS check of immutable extracted ELF. Diagnostic reference for isolating an upload-read experiment, not a passing final performance verdict."
+}
