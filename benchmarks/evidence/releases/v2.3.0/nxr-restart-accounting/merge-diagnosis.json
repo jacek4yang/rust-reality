@@ -1,0 +1,75 @@
+{
+  "cells": [
+    {
+      "cell": "handoff/constrained",
+      "class_hint": null,
+      "faults": [
+        "reload",
+        "warm",
+        "stale",
+        "cold",
+        "landing-restart",
+        "line-a-partition",
+        "rtt-50",
+        "rtt-100",
+        "rtt-200",
+        "rtt-100-loss-1"
+      ],
+      "result": "pass"
+    },
+    {
+      "cell": "handoff/ordinary",
+      "class_hint": null,
+      "faults": [
+        "reload",
+        "warm",
+        "stale",
+        "cold",
+        "landing-restart",
+        "line-a-partition",
+        "rtt-50",
+        "rtt-100",
+        "rtt-200",
+        "rtt-100-loss-1"
+      ],
+      "result": "pass"
+    },
+    {
+      "cell": "nxr/constrained",
+      "class_hint": null,
+      "faults": [
+        "reload",
+        "warm",
+        "stale",
+        "cold",
+        "landing-restart",
+        "line-a-partition",
+        "rtt-50",
+        "rtt-100",
+        "rtt-200",
+        "rtt-100-loss-1"
+      ],
+      "result": "pass"
+    },
+    {
+      "cell": "nxr/ordinary",
+      "class_hint": null,
+      "faults": [
+        "reload",
+        "warm",
+        "stale",
+        "cold",
+        "landing-restart",
+        "line-a-partition",
+        "rtt-50",
+        "rtt-100",
+        "rtt-200",
+        "rtt-100-loss-1"
+      ],
+      "result": "pass"
+    }
+  ],
+  "class_counts": {},
+  "fail_closed": false,
+  "schema": "rr-stability-merge-diagnosis/v1"
+}

@@ -1,0 +1,1619 @@
+{
+  "scope": "Descriptive observations from the complete final official-binary campaign after earlier traffic. Median of three held-128 snapshots minus median of three held-0 snapshots divided by 128; this is residency, not allocation count or cold object size. No long-term leak or WAN claim. Descriptor recovery is reported separately.",
+  "candidateSource": "ba0313c5aab4f4237cb4bae7e10673b44e276296",
+  "candidateSha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2",
+  "rows": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24308,
+      "anonymousHeld128KiB": 34584,
+      "incrementPerHeldConnectionKiB": 80.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9992,
+      "anonymousHeld128KiB": 15616,
+      "incrementPerHeldConnectionKiB": 43.9375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7456,
+      "anonymousHeld128KiB": 12648,
+      "incrementPerHeldConnectionKiB": 40.5625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-01-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24888,
+      "anonymousHeld128KiB": 36132,
+      "incrementPerHeldConnectionKiB": 87.84375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-02-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7712,
+      "anonymousHeld128KiB": 13368,
+      "incrementPerHeldConnectionKiB": 44.1875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-02-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25044,
+      "anonymousHeld128KiB": 35880,
+      "incrementPerHeldConnectionKiB": 84.65625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-02-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 23304,
+      "anonymousHeld128KiB": 32036,
+      "incrementPerHeldConnectionKiB": 68.21875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-02-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8036,
+      "anonymousHeld128KiB": 12352,
+      "incrementPerHeldConnectionKiB": 33.71875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-03-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22052,
+      "anonymousHeld128KiB": 34280,
+      "incrementPerHeldConnectionKiB": 95.53125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-03-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9232,
+      "anonymousHeld128KiB": 13856,
+      "incrementPerHeldConnectionKiB": 36.125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-03-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9148,
+      "anonymousHeld128KiB": 13912,
+      "incrementPerHeldConnectionKiB": 37.21875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-03-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24988,
+      "anonymousHeld128KiB": 35860,
+      "incrementPerHeldConnectionKiB": 84.9375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-04-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9020,
+      "anonymousHeld128KiB": 14376,
+      "incrementPerHeldConnectionKiB": 41.84375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-04-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 20152,
+      "anonymousHeld128KiB": 32348,
+      "incrementPerHeldConnectionKiB": 95.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-04-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25372,
+      "anonymousHeld128KiB": 35520,
+      "incrementPerHeldConnectionKiB": 79.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-04-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8340,
+      "anonymousHeld128KiB": 13648,
+      "incrementPerHeldConnectionKiB": 41.46875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-05-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19316,
+      "anonymousHeld128KiB": 29628,
+      "incrementPerHeldConnectionKiB": 80.5625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-05-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9004,
+      "anonymousHeld128KiB": 13988,
+      "incrementPerHeldConnectionKiB": 38.9375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-05-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8896,
+      "anonymousHeld128KiB": 13028,
+      "incrementPerHeldConnectionKiB": 32.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-05-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26176,
+      "anonymousHeld128KiB": 33400,
+      "incrementPerHeldConnectionKiB": 56.4375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-06-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8340,
+      "anonymousHeld128KiB": 12792,
+      "incrementPerHeldConnectionKiB": 34.78125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-06-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 23284,
+      "anonymousHeld128KiB": 33000,
+      "incrementPerHeldConnectionKiB": 75.90625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-06-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26536,
+      "anonymousHeld128KiB": 36236,
+      "incrementPerHeldConnectionKiB": 75.78125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-06-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 10824,
+      "anonymousHeld128KiB": 15176,
+      "incrementPerHeldConnectionKiB": 34.0,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-07-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 20592,
+      "anonymousHeld128KiB": 31504,
+      "incrementPerHeldConnectionKiB": 85.25,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-07-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9436,
+      "anonymousHeld128KiB": 14540,
+      "incrementPerHeldConnectionKiB": 39.875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-07-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7156,
+      "anonymousHeld128KiB": 12148,
+      "incrementPerHeldConnectionKiB": 39.0,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-07-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25964,
+      "anonymousHeld128KiB": 34600,
+      "incrementPerHeldConnectionKiB": 67.46875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-08-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8180,
+      "anonymousHeld128KiB": 14204,
+      "incrementPerHeldConnectionKiB": 47.0625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-08-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22616,
+      "anonymousHeld128KiB": 33996,
+      "incrementPerHeldConnectionKiB": 88.90625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-08-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 27304,
+      "anonymousHeld128KiB": 37584,
+      "incrementPerHeldConnectionKiB": 80.3125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-08-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8664,
+      "anonymousHeld128KiB": 13364,
+      "incrementPerHeldConnectionKiB": 36.71875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-09-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 23108,
+      "anonymousHeld128KiB": 34684,
+      "incrementPerHeldConnectionKiB": 90.4375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-09-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8636,
+      "anonymousHeld128KiB": 13036,
+      "incrementPerHeldConnectionKiB": 34.375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-09-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7824,
+      "anonymousHeld128KiB": 13244,
+      "incrementPerHeldConnectionKiB": 42.34375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-09-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22292,
+      "anonymousHeld128KiB": 32824,
+      "incrementPerHeldConnectionKiB": 82.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-10-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 11260,
+      "anonymousHeld128KiB": 15464,
+      "incrementPerHeldConnectionKiB": 32.84375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-10-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19744,
+      "anonymousHeld128KiB": 31172,
+      "incrementPerHeldConnectionKiB": 89.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-10-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26596,
+      "anonymousHeld128KiB": 35100,
+      "incrementPerHeldConnectionKiB": 66.4375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-10-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7804,
+      "anonymousHeld128KiB": 12808,
+      "incrementPerHeldConnectionKiB": 39.09375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-11-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22960,
+      "anonymousHeld128KiB": 32276,
+      "incrementPerHeldConnectionKiB": 72.78125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-11-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8720,
+      "anonymousHeld128KiB": 14592,
+      "incrementPerHeldConnectionKiB": 45.875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-11-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7472,
+      "anonymousHeld128KiB": 12392,
+      "incrementPerHeldConnectionKiB": 38.4375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-11-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 20992,
+      "anonymousHeld128KiB": 31700,
+      "incrementPerHeldConnectionKiB": 83.65625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-12-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7992,
+      "anonymousHeld128KiB": 12496,
+      "incrementPerHeldConnectionKiB": 35.1875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-12-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 18336,
+      "anonymousHeld128KiB": 29512,
+      "incrementPerHeldConnectionKiB": 87.3125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-12-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22568,
+      "anonymousHeld128KiB": 32384,
+      "incrementPerHeldConnectionKiB": 76.6875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-12-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9532,
+      "anonymousHeld128KiB": 15056,
+      "incrementPerHeldConnectionKiB": 43.15625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-13-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22620,
+      "anonymousHeld128KiB": 34236,
+      "incrementPerHeldConnectionKiB": 90.75,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-13-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8736,
+      "anonymousHeld128KiB": 13708,
+      "incrementPerHeldConnectionKiB": 38.84375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-13-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7292,
+      "anonymousHeld128KiB": 12832,
+      "incrementPerHeldConnectionKiB": 43.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-13-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 21660,
+      "anonymousHeld128KiB": 33228,
+      "incrementPerHeldConnectionKiB": 90.375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-14-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8980,
+      "anonymousHeld128KiB": 14188,
+      "incrementPerHeldConnectionKiB": 40.6875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-14-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24012,
+      "anonymousHeld128KiB": 35772,
+      "incrementPerHeldConnectionKiB": 91.875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-14-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22328,
+      "anonymousHeld128KiB": 33576,
+      "incrementPerHeldConnectionKiB": 87.875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-14-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 11660,
+      "anonymousHeld128KiB": 17004,
+      "incrementPerHeldConnectionKiB": 41.75,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-15-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26084,
+      "anonymousHeld128KiB": 35752,
+      "incrementPerHeldConnectionKiB": 75.53125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-15-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8852,
+      "anonymousHeld128KiB": 14460,
+      "incrementPerHeldConnectionKiB": 43.8125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-15-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9108,
+      "anonymousHeld128KiB": 14424,
+      "incrementPerHeldConnectionKiB": 41.53125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-15-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 18672,
+      "anonymousHeld128KiB": 30540,
+      "incrementPerHeldConnectionKiB": 92.71875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-16-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9184,
+      "anonymousHeld128KiB": 14460,
+      "incrementPerHeldConnectionKiB": 41.21875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-16-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19436,
+      "anonymousHeld128KiB": 30936,
+      "incrementPerHeldConnectionKiB": 89.84375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-16-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26116,
+      "anonymousHeld128KiB": 36824,
+      "incrementPerHeldConnectionKiB": 83.65625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-16-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9452,
+      "anonymousHeld128KiB": 14820,
+      "incrementPerHeldConnectionKiB": 41.9375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-17-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25268,
+      "anonymousHeld128KiB": 35500,
+      "incrementPerHeldConnectionKiB": 79.9375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-17-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8336,
+      "anonymousHeld128KiB": 12868,
+      "incrementPerHeldConnectionKiB": 35.40625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-17-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8828,
+      "anonymousHeld128KiB": 14284,
+      "incrementPerHeldConnectionKiB": 42.625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-17-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 17428,
+      "anonymousHeld128KiB": 26824,
+      "incrementPerHeldConnectionKiB": 73.40625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-18-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8648,
+      "anonymousHeld128KiB": 13308,
+      "incrementPerHeldConnectionKiB": 36.40625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-18-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24740,
+      "anonymousHeld128KiB": 36472,
+      "incrementPerHeldConnectionKiB": 91.65625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-18-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 20576,
+      "anonymousHeld128KiB": 32720,
+      "incrementPerHeldConnectionKiB": 94.875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-18-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8064,
+      "anonymousHeld128KiB": 13468,
+      "incrementPerHeldConnectionKiB": 42.21875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-19-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 20704,
+      "anonymousHeld128KiB": 31768,
+      "incrementPerHeldConnectionKiB": 86.4375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-19-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7804,
+      "anonymousHeld128KiB": 12728,
+      "incrementPerHeldConnectionKiB": 38.46875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-19-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9268,
+      "anonymousHeld128KiB": 14636,
+      "incrementPerHeldConnectionKiB": 41.9375,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-19-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25132,
+      "anonymousHeld128KiB": 35764,
+      "incrementPerHeldConnectionKiB": 83.0625,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-20-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8260,
+      "anonymousHeld128KiB": 13288,
+      "incrementPerHeldConnectionKiB": 39.28125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-20-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 21732,
+      "anonymousHeld128KiB": 32992,
+      "incrementPerHeldConnectionKiB": 87.96875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-20-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22548,
+      "anonymousHeld128KiB": 33284,
+      "incrementPerHeldConnectionKiB": 83.875,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    },
+    {
+      "slot": "block-20-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8172,
+      "anonymousHeld128KiB": 13488,
+      "incrementPerHeldConnectionKiB": 41.53125,
+      "baselineDescriptorCounts": [
+        10,
+        10,
+        10
+      ],
+      "closedDescriptorCounts": [
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "descriptorsRecoveredBy2000ms": true
+    }
+  ],
+  "summary": {
+    "baseline": {
+      "slots": 40,
+      "medianIncrementPerHeldConnectionKiB": 84.265625,
+      "allDescriptorsRecoveredBy2000ms": true
+    },
+    "candidate": {
+      "slots": 40,
+      "medianIncrementPerHeldConnectionKiB": 40.21875,
+      "allDescriptorsRecoveredBy2000ms": true
+    }
+  }
+}

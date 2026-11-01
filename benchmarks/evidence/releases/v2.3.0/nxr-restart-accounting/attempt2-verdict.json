@@ -1,0 +1,110 @@
+{
+  "verdict": "FAIL",
+  "findings": [
+    {
+      "verdict": "NOT_RUN",
+      "scope": "local-full-gate",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "exact-head-ci",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "exact-head-security",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "native-interop",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "native-mechanism",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "native-descriptor-pressure",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "native-resources",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "replay-expiry-reuse",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "pipe-pool-reuse",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "descriptor-permit-ownership",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "generation-retirement",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "cancellation",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "inactivity",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "write-stall",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "half-close",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "long-lived-connections",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "package-gnu",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "package-musl",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "package-v3",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "NOT_RUN",
+      "scope": "package-aarch64",
+      "reason": "required check not run"
+    },
+    {
+      "verdict": "FAIL",
+      "scope": "nxr/constrained",
+      "reason": "unexpected exit, panic, OOM, or protocol/authentication rejection"
+    }
+  ]
+}
