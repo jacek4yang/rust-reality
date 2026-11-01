@@ -251,7 +251,11 @@ mod tests {
             let Some(pgrp_str) = rest.get(2) else {
                 continue;
             };
-            if pgrp_str.parse::<u32>().ok() == Some(pgid) {
+            // Exited tasks can remain in /proc until their parent or orphan
+            // reaper waits. Z/X tasks cannot execute or retain pipe writers.
+            if pgrp_str.parse::<u32>().ok() == Some(pgid)
+                && !matches!(rest.first().copied(), Some("Z" | "X"))
+            {
                 pids.push(member);
             }
         }
@@ -283,7 +287,7 @@ mod tests {
             }
         }
 
-        // Always SIGKILL the group: reaps `sleep` orphans that kept pipe write ends
+        // Always SIGKILL the group: terminates `sleep` orphans that kept pipe write ends
         // open after the leader exited (or never honored INT).
         let _ = kill_process_group(pgid, Signal::KILL);
         let _ = child.kill();
@@ -300,7 +304,16 @@ mod tests {
             err = String::from_utf8_lossy(&bytes).into_owned();
         }
 
-        let leftovers = live_pids_in_process_group(pgid_u32);
+        // SIGKILL completion is asynchronous. Observe termination on the same
+        // existing bound; never accept a still-live descendant at the deadline.
+        let deadline = Instant::now() + INT_REAP_BOUND;
+        let leftovers = loop {
+            let live = live_pids_in_process_group(pgid_u32);
+            if live.is_empty() || Instant::now() >= deadline {
+                break live;
+            }
+            thread::sleep(READY_POLL);
+        };
         assert!(
             leftovers.is_empty(),
             "process group {pgid_u32} still has live members after INT+KILL: {leftovers:?}; \
@@ -322,6 +335,56 @@ mod tests {
         assert!(!status.success());
         assert_ne!(shell_exit_code(status), 0);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_observation_excludes_exited_unreaped_child() {
+        // Keep the exited child unreaped so the zombie observation is
+        // deterministic, rather than racing the host's orphan reaper.
+        let mut child = Command::new("bash")
+            .args(["-c", "exit 0"])
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .expect("spawn owned child");
+        let pid = child.id();
+        let path = PathBuf::from(format!("/proc/{pid}/stat"));
+        let deadline = Instant::now() + READY_BOUND;
+        loop {
+            let stat = fs::read_to_string(&path).expect("owned child stat");
+            let state = stat.rsplit_once(')').unwrap().1.split_whitespace().next();
+            if matches!(state, Some("Z" | "X")) {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("owned child did not exit within readiness bound");
+            }
+            thread::sleep(READY_POLL);
+        }
+        let mut output = Vec::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_end(&mut output)
+            .expect("EOF from exited child");
+        let observed = live_pids_in_process_group(pid);
+        assert!(child.wait().expect("reap owned child").success());
+        assert_eq!(output, [] as [u8; 0]);
+        assert!(
+            observed.is_empty(),
+            "dead child counted as live: {observed:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_observation_keeps_live_caller() {
+        let group = rustix::process::getpgrp().as_raw_pid().try_into().unwrap();
+        assert!(live_pids_in_process_group(group).contains(&std::process::id()));
     }
 
     #[cfg(unix)]
@@ -405,7 +468,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn sigint_group_kill_reaps_sleep_orphan_holding_pipes() {
+    fn sigint_group_kill_terminates_sleep_orphan_holding_pipes() {
         // Regression for Actions hang: leader can exit while `sleep` still holds
         // inherited pipe write ends; parent must SIGKILL the pgid before draining.
         let (dir, script) = write_temp_script(

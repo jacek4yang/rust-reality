@@ -1,0 +1,8 @@
+{
+  "source": "e6c836954416d0a4df153b63576018ce970cba22",
+  "workflowRun": 41312146913,
+  "attempt": 1,
+  "stageLogArtifact": 13085597377,
+  "stageLogArtifactSha256": "035fa8858f735c083bc2c041a637d290b5ac88f72e39dc46b473074365a14af1",
+  "scope": "The hosted assertion recorded a leftover PID but not its state. The local owned-child reproduction independently proves that the previous helper counted a zombie as live after pipe EOF; it is not proof of the exact historical PID state. The corrected focused tests still require live caller visibility and owned process-group termination. Production code and resource ceilings are unchanged."
+}

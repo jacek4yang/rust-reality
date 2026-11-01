@@ -1,0 +1,28 @@
+   Compiling rr-dev v0.1.0 (/home/jacek/Projects/rust-reality-v230-ci-zombie/tools/rr-dev)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.94s
+     Running unittests src/main.rs (tools/target/debug/deps/rr_dev-b774cc1f1e3f808e)
+
+running 7 tests
+test ci::tests::qualification_workflows_use_bash_native_shell ... ok
+ok
+test ci::tests::success_and_pipefail ... ok
+test ci::tests::group_observation_keeps_live_caller ... ok
+test ci::tests::group_observation_excludes_exited_unreaped_child ... ok
+test ci::tests::sigint_group_kill_terminates_sleep_orphan_holding_pipes ... ok
+test ci::tests::sigint_to_script_group_exits_without_python_noise ... ok
+test ci::tests::sigint_proof_refuses_to_fire_before_ready_ack ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 821 filtered out; finished in 0.05s
+
+     Running unittests src/bin/rr-udp-echo.rs (tools/target/debug/deps/rr_udp_echo-d05ae8ee76ec63a3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/rr-udp-probe.rs (tools/target/debug/deps/rr_udp_probe-b106270825acf896)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
