@@ -57,3 +57,12 @@ The independently downloaded Native artifact from run 41280033428 verifies
 `frozen-packages-comparison.json` verifies that all six assets from the separate
 Frozen package build match the candidate-package workflow bytes. This package
 comparison does not claim the complete Frozen coordinator has passed.
+
+Frozen run 41281145464 completed successfully at this exact runtime source.
+The separate downloaded acceptance artifact verifies all 25,964 covered members
+and its nested checksum manifest. `frozen-final-verdict.json` reports PASS with
+no findings; `frozen-verification.json` binds the source and archive digest.
+The first download failed before receiving bytes because of a GitHub TLS
+handshake timeout; the successful retry changes no product code or gate.
+This is candidate qualification; final-main publication still needs its own
+exact-source qualification and independently verified assets.
