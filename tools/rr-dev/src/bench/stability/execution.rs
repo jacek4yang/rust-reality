@@ -208,6 +208,14 @@ pub struct LogCounts {
     pub rejections: u64,
 }
 
+/// One injected disconnect, bound to its topology, witnessed peer and time window.
+pub(super) struct RestartDisconnect {
+    pub peer: String,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub stage: &'static str,
+}
+
 /// Unexpected protocol rejection is never hidden by successful later transfers.
 pub fn product_log(bytes: &[u8]) -> Result<LogCounts, String> {
     product_log_with_faults(bytes, &mut Vec::new(), &mut None)
@@ -217,7 +225,7 @@ pub fn product_log(bytes: &[u8]) -> Result<LogCounts, String> {
 pub(super) fn product_log_with_faults(
     bytes: &[u8],
     evictions: &mut Vec<(String, u64, u64)>,
-    restart: &mut Option<(String, u64, u64)>,
+    restart: &mut Option<RestartDisconnect>,
 ) -> Result<LogCounts, String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -269,14 +277,16 @@ pub(super) fn product_log_with_faults(
             } else if event.event == "connection_rejected"
                 && event.reason.as_deref() == Some("outbound")
                 && event.failure.as_ref().is_some_and(|failure| {
-                    failure.stage == "handoff_relay"
+                    restart
+                        .as_ref()
+                        .is_some_and(|proof| failure.stage == proof.stage)
                         && failure.cause == "io"
                         && failure.errno == Some(32)
                 })
-                && restart.as_ref().is_some_and(|(peer, start, end)| {
-                    event.peer.as_ref() == Some(peer)
-                        && event.timestamp_unix_ms >= *start
-                        && event.timestamp_unix_ms <= *end
+                && restart.as_ref().is_some_and(|proof| {
+                    event.peer.as_ref() == Some(&proof.peer)
+                        && event.timestamp_unix_ms >= proof.start_ms
+                        && event.timestamp_unix_ms <= proof.end_ms
                 })
             {
                 restart.take();

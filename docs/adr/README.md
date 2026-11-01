@@ -109,3 +109,4 @@ of the law is what it is.
 | [0065](0065-reject-full-read-upload-window-growth.md) | Reject full-read upload window growth | Rejected |
 | [0066](0066-reject-duplicated-upload-storage.md) | Reject duplicated upload storage | Rejected |
 | [0067](0067-xudp-global-id-leases-follow-association-lifetime.md) | XUDP GlobalID leases follow association lifetime | Accepted |
+| [0068](0068-bind-nxr-restart-disconnect-to-local-ack.md) | Bind NXR restart disconnect to the local ACK | Accepted |
