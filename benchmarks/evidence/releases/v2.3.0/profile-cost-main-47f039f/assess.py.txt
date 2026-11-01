@@ -1,0 +1,17 @@
+from pathlib import Path
+import json,math
+r=Path(__file__).resolve().parent
+assert (r/'exit-code.txt').read_text().strip()=='0'
+x=json.loads((r/'run/summary.json').read_text()); f=json.loads((r/'frequency-restoration.json').read_text())
+assert x['status']=='COMPLETE' and x['slotCount']==80 and x['failures']==0 and x['rawSampleCount']==1600
+assert f['restoredExactly'] and not f['errors'] and f['collectorExit']==0
+rows=[]
+for c in ['1','8','32','64']:
+ for metric,value in [('connectionsPerSecond',x['cells'][c]),('clientCpuPerConnection',x['clientCpuPerConcurrency'][c]),('p50Seconds',x['latency'][c]['p50Seconds']),('p99Seconds',x['latency'][c]['p99Seconds'])]:
+  assert value['blockCount']==20
+  lo,hi=value['bootstrap95']; median=value['medianCandidateVsBaseline']
+  assert all(math.isfinite(v) for v in [lo,hi,median]) and lo<=hi
+  rows.append({'concurrency':int(c),'metric':metric,'firefoxVsChromeMedian':median,'bootstrap95':[lo,hi]})
+result={'scope':'Intrinsic Firefox/Chrome setup cost on the same final official GNU binary. Different mandatory capabilities; no same-capability non-regression verdict. All predeclared cells reported without pooling or selective retries.','declaration':json.loads((r/'predeclared.json').read_text()),'collectionIntegrity':'PASS: complete 80 slots / 1600 batches, zero collector failures, exact CPU restoration','cells':rows}
+(r/'profile-cost-assessment.json').write_text(json.dumps(result,indent=2)+'\n')
+print(json.dumps(rows,indent=2))

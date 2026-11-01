@@ -1,0 +1,161 @@
+{
+  "run": {
+    "id": 41315269573,
+    "html_url": "https://github.com/jacek4yang/rust-reality/actions/runs/41315269573",
+    "head_sha": "47f039fe62c05e913e69db13572f909933fc07cc",
+    "head_branch": "main",
+    "event": "workflow_dispatch",
+    "status": "completed",
+    "conclusion": "success",
+    "run_attempt": 1,
+    "created_at": "2026-11-01T14:15:19Z",
+    "updated_at": "2026-11-01T17:57:38Z",
+    "path": ".github/workflows/frozen-qualification.yml"
+  },
+  "jobs": [
+    {
+      "id": 124874269251,
+      "name": "packages / prepare",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:16:59Z",
+      "completed_at": "2026-11-01T14:17:56Z"
+    },
+    {
+      "id": 124874516827,
+      "name": "packages / Build, package, and smoke linux-aarch64-generic",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:18:00Z",
+      "completed_at": "2026-11-01T14:26:33Z"
+    },
+    {
+      "id": 124874516899,
+      "name": "packages / Build, package, and smoke linux-x86_64-v3",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:17:58Z",
+      "completed_at": "2026-11-01T14:29:49Z"
+    },
+    {
+      "id": 124874516913,
+      "name": "packages / Build, package, and smoke linux-x86_64-generic",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:17:58Z",
+      "completed_at": "2026-11-01T14:28:39Z"
+    },
+    {
+      "id": 124874517009,
+      "name": "packages / Build, package, and smoke linux-x86_64-musl",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:17:58Z",
+      "completed_at": "2026-11-01T14:26:00Z"
+    },
+    {
+      "id": 124877482214,
+      "name": "packages / Aggregate full-matrix release assets",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:29:51Z",
+      "completed_at": "2026-11-01T14:31:07Z"
+    },
+    {
+      "id": 124877817977,
+      "name": "virtual-machines / Hosted KVM capability (not qualification)",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:31:10Z",
+      "completed_at": "2026-11-01T14:31:25Z"
+    },
+    {
+      "id": 124877892930,
+      "name": "virtual-machines / Shared QEMU campaign inputs",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:31:27Z",
+      "completed_at": "2026-11-01T14:37:15Z"
+    },
+    {
+      "id": 124879344048,
+      "name": "virtual-machines / QEMU guest UDP nxr/constrained",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T14:41:59Z"
+    },
+    {
+      "id": 124879344055,
+      "name": "virtual-machines / QEMU cell nxr/constrained",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T15:53:44Z"
+    },
+    {
+      "id": 124879344058,
+      "name": "virtual-machines / QEMU cell handoff/constrained",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T15:53:48Z"
+    },
+    {
+      "id": 124879344070,
+      "name": "virtual-machines / QEMU cell nxr/ordinary",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T15:52:01Z"
+    },
+    {
+      "id": 124879344082,
+      "name": "virtual-machines / QEMU cell handoff/ordinary",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T15:53:34Z"
+    },
+    {
+      "id": 124879344090,
+      "name": "virtual-machines / QEMU guest UDP nxr/ordinary",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T14:43:22Z"
+    },
+    {
+      "id": 124879344093,
+      "name": "virtual-machines / QEMU guest UDP handoff/ordinary",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T14:41:51Z"
+    },
+    {
+      "id": 124879344116,
+      "name": "virtual-machines / QEMU guest UDP handoff/constrained",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T14:37:17Z",
+      "completed_at": "2026-11-01T14:43:12Z"
+    },
+    {
+      "id": 124898537160,
+      "name": "virtual-machines / Merge four-cell QEMU evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T15:53:50Z",
+      "completed_at": "2026-11-01T16:10:54Z"
+    },
+    {
+      "id": 124902927921,
+      "name": "Frozen native receipts and aggregate verdict",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-01T16:10:56Z",
+      "completed_at": "2026-11-01T17:57:37Z"
+    }
+  ]
+}

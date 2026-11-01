@@ -1,0 +1,33 @@
+from pathlib import Path
+import json,re,statistics,sys
+root=Path(sys.argv[1]); out=Path(sys.argv[2])
+assert not out.exists()
+assert (root/'exit-code.txt').read_text().strip()=='0'
+summary=json.loads((root/'run/summary.json').read_text())
+assert summary['status']=='COMPLETE' and summary['slotCount']==80 and summary['failures']==0
+inv=json.loads((root/'invocation.json').read_text())
+rows=[]
+for slot in sorted((root/'run/slots').iterdir()):
+ if not slot.is_dir(): continue
+ variant=slot.name.rsplit('-',1)[1]
+ expected=inv[variant+'Sha256']
+ def read(name):
+  x=json.loads((slot/name).read_text())
+  assert not x['errors'] and x['initial_start_ticks']==x['final_start_ticks']
+  assert x['initial_executable_sha256']==x['final_executable_sha256']==expected
+  return x
+ def anon(x):
+  return int(re.search(r'^Anonymous:\s+(\d+) kB$',x['smaps_rollup'],re.M)[1])
+ zero=[read('client-resources-held-0-'+str(i)+'.json') for i in range(3)]
+ held=[read('client-resources-held-128-'+str(i)+'.json') for i in range(3)]
+ closed=[read('client-resources-closed-'+str(ms)+'ms.json') for ms in (0,100,500,1000,2000)]
+ all_samples=zero+held+closed
+ assert len({(x['pid'],x['initial_start_ticks'],x['boot_id']) for x in all_samples})==1
+ a=statistics.median(map(anon,zero)); b=statistics.median(map(anon,held))
+ fds=[len(x['descriptors']) for x in zero]
+ recovered=len(closed[-1]['descriptors'])<=max(fds)
+ rows.append({'slot':slot.name,'variant':variant,'anonymousHeld0KiB':a,'anonymousHeld128KiB':b,'incrementPerHeldConnectionKiB':(b-a)/128,'baselineDescriptorCounts':fds,'closedDescriptorCounts':[len(x['descriptors']) for x in closed],'descriptorsRecoveredBy2000ms':recovered})
+assert len(rows)==80
+result={'scope':'Descriptive observations from the complete final official-binary campaign after earlier traffic. Median of three held-128 snapshots minus median of three held-0 snapshots divided by 128; this is residency, not allocation count or cold object size. No long-term leak or WAN claim. Descriptor recovery is reported separately.','candidateSource':inv['candidateSource'],'candidateSha256':inv['candidateSha256'],'rows':rows,'summary':{v:{'slots':len([r for r in rows if r['variant']==v]),'medianIncrementPerHeldConnectionKiB':statistics.median(r['incrementPerHeldConnectionKiB'] for r in rows if r['variant']==v),'allDescriptorsRecoveredBy2000ms':all(r['descriptorsRecoveredBy2000ms'] for r in rows if r['variant']==v)} for v in ('baseline','candidate')}}
+out.write_text(json.dumps(result,indent=2)+'\n')
+print(json.dumps(result['summary'],indent=2))
