@@ -1,0 +1,60 @@
+{
+  "source": "54c204af0a1c9a8568c530b8d3ffadaded39e25c",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "argv": [
+    "rustc",
+    "--edition=2024",
+    "-C",
+    "opt-level=3",
+    "-C",
+    "panic=abort",
+    "-C",
+    "debuginfo=2",
+    "--extern",
+    "rust_reality=/home/jacek/Projects/rust-reality-v230-final-evidence/target/release/librust_reality.rlib",
+    "-L",
+    "dependency=/home/jacek/Projects/rust-reality-v230-final-evidence/target/release/deps",
+    "/home/jacek/.cache/rr-v230-nxr-frame-profile/probe.rs",
+    "-o",
+    "/home/jacek/.cache/rr-v230-nxr-frame-profile/probe"
+  ],
+  "rlibSha256": "99f28180a1ebd6d82192cd45bcb6a1debe448b9e260dd3b9cd680bd0433dda2a",
+  "probeSha256": "8cd807d3f492eac3ec70bffdf2d548ac6b71cb66282d4e7bd0b0ee72afe0488a",
+  "cargoArtifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///home/jacek/Projects/rust-reality-v230-final-evidence#rust-reality@2.3.0",
+    "manifest_path": "/home/jacek/Projects/rust-reality-v230-final-evidence/Cargo.toml",
+    "target": {
+      "kind": [
+        "lib"
+      ],
+      "crate_types": [
+        "lib"
+      ],
+      "name": "rust_reality",
+      "src_path": "/home/jacek/Projects/rust-reality-v230-final-evidence/src/lib.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": true,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "test": false
+    },
+    "features": [
+      "default",
+      "fuzzing",
+      "ring-aead"
+    ],
+    "filenames": [
+      "/home/jacek/Projects/rust-reality-v230-final-evidence/target/release/librust_reality.rlib",
+      "/home/jacek/Projects/rust-reality-v230-final-evidence/target/release/deps/librust_reality-2435507726a98770.rmeta"
+    ],
+    "executable": null,
+    "fresh": false
+  }
+}

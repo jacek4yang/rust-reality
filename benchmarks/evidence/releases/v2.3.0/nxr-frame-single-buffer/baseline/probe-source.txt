@@ -1,0 +1,27 @@
+use std::hint::black_box;
+use rust_reality::protocol::{nxr::NxrKey,nxr_udp::{encode_frame,decode_frame,NxrUdpSessionKey,DIR_LINE_TO_LANDING,FRAME_TYPE_DATAGRAM,MAX_FRAME_WIRE_LEN},vless::{Address,Destination}};
+fn main() {
+ let args:Vec<_>=std::env::args().collect();
+ let count:u32=args[1].parse().unwrap();
+ let payload_len:usize=args[3].parse().unwrap();
+ let dest=match args[2].as_str() {
+  "none"=>None,
+  "ipv4"=>Some(Destination::new(Address::Ipv4("192.0.2.1".parse().unwrap()),443)),
+  "ipv6"=>Some(Destination::new(Address::Ipv6("2001:db8::1".parse().unwrap()),443)),
+  "domain"=>Some(Destination::new(Address::Domain("example.test".into()),443)),
+  "maximum-domain"=>Some(Destination::new(Address::Domain("a".repeat(253)),443)),
+  _=>panic!("unknown address case"),
+ };
+ let key=NxrKey::new([0x33;32]);
+ let session=NxrUdpSessionKey::derive(&key,b"local-synthetic-allocation-probe");
+ let payload=vec![0x5a;payload_len];
+ let mut output=Vec::with_capacity(MAX_FRAME_WIRE_LEN);
+ encode_frame(&session,DIR_LINE_TO_LANDING,FRAME_TYPE_DATAGRAM,0,dest.as_ref(),&payload,&mut output).unwrap();
+ let (frame,used)=decode_frame(&output,&session,DIR_LINE_TO_LANDING).unwrap();
+ assert_eq!(used,output.len()); assert_eq!(frame.destination,dest); assert_eq!(frame.payload,payload);
+ for seq in 0..count {
+  encode_frame(black_box(&session),DIR_LINE_TO_LANDING,FRAME_TYPE_DATAGRAM,black_box(seq),black_box(dest.as_ref()),black_box(&payload),black_box(&mut output)).unwrap();
+  black_box(output.as_slice());
+ }
+ println!("encodes={count} payload_bytes={payload_len} wire_bytes={}",output.len());
+}
