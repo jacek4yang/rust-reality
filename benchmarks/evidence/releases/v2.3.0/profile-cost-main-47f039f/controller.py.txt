@@ -1,0 +1,59 @@
+import atexit,json,os,resource,subprocess,time,signal
+from pathlib import Path
+root=Path(__file__).resolve().parent
+# Bind the final official package before collecting any measurements.
+import hashlib
+invocation = json.loads((root/'invocation.json').read_text())
+argv = invocation['argv']
+def arg(name):
+ return argv[argv.index(name)+1]
+for label, path, expected in [
+ ('candidate', arg('--rust-bin'), invocation['candidateSha256']),
+ ('baseline', arg('--baseline-bin'), invocation['baselineSha256']),
+ ('server', arg('--setup-server-bin'), invocation['serverSha256']),
+ ('collector', argv[3], invocation['toolSha256']),
+]:
+ with open(path, 'rb') as stream:
+  assert hashlib.file_digest(stream, 'sha256').hexdigest() == expected, label+' identity mismatch'
+assert 'commit: '+invocation['candidateSource'] in subprocess.check_output([arg('--rust-bin'), '--version'], text=True)
+assert subprocess.check_output(['git', '-C', arg('--repo'), 'rev-parse', 'HEAD'], text=True).strip() == invocation['candidateSource']
+assert not subprocess.check_output(['git', '-C', arg('--repo'), 'status', '--porcelain'], text=True).strip()
+(root/'before.json').write_text(json.dumps({'uid':os.getuid(),'netns':os.readlink('/proc/self/ns/net'),'nofile':resource.getrlimit(resource.RLIMIT_NOFILE),'wallTime':time.time(),'loadavg':Path('/proc/loadavg').read_text()},indent=2)+'\n')
+def host():
+ compilers=[]
+ for p in Path('/proc').iterdir():
+  if not p.name.isdigit():continue
+  try:
+   name=(p/'comm').read_text().strip()
+   if name in ('rustc','cc1','cc1plus','clang','clang++','ld.lld','lld','cargo'):compilers.append({'pid':int(p.name),'name':name})
+  except (FileNotFoundError,PermissionError,ProcessLookupError):pass
+ return {'time':time.time(),'loadavg':Path('/proc/loadavg').read_text().strip(),'cpuPressure':Path('/proc/pressure/cpu').read_text(),'cpuStat':Path('/proc/stat').read_text().splitlines()[:17],'packageThrottleCount':Path('/sys/devices/system/cpu/cpu0/thermal_throttle/package_throttle_count').read_text().strip(),'compilers':compilers,'frequencyPolicies':{str(i):{n:(Path('/sys/devices/system/cpu/cpufreq')/('policy'+str(i))/n).read_text().strip() for n in ['scaling_governor','scaling_min_freq','scaling_max_freq','scaling_cur_freq']} for i in range(8)}}
+# Reap only this controller's explicitly owned process group on interruption.
+def stop_owned_workload():
+ proc = globals().get('p')
+ if proc is None or proc.poll() is not None:return
+ for sig,budget in [(signal.SIGINT,15),(signal.SIGTERM,5),(signal.SIGKILL,5)]:
+  if proc.poll() is not None:return
+  try:os.killpg(proc.pid,sig)
+  except ProcessLookupError:return
+  try:proc.wait(timeout=budget);return
+  except subprocess.TimeoutExpired:pass
+atexit.register(stop_owned_workload)
+def terminate_controller(signum,frame):raise KeyboardInterrupt()
+signal.signal(signal.SIGTERM,terminate_controller)
+with (root/'run.log').open('w') as log,(root/'host.jsonl').open('w') as obs:
+ first=host();obs.write(json.dumps(first)+'\n');obs.flush()
+ if first['compilers']:raise SystemExit('Compiler detected in preflight; no benchmark started')
+ p=subprocess.Popen(json.loads((root/'invocation.json').read_text())['argv'],stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+ contaminated=False
+ while p.poll() is None:
+  sample=host();obs.write(json.dumps(sample)+'\n');obs.flush()
+  if sample['compilers'] or any(v['scaling_min_freq']!='2400000' or v['scaling_max_freq']!='2400000' or v['scaling_governor']!='performance' for v in sample['frequencyPolicies'].values()):
+   contaminated=True;os.killpg(p.pid,signal.SIGINT)
+   try:p.wait(timeout=30)
+   except subprocess.TimeoutExpired:os.killpg(p.pid,signal.SIGTERM);p.wait(timeout=15)
+   break
+  time.sleep(5)
+ result=p.wait();(root/'exit-code.txt').write_text(str(result)+'\n')
+ (root/'host-verdict.json').write_text(json.dumps({'verdict':'INFRASTRUCTURE_CONTAMINATED' if contaminated else 'NO_COMPILER_DETECTED','collectorExitCode':result,'scope':'Periodic compiler detection and retained host observations; not proof of exclusive physical resources or all possible interference.'},indent=2)+'\n')
+ raise SystemExit(result if not contaminated else 3)

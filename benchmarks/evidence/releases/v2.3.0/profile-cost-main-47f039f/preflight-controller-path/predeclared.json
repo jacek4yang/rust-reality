@@ -1,0 +1,40 @@
+{
+  "scope": "Intrinsic Firefox versus Chrome setup cost on the same final-main official GNU binary. Mandatory capability sets differ; this is not a cross-revision non-regression claim.",
+  "source": "47f039fe62c05e913e69db13572f909933fc07cc",
+  "binarySha256": "a8521c7147290c426e62afb3ce7934da84215b8c925458d562186c64c1949290",
+  "collectorSource": "38abe32697a701d0c4450688df02cc0719f4d963",
+  "collectorSha256": "ca416fcd777db10954ff8d8fec2be314d4c82e99f343089d9b4a2b7cdb7a2bba",
+  "blocks": 20,
+  "order": "ABBA",
+  "slots": 80,
+  "samplesPerCell": 5,
+  "connectionsPerBatch": 128,
+  "concurrencies": [
+    1,
+    8,
+    32,
+    64
+  ],
+  "setupBatches": 1600,
+  "baselineProfile": "chrome",
+  "candidateProfile": "firefox",
+  "metrics": [
+    "connectionsPerSecond",
+    "clientCpuPerConnection",
+    "p50Seconds",
+    "p99Seconds"
+  ],
+  "statisticalPolicy": "Retain all qualified-collector bootstrap95 intervals and all samples; no pooling or selective reruns. Report profile-dependent cost without applying same-capability regression guards to different browser capabilities. Require complete integrity, all batches, zero collector failures and exact CPU restoration. This diagnostic cannot substitute for the separately guarded final-main default-Chrome non-regression campaign.",
+  "host": "Same fixed 2.4GHz P-core policies, affinity 0,2,4,6 and isolated netns; sequential after protected campaign, no simultaneous compiler/archive workload.",
+  "helperSha256": {
+    "controller.py": "0b2e94afb1661ca679043e16542b11e591c0ba76393f781c57e387c1142b1a4b",
+    "frequency-supervisor.py": "a9a071306bf5f049cd38032bf744701c2705eb4fb5cd31118f0e9bc266eb742e",
+    "assess.py": "e8a5a77e748f941c93074c418d8d0fb8a1054b329f548f18585c8f6b158f1c85"
+  },
+  "baselineIdentitySha256": "88b5bb458493d39d270efe800f87527d2c0de152bc4e19fee02769380649b04d",
+  "priorAttempt": {
+    "directory": "rr-v230-profile-cost-final-main-47f039f",
+    "result": "Rejected before workload: sourceCommit missing in supplied package-verification identity; zero samples; exact CPU restoration passed.",
+    "correction": "Supply the existing collector identity schema derived from independently verified exact package bytes. No binary, workload, count or statistical-policy change."
+  }
+}

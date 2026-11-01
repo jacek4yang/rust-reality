@@ -1,0 +1,46 @@
+import json,os,signal,subprocess,time
+from pathlib import Path
+root=Path('/home/jacek/.cache/rr-v230-profile-cost-final-main-47f039f')
+assert os.geteuid()==0
+names=['scaling_governor','scaling_min_freq','scaling_max_freq','energy_performance_preference']
+paths=[Path('/sys/devices/system/cpu/cpufreq')/('policy'+str(i)) for i in range(8)]
+before={p.name:{n:(p/n).read_text().strip() for n in names} for p in paths}
+(root/'frequency-before.json').write_text(json.dumps(before,indent=2)+'\n')
+def interrupt(signum,frame):raise KeyboardInterrupt()
+signal.signal(signal.SIGTERM,interrupt);signal.signal(signal.SIGINT,interrupt)
+child=None;failure=None;exit_code=None
+try:
+ for p in paths:
+  assert before[p.name]['scaling_min_freq']=='400000'
+  (p/'scaling_governor').write_text('performance')
+  (p/'scaling_max_freq').write_text('2400000')
+  (p/'scaling_min_freq').write_text('2400000')
+ observations=[]
+ for attempt in range(101):
+  applied={p.name:{n:(p/n).read_text().strip() for n in names} for p in paths}
+  observations.append(applied)
+  if all(v['scaling_min_freq']==v['scaling_max_freq']=='2400000' and v['scaling_governor']=='performance' for v in applied.values()):break
+  time.sleep(.01)
+ (root/'frequency-application-observations.json').write_text(json.dumps(observations,indent=2)+'\n')
+ (root/'frequency-applied.json').write_text(json.dumps(applied,indent=2)+'\n')
+ assert all(v['scaling_min_freq']==v['scaling_max_freq']=='2400000' and v['scaling_governor']=='performance' for v in applied.values()),'frequency readback did not settle within one second'
+ argv=['unshare','--net','/bin/bash','-c','ip link set lo up; exec setpriv --reset-env --reuid=1000 --regid=1000 --init-groups python3 -u /home/jacek/.cache/rr-v230-profile-cost-final-main-47f039f/controller.py']
+ child=subprocess.Popen(argv,start_new_session=True)
+ exit_code=child.wait(timeout=12000)
+except BaseException as e:
+ failure=type(e).__name__+': '+str(e)
+finally:
+ if child is not None and child.poll() is None:
+  os.killpg(child.pid,signal.SIGINT)
+  try:child.wait(timeout=30)
+  except subprocess.TimeoutExpired:
+   os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=10)
+ errors=[]
+ for p in paths:
+  try:
+   for n in ['scaling_max_freq','scaling_min_freq','scaling_governor','energy_performance_preference']:(p/n).write_text(before[p.name][n])
+  except BaseException as e:errors.append(p.name+': '+str(e))
+ after={p.name:{n:(p/n).read_text().strip() for n in names} for p in paths}
+ (root/'frequency-restoration.json').write_text(json.dumps({'before':before,'after':after,'restoredExactly':before==after,'errors':errors,'failure':failure,'collectorExit':exit_code},indent=2)+'\n')
+ assert before==after and not errors,'CPU policy restoration failed'
+raise SystemExit(exit_code if exit_code is not None and not failure else 1)

@@ -1,0 +1,47 @@
+{
+  "scope": "Final-main actual official GNU protected client comparison against pinned official d72 baseline. Independent 20-block ABBA campaign; no pooling with candidate-head measurements.",
+  "candidateSource": "47f039fe62c05e913e69db13572f909933fc07cc",
+  "candidateSha256": "a8521c7147290c426e62afb3ce7934da84215b8c925458d562186c64c1949290",
+  "baselineSource": "d72abc250791f804e310818fdee148540aabfed9",
+  "baselineSha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+  "blocks": 20,
+  "order": "ABBA",
+  "slots": 80,
+  "samplesPerCell": 5,
+  "concurrencies": [
+    1,
+    8,
+    32,
+    64
+  ],
+  "connectionsPerSetupBatch": 128,
+  "dataMiB": 16,
+  "shapes": [
+    "direct-download",
+    "direct-upload",
+    "framed-download",
+    "framed-upload",
+    "bidi"
+  ],
+  "protectedDataGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99
+  },
+  "protectedSetupGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99,
+    "p50Upper": 1.01,
+    "p99Upper": 1.02
+  },
+  "decision": "Use unchanged qualified collector bootstrap95 intervals. Every protected interval must meet its guard. Crossing a guard is UNRESOLVED, not PASS; retain every result, no early stopping, no pooling, no unchanged repeated acceptance retries. Investigate a discriminating cause before collecting a replacement campaign.",
+  "host": "P-core policies 0..7 fixed 2.4GHz and affinity 0,2,4,6, isolated network namespace, no local compilation or archive verification during collection; bounded 12000s supervisor with exact restoration.",
+  "dataBatches": 8000,
+  "verifiedDataRequests": 252000,
+  "setupBatches": 1600,
+  "collectorResolvingMinimum": 12,
+  "helperSha256": {
+    "controller.py": "87b37a6112b83bf0ecc5301b466200fdb7ec388aab87963192d79681b84ea88a",
+    "frequency-supervisor.py": "295240453ee134bbd053fa0f07ce2938e05233e6ff3b76e50e8f31cc2423cd33",
+    "assess.py": "4d8e99d67dff46e0948d935234f50c3cc12946b38a4c73721ed27696d6cf8496"
+  }
+}
