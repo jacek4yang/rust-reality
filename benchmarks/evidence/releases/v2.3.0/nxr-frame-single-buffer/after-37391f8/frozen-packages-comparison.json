@@ -1,0 +1,39 @@
+{
+  "source": "37391f86c8d58ade672c25453a855b69e7d81932",
+  "candidateRun": 41280033481,
+  "frozenRun": 41281145464,
+  "scope": "Identical package bytes across two independent same-source package matrices; not aggregate Frozen qualification or publication.",
+  "verdict": "PASS",
+  "files": [
+    {
+      "name": "release-manifest.json",
+      "sha256": "7345a07de83c5b2297c7949e43df661f9030b9a8d6256e5eb1178556bf1c03bd",
+      "byteIdentical": true
+    },
+    {
+      "name": "rust-reality-v2.3.0-linux-x86_64-generic.tar.gz",
+      "sha256": "0e6d97090a7340bb06d66c872ef9fc93bd79b6d226c91eca3064f49005c8cd4a",
+      "byteIdentical": true
+    },
+    {
+      "name": "SHA256SUMS",
+      "sha256": "9843b78b22c6a3db07b985266070d9e40cb3148cda2a17192ff93db519ce4b45",
+      "byteIdentical": true
+    },
+    {
+      "name": "rust-reality-v2.3.0-linux-aarch64-generic.tar.gz",
+      "sha256": "8fee212ea948b6ee10d4f47d7aad3a547a6d04d1cc39527a1202b15ecc800d8c",
+      "byteIdentical": true
+    },
+    {
+      "name": "rust-reality-v2.3.0-linux-x86_64-musl.tar.gz",
+      "sha256": "bbbd0eab220c058c020a348171907082d568443e1b8189b3a6c0332a702ca032",
+      "byteIdentical": true
+    },
+    {
+      "name": "rust-reality-v2.3.0-linux-x86_64-v3.tar.gz",
+      "sha256": "dfdb05f26d9a05a76c69024e50a9b1b048dca493681fa065143ebd662949d5d7",
+      "byteIdentical": true
+    }
+  ]
+}

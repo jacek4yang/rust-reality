@@ -1,0 +1,13 @@
+{
+  "scope": "Independent downloaded artifact integrity verification; historical source identities only, not qualification of later 76dd544 or a published release.",
+  "nativeRun": 41261708870,
+  "nativeSource": "75a1d04075a7b26282fd36a67348fbbc5a7f47da",
+  "frozenRun": 41242900924,
+  "frozenAttempt": 2,
+  "frozenSource": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "method": "Verify GitHub artifact source, size and ZIP SHA-256 before and after streaming every regular member against SHA256SUMS and nested manifests. Reject duplicate member names, absolute/traversal paths and symlinks. No executable or private input extraction.",
+  "limitations": [
+    "Original main package client performance has unresolved CPU confidence interval; Frozen PASS does not override this.",
+    "Attempt 1 ordinary Handoff TCP cell timed out; unchanged failed-job retry completed attempt 2."
+  ]
+}

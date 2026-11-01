@@ -1,0 +1,16 @@
+[
+  {
+    "label": "baseline",
+    "symbol": "_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame",
+    "address": "0000000000055b00",
+    "machineCodeBytes": 1348,
+    "assembly": "baseline-encode-frame.asm"
+  },
+  {
+    "label": "candidate",
+    "symbol": "_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12encode_frame",
+    "address": "0000000000055340",
+    "machineCodeBytes": 3141,
+    "assembly": "candidate-encode-frame.asm"
+  }
+]

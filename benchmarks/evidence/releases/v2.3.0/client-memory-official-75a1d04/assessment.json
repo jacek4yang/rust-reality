@@ -1,0 +1,104 @@
+{
+  "scope": "Eight rotated ABBA process runs, 128 retained TLS connections each, matched official d72 and official 75a1 GNU packages. Descriptive residency/FD observations only: no allocation-count, timing or long-term leak claim.",
+  "verifiedTransfers": 3072,
+  "uniqueUploadReceipts": 1024,
+  "fdRecovery": "PASS: 8/8 exact recovery at fixed checkpoint",
+  "rows": [
+    {
+      "name": "r1-baseline",
+      "binarySha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 576,
+        "held": 10248,
+        "reused": 10248,
+        "uploaded": 10880,
+        "closed": 8704
+      }
+    },
+    {
+      "name": "r1-candidate",
+      "binarySha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 580,
+        "held": 8848,
+        "reused": 8848,
+        "uploaded": 10308,
+        "closed": 8708
+      }
+    },
+    {
+      "name": "r2-candidate",
+      "binarySha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 588,
+        "held": 8720,
+        "reused": 8720,
+        "uploaded": 10172,
+        "closed": 9748
+      }
+    },
+    {
+      "name": "r2-baseline",
+      "binarySha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 576,
+        "held": 10168,
+        "reused": 10168,
+        "uploaded": 10772,
+        "closed": 8680
+      }
+    },
+    {
+      "name": "r3-baseline",
+      "binarySha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 576,
+        "held": 9876,
+        "reused": 9876,
+        "uploaded": 10572,
+        "closed": 9000
+      }
+    },
+    {
+      "name": "r3-candidate",
+      "binarySha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 580,
+        "held": 8852,
+        "reused": 8852,
+        "uploaded": 10276,
+        "closed": 9096
+      }
+    },
+    {
+      "name": "r4-candidate",
+      "binarySha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 588,
+        "held": 8764,
+        "reused": 8764,
+        "uploaded": 10208,
+        "closed": 8220
+      }
+    },
+    {
+      "name": "r4-baseline",
+      "binarySha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+      "fdRecoveredExactly": true,
+      "anonymousKiB": {
+        "before": 576,
+        "held": 10068,
+        "reused": 10068,
+        "uploaded": 10796,
+        "closed": 9224
+      }
+    }
+  ]
+}

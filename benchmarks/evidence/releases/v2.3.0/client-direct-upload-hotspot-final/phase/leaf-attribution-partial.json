@@ -1,0 +1,68 @@
+{
+  "scope": "Completed diagnostic windows only; weighted leaf attribution per recorded owner, not whole-request costs or acceptance timing. Stripped executable leaf symbols remain unknown.",
+  "slots": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "sampleCount": {
+        "client": 548,
+        "server": 469
+      },
+      "weightedPercent": {
+        "client": {
+          "kernel": 62.970087260683485,
+          "client-or-server-binary": 30.512410809038585,
+          "libc-other": 3.8200876039604035,
+          "memmove": 2.697414326317528
+        },
+        "server": {
+          "kernel": 59.590623269685935,
+          "client-or-server-binary": 34.73363291623683,
+          "memmove": 4.571006972538836,
+          "libc-other": 1.1047368415384047
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "sampleCount": {
+        "client": 566,
+        "server": 565
+      },
+      "weightedPercent": {
+        "client": {
+          "libc-other": 1.7101345574094156,
+          "client-or-server-binary": 26.532998586496,
+          "kernel": 70.0791178296263,
+          "memmove": 1.6777490264682844
+        },
+        "server": {
+          "kernel": 64.98185431391443,
+          "client-or-server-binary": 30.51605958674295,
+          "libc-other": 1.1541943697599548,
+          "memmove": 3.3478917295826762
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "sampleCount": {
+        "client": 568,
+        "server": 538
+      },
+      "weightedPercent": {
+        "client": {
+          "client-or-server-binary": 28.820733396707226,
+          "kernel": 67.98999936955072,
+          "libc-other": 1.3961386845319608,
+          "memmove": 1.7931285492101008
+        },
+        "server": {
+          "client-or-server-binary": 34.610028623300316,
+          "memmove": 3.0709505250765066,
+          "libc-other": 2.1511550982398386,
+          "kernel": 60.16786575338334
+        }
+      }
+    }
+  ]
+}

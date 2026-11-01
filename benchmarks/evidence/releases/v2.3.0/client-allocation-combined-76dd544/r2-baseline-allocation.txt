@@ -1,0 +1,10 @@
+reading file "/home/jacek/.cache/rr-v230-allocation-combined-76dd/r2-baseline.heaptrack.gz.zst" - please wait, this might take some time...
+Debuggee command was: /home/jacek/.cache/rr-v230-official-baseline-d72/binary/rust-reality run --config /home/jacek/.cache/rr-v230-allocation-combined-76dd/private/client.json
+finished reading file, now analyzing data:
+
+total runtime: 9.510000s.
+calls to allocation functions: 11707 (1231/s)
+temporary memory allocations: 4107 (431/s)
+peak heap memory consumption: 17.88M
+peak RSS (including heaptrack overhead): 23.93M
+total memory leaked: 135.99K

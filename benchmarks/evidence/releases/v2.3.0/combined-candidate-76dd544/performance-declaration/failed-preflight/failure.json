@@ -1,0 +1,6 @@
+{
+  "classification": "Harness environment initialization defect before any benchmark sample",
+  "stderr": "Traceback (most recent call last):\n  File \"/home/jacek/.cache/rr-v230-data-combined-official-76dd544/controller.py\", line 6, in <module>\n    invocation = json.loads((root/'invocation.json').read_text())\n                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/usr/lib/python3.14/pathlib/__init__.py\", line 788, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:\n         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.14/pathlib/__init__.py\", line 772, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nPermissionError: [Errno 13] Permission denied: '/root/.cache/rr-v230-data-combined-official-76dd544/invocation.json'\n",
+  "collectedSamples": 0,
+  "correction": "Use supported setpriv --reset-env when dropping root privileges; workload and thresholds unchanged."
+}

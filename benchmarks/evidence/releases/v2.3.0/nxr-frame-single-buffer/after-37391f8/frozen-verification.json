@@ -1,0 +1,17 @@
+{
+  "source": "37391f86c8d58ade672c25453a855b69e7d81932",
+  "artifactId": 13079811251,
+  "artifactZipSha256": "10f7c622fe149dd93806738d5c3378349512e42cfaebd430910f03365973f87b",
+  "verifiedMembers": 25964,
+  "manifests": [
+    {
+      "path": "SHA256SUMS",
+      "checked": 25964
+    },
+    {
+      "path": "required-native-descriptor-pressure/run/SHA256SUMS",
+      "checked": 8
+    }
+  ],
+  "verdict": "PASS: ZIP digest, every member checksum and nested manifest verified; no executable or private runtime input extracted."
+}

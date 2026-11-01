@@ -1,0 +1,12 @@
+{
+  "originalArchiverSha256": "ce8e0c056c6ef0af1162994cafdb89cf5af437a6e4782e4287ec806adc9556ba",
+  "failure": "Expected 39000 requests assertion failed; all 24 slots and 1200 batches were present.",
+  "cause": "Bidirectional shape performs two verified requests per lane, so the declared 24 slots x 5 samples x (1+64) lanes x six request-directions equals 46800 requests. This correction changes only archive completeness accounting, not measured values or acceptance criteria.",
+  "actualRequestsByShape": {
+    "framed-download": 7800,
+    "direct-upload": 7800,
+    "bidi": 15600,
+    "direct-download": 7800,
+    "framed-upload": 7800
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "scope": "Predeclared discriminating experiment, not release qualification. Compare source 75a1d04075a7b26282fd36a67348fbbc5a7f47da built with canonical GNU flags against immutable official 9265a6b GNU package; use qualified unchanged collector 38abe32 and fixed c02 server. Exact candidate digest must be recorded and validated before starting.",
+  "blocks": 6,
+  "order": "ABBA",
+  "slots": 24,
+  "samplesPerCell": 5,
+  "concurrencies": [
+    1,
+    64
+  ],
+  "connectionsPerSetupBatch": 128,
+  "dataMiB": 16,
+  "shapes": [
+    "direct-download",
+    "direct-upload",
+    "framed-download",
+    "framed-upload",
+    "bidi"
+  ],
+  "primaryHypothesis": "Eliminating the client upload payload move reduces Direct-upload:c1 CPU; require its bootstrap95 CPU-ratio upper bound below 1.0 for repeatable benefit.",
+  "protectedDataGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99
+  },
+  "decision": "Retain and inspect every cell and setup observation. A primary interval crossing 1.0 does not prove benefit. Reject or investigate statistically supported protected-path regressions, and do not turn an unresolved interval into a pass. No early favorable stopping or pooling with prior campaigns. Even a promising diagnostic requires full baseline-d72 performance, memory/resource qualification and exact-head release gates.",
+  "host": "Same fixed 2.4GHz P-core policies 0..7 and affinity 0,2,4,6; bounded supervisor and exact policy restoration; no simultaneous compilation.",
+  "candidateSource": "75a1d04075a7b26282fd36a67348fbbc5a7f47da",
+  "candidateSha256": "fb78af51740f718a9ced16902ef5fb37d00d607cc7dc9a71986a825179777786",
+  "baselineSource": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "baselineSha256": "ee7e0092849a6e8b35fe1ac31544bad9d254d7a78cef40d8c02818e1588881ed",
+  "helperSha256": {
+    "controller.py": "774e8e20fc109148d83b704667f98499ec10075d7ebe01e19e1444182a340c94",
+    "frequency-supervisor.py": "e3743e46936a7f742f5c028db8241f9623657932283d05e69efffbba15d01e58",
+    "assess.py": "cea36d42711afa46a2a394567c06ca4a4c23132d17664f364fb6e870142e7687"
+  }
+}

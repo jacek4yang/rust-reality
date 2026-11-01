@@ -1,0 +1,15 @@
+{
+  "scope": "Diagnostic allocation interception on eight matched ABBA process runs, 128 persistent authenticated Chrome connections per run, two exact 1-MiB GETs and one exact 1-MiB PUT per connection. Allocation totals include startup, connection lifecycle and cleanup. No claim of zero steady-state allocations or acceptance of instrumented latency/residency.",
+  "candidateSource": "76dd5448fbdd488f2d1cfa8b03a6ff8e7ef51506",
+  "candidateSha256": "d37ea2bf06ad419f89f49071091d30ccbce3094e45c8f878095edf8990442b59",
+  "baselineSource": "d72abc250791f804e310818fdee148540aabfed9",
+  "baselineSha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+  "helperSha256": "9c6a0db4b26ea3e3192853925f90eb3055edbfab9bdb6e8424153923fdfadd24",
+  "profilerVersion": "heaptrack 1.5.0",
+  "interpreterVersion": "heaptrack_print 1.5.0",
+  "method": "Launch each client under heaptrack LD_PRELOAD, verify actual child executable/PID ownership, retain full traces; controlled client termination precedes interpreter flushing. Do not attach to running processes.",
+  "preflight": "Exact candidate --help exited successfully under profiler; 245 allocation events observed. Preflight is separate from workload counts.",
+  "decision": "Retain every paired total and peak, check payload integrity and FD recovery. Investigate any >5% increase in allocation counts; this short instrumented diagnostic is not a CPU/throughput performance verdict or a leak verdict.",
+  "bound": "900-second outer deadline, TERM invokes owned-process cleanup; 150-second final cleanup grace before forced termination. No other project process targeted.",
+  "correction": "Attempt1 expected wrapper exit 0 after deliberately sending SIGTERM. Installed heaptrack script waits for its interpreter and propagates the debuggee exit status. Require a live client before teardown, full FD recovery, requested SIGTERM and wrapper exit 0 or 143; other exits fail. Parse every complete trace separately. Original failed attempt retained, not pooled."
+}

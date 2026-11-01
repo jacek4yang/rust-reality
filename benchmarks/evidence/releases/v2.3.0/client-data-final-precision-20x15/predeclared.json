@@ -1,0 +1,45 @@
+{
+  "scope": "Predeclared precision follow-up for unresolved direct-upload:c1 CPU. Same immutable official packages, qualified collector, fixed server, 16-MiB shapes, 15 samples, 128 setup connections, fixed 2.4GHz and affinity. Exactly 20 independent ABBA blocks at concurrency 1 (80 slots), all five shapes retained and all 14 intervals assessed. No pooling, early stopping on favorable observations, threshold relaxation, or automatic further sample-size extensions. The original 20-block full campaign remains UNRESOLVED. A new FAIL or UNRESOLVED requires root-cause investigation rather than another unchanged retry.",
+  "baselineSource": "d72abc250791f804e310818fdee148540aabfed9",
+  "baselineBinarySha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+  "blocks": 20,
+  "order": "ABBA",
+  "slots": 80,
+  "samplesPerCell": 15,
+  "connectionsPerSetupBatch": 128,
+  "concurrencies": [
+    1
+  ],
+  "dataMiB": 16,
+  "shapes": [
+    "direct-download",
+    "direct-upload",
+    "framed-download",
+    "framed-upload",
+    "bidi"
+  ],
+  "bootstrap95Bounds": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99,
+    "p50Upper": 1.01,
+    "p99Upper": 1.02
+  },
+  "clock": "2400000 kHz, performance, policies 0..7, exact prior-policy restoration",
+  "affinity": [
+    0,
+    2,
+    4,
+    6
+  ],
+  "collectorSource": "38abe32697a701d0c4450688df02cc0719f4d963",
+  "scopeLimits": "Loopback implementation cost, includes connection setup; not WAN throughput or universal hardware behavior. Do not pool with prior local-development binaries. Missing or crossing intervals remain unresolved.",
+  "helperSha256": {
+    "controller.py": "02b7984127d665c893a2156979c88fd42fa8d49052d57ac0c3bc7cfc4b1404e2",
+    "frequency-supervisor.py": "abe1222a883d6eee0787de5003fa2d4654959dc45747f5ad48932d6c854686d9",
+    "assess.py": "fa61015de409205fce484de3089f8053da5bec9aed511eef4ee1354e759d585b"
+  },
+  "identityPreflight": "Exact candidate, baseline, fixed server and qualified collector hashes, source-embedded candidate version, matching clean checkout are required before any measurements.",
+  "originalCampaignVerdict": "UNRESOLVED",
+  "originalCampaignSource": "benchmarks/evidence/releases/v2.3.0/client-data-final-package/performance-assessment.json",
+  "preflightCorrection": "The previous 60-block plan was rejected before collection by the qualified collector (supported bound 3..20). No samples exist for that plan. This replacement increases per-cell samples from 5 to 15 while retaining 20 ABBA blocks; the original full campaign and rejection remain retained. No collector or threshold change."
+}

@@ -1,0 +1,40 @@
+{
+  "scope": "Independent resolving validation of vectored upload versus official 9265a6b GNU package. Not final release qualification against d72. The preceding six-block diagnostic is retained as UNRESOLVED and is not pooled.",
+  "blocks": 20,
+  "order": "ABBA",
+  "slots": 80,
+  "samplesPerCell": 5,
+  "concurrencies": [
+    1,
+    64
+  ],
+  "connectionsPerSetupBatch": 128,
+  "dataMiB": 16,
+  "shapes": [
+    "direct-download",
+    "direct-upload",
+    "framed-download",
+    "framed-upload",
+    "bidi"
+  ],
+  "primaryHypothesis": "Eliminating the client upload payload move reduces Direct-upload:c1 CPU; require its bootstrap95 CPU-ratio upper bound below 1.0 for repeatable benefit.",
+  "protectedDataGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99
+  },
+  "decision": "Retain and inspect every cell and setup observation. A primary interval crossing 1.0 does not prove benefit. Reject or investigate statistically supported protected-path regressions, and do not turn an unresolved interval into a pass. No early favorable stopping or pooling with prior campaigns. Even a promising diagnostic requires full baseline-d72 performance, memory/resource qualification and exact-head release gates.",
+  "host": "Same fixed 2.4GHz P-core policies 0..7 and affinity 0,2,4,6; bounded supervisor and exact policy restoration; no simultaneous compilation.",
+  "candidateSource": "75a1d04075a7b26282fd36a67348fbbc5a7f47da",
+  "candidateSha256": "fb78af51740f718a9ced16902ef5fb37d00d607cc7dc9a71986a825179777786",
+  "baselineSource": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "baselineSha256": "ee7e0092849a6e8b35fe1ac31544bad9d254d7a78cef40d8c02818e1588881ed",
+  "helperSha256": {
+    "controller.py": "04f02afa523525c3b28dfa356178245a09cbe22a35af19c02bb2577dd60ff5c9",
+    "frequency-supervisor.py": "06921c94ec62bfa15953725afd2fe30dcc975a0e56a336a13f92a95a9c5d7460",
+    "assess.py": "762fa2100f772d040d1927ad1facbd8b2607a5221068fe250d9b21d43a97e67a"
+  },
+  "dataBatches": 4000,
+  "verifiedDataRequests": 156000,
+  "collectorResolvingMinimum": 12,
+  "reason": "Correct the diagnosed six-block predeclaration/evaluator mismatch without modifying qualified collector rules, limits, data or confidence calculations."
+}

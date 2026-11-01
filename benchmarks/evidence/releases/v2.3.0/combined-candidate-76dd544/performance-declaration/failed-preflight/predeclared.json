@@ -1,0 +1,47 @@
+{
+  "scope": "Full protected client comparison of the exact combined official GNU candidate against the pinned official d72 baseline. Later main binary identity requires its own qualification. No pooling with prior source or executable identities.",
+  "candidateSource": "76dd5448fbdd488f2d1cfa8b03a6ff8e7ef51506",
+  "candidateSha256": "d37ea2bf06ad419f89f49071091d30ccbce3094e45c8f878095edf8990442b59",
+  "baselineSource": "d72abc250791f804e310818fdee148540aabfed9",
+  "baselineSha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+  "blocks": 20,
+  "order": "ABBA",
+  "slots": 80,
+  "samplesPerCell": 5,
+  "concurrencies": [
+    1,
+    8,
+    32,
+    64
+  ],
+  "connectionsPerSetupBatch": 128,
+  "dataMiB": 16,
+  "shapes": [
+    "direct-download",
+    "direct-upload",
+    "framed-download",
+    "framed-upload",
+    "bidi"
+  ],
+  "protectedDataGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99
+  },
+  "protectedSetupGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99,
+    "p50Upper": 1.01,
+    "p99Upper": 1.02
+  },
+  "decision": "Use unchanged qualified collector bootstrap95 intervals. Every protected interval must meet its guard. Crossing a guard is UNRESOLVED, not PASS; retain every result, no early stopping, no pooling, no unchanged repeated acceptance retries. Investigate a discriminating cause before collecting a replacement campaign.",
+  "host": "P-core policies 0..7 fixed 2.4GHz and affinity 0,2,4,6, isolated network namespace, no local compilation or archive verification during collection; bounded 12000s supervisor with exact restoration.",
+  "dataBatches": 8000,
+  "verifiedDataRequests": 252000,
+  "setupBatches": 1600,
+  "collectorResolvingMinimum": 12,
+  "helperSha256": {
+    "controller.py": "acf18882a8f0ac7c605ed993029a4fb6c7396132fcd18d6421112ce9d8302807",
+    "frequency-supervisor.py": "897b3e83d9a3b1d36a56f9a86587457ac7d5b157bb2c885bca9832701386cb82",
+    "assess.py": "3f489c7501dd52a9036d2e91650e3c6c9f4832984475717bf2e85d6d4a03d34e"
+  }
+}

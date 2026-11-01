@@ -1,0 +1,6 @@
+{
+  "initialCommit": "2771c1af9a24574d5785e9b4871c2c649fe3ff63",
+  "error": "Archive helper referenced absent cache profiler metadata; shell continued to commit partial archive despite preceding failures. objdump output also contained trailing whitespace.",
+  "correction": "Use existing retained profiler identity, complete metadata and checksums, trim assembly presentation trailing whitespace only, require fail-fast before committing. No raw measurements or executable bytes changed.",
+  "qualification": "Initial evidence commit was not merge-qualified; current head still requires full exact-head gates."
+}

@@ -1,0 +1,746 @@
+{
+  "scope": "Chrome client data and setup only on fixed-clock local hardware; not overall release qualification. Ratios candidate/baseline.",
+  "source": "Qualified immutable collector 38abe32 bootstrap95; no recomputed or pooled intervals.",
+  "candidateSource": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "baselineSource": "d72abc250791f804e310818fdee148540aabfed9",
+  "counts": {
+    "data": {
+      "PASS": 39,
+      "UNRESOLVED": 1
+    },
+    "setup": {
+      "PASS": 16
+    }
+  },
+  "verdict": "UNRESOLVED",
+  "cells": [
+    {
+      "scope": "data",
+      "cell": "bidi:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7481816742669505,
+      "bootstrap95": [
+        0.7394284480493373,
+        0.7576836955972546
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c1",
+      "metric": "mibPerSecond",
+      "median": 4.252346633751344,
+      "bootstrap95": [
+        3.7786219299828137,
+        4.680975322909081
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7763206052184521,
+      "bootstrap95": [
+        0.7735105229755677,
+        0.7797836559287128
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c32",
+      "metric": "mibPerSecond",
+      "median": 1.0710534115791477,
+      "bootstrap95": [
+        1.0682295311854182,
+        1.0723319906265865
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7779420762498068,
+      "bootstrap95": [
+        0.7764250216802107,
+        0.778598900211473
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0791306583073177,
+      "bootstrap95": [
+        1.0763111120158424,
+        1.0804023067970423
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7771733500311485,
+      "bootstrap95": [
+        0.7749834762816068,
+        0.7823748674744141
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c8",
+      "metric": "mibPerSecond",
+      "median": 1.3493024128043234,
+      "bootstrap95": [
+        1.3194017593199963,
+        1.3733340195661685
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.914758532978978,
+      "bootstrap95": [
+        0.9087792157492538,
+        0.9265816341901085
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c1",
+      "metric": "mibPerSecond",
+      "median": 4.981051145680007,
+      "bootstrap95": [
+        4.975095358914448,
+        4.984235922592019
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8313382737358896,
+      "bootstrap95": [
+        0.8294395633948215,
+        0.8344220203625983
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c32",
+      "metric": "mibPerSecond",
+      "median": 1.151666428129138,
+      "bootstrap95": [
+        1.1443309501521948,
+        1.1538376966790374
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8377221732777599,
+      "bootstrap95": [
+        0.8344950050900474,
+        0.8386971612301971
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.066550213746332,
+      "bootstrap95": [
+        1.0639102091409711,
+        1.0706858771295007
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8418427305898704,
+      "bootstrap95": [
+        0.8390821180938619,
+        0.8525392707428455
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c8",
+      "metric": "mibPerSecond",
+      "median": 1.7796150867121554,
+      "bootstrap95": [
+        1.7676035311062477,
+        1.7853802014203193
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0010455237371203,
+      "bootstrap95": [
+        0.9829852147546906,
+        1.0117158236967039
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "UNRESOLVED"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 6.27872174957637,
+      "bootstrap95": [
+        5.890140852026258,
+        6.296868773997064
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.723666012214714,
+      "bootstrap95": [
+        0.7221144967947051,
+        0.7248432161767868
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c32",
+      "metric": "mibPerSecond",
+      "median": 1.1387367738470102,
+      "bootstrap95": [
+        1.1314720938832803,
+        1.1485120731758363
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7249807374290792,
+      "bootstrap95": [
+        0.7235809771131951,
+        0.7325797773573584
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0867053400822388,
+      "bootstrap95": [
+        1.0843520466244674,
+        1.0895164723353725
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7526353398097295,
+      "bootstrap95": [
+        0.7507712974511187,
+        0.7554477861448188
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c8",
+      "metric": "mibPerSecond",
+      "median": 1.8773011085529139,
+      "bootstrap95": [
+        1.8150456043293766,
+        1.9265844434476254
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9928827535591904,
+      "bootstrap95": [
+        0.9852475468066102,
+        1.0070902672213506
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c1",
+      "metric": "mibPerSecond",
+      "median": 4.940872408111614,
+      "bootstrap95": [
+        4.928315940207698,
+        4.944880923366673
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9758917549868007,
+      "bootstrap95": [
+        0.9731148277024344,
+        0.9817516713645164
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c32",
+      "metric": "mibPerSecond",
+      "median": 1.1293926692462004,
+      "bootstrap95": [
+        1.1260646254987683,
+        1.1323493924569454
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9790102380379004,
+      "bootstrap95": [
+        0.9758041469595548,
+        0.984186138541449
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0685791795687094,
+      "bootstrap95": [
+        1.0667442411708146,
+        1.0702977889242193
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9772387545704508,
+      "bootstrap95": [
+        0.9727077335484797,
+        0.9812179198980966
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c8",
+      "metric": "mibPerSecond",
+      "median": 1.916364268153603,
+      "bootstrap95": [
+        1.892927974479051,
+        1.925291218419562
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8047622116766998,
+      "bootstrap95": [
+        0.7994358924682694,
+        0.811660870800129
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 6.930429798388209,
+      "bootstrap95": [
+        6.919729640350056,
+        6.9426733108278675
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c32",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7896528171627756,
+      "bootstrap95": [
+        0.7837380204903,
+        0.7957189877824828
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c32",
+      "metric": "mibPerSecond",
+      "median": 1.2025097503644004,
+      "bootstrap95": [
+        1.2001499582525448,
+        1.2139520192044504
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8196066614388275,
+      "bootstrap95": [
+        0.8128579658130233,
+        0.8301825681979101
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.082392487985743,
+      "bootstrap95": [
+        1.0802556963327308,
+        1.0961349792087858
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c8",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.7805198192122154,
+      "bootstrap95": [
+        0.7749698641530364,
+        0.7840824279981278
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c8",
+      "metric": "mibPerSecond",
+      "median": 2.005975425263908,
+      "bootstrap95": [
+        1.9988912057715016,
+        2.0374703025329097
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "connectionsPerSecond",
+      "median": 63.36652648014319,
+      "bootstrap95": [
+        63.18864529368804,
+        63.43030975738567
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "clientCpuPerConnection",
+      "median": 0.5467422369349121,
+      "bootstrap95": [
+        0.5450189065736732,
+        0.5495331382027994
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "p50Seconds",
+      "median": 0.015456805851447876,
+      "bootstrap95": [
+        0.01542746852859496,
+        0.015509096673574837
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "p99Seconds",
+      "median": 0.017827622415190127,
+      "bootstrap95": [
+        0.017641331543792223,
+        0.0180219105228377
+      ],
+      "bound": 1.02,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "8",
+      "metric": "connectionsPerSecond",
+      "median": 18.427410912162735,
+      "bootstrap95": [
+        18.347419182839023,
+        18.555704150696947
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "8",
+      "metric": "clientCpuPerConnection",
+      "median": 0.8501025295668385,
+      "bootstrap95": [
+        0.8462909206716154,
+        0.8519643673535708
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "8",
+      "metric": "p50Seconds",
+      "median": 0.05240267136781168,
+      "bootstrap95": [
+        0.05223855766069153,
+        0.05256755733041562
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "8",
+      "metric": "p99Seconds",
+      "median": 0.07934086784683625,
+      "bootstrap95": [
+        0.07860844266647599,
+        0.0805230613677259
+      ],
+      "bound": 1.02,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "32",
+      "metric": "connectionsPerSecond",
+      "median": 5.5069980053229415,
+      "bootstrap95": [
+        5.486549802437704,
+        5.534559156334648
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "32",
+      "metric": "clientCpuPerConnection",
+      "median": 0.9007591683693512,
+      "bootstrap95": [
+        0.8948623789689337,
+        0.905395384159219
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "32",
+      "metric": "p50Seconds",
+      "median": 0.17518271164016247,
+      "bootstrap95": [
+        0.17352122146014556,
+        0.1776583741604986
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "32",
+      "metric": "p99Seconds",
+      "median": 0.2513561112883769,
+      "bootstrap95": [
+        0.24925861565191593,
+        0.2576122041921843
+      ],
+      "bound": 1.02,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "connectionsPerSecond",
+      "median": 3.1000949277847876,
+      "bootstrap95": [
+        3.0837293285572196,
+        3.1085646475116953
+      ],
+      "bound": 0.99,
+      "direction": "higher",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "clientCpuPerConnection",
+      "median": 0.9426312464930907,
+      "bootstrap95": [
+        0.9398775072760146,
+        0.9476284433906867
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "p50Seconds",
+      "median": 0.30862745086308985,
+      "bootstrap95": [
+        0.3046182424584457,
+        0.312962566679807
+      ],
+      "bound": 1.01,
+      "direction": "lower",
+      "verdict": "PASS"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "p99Seconds",
+      "median": 0.3926543698101852,
+      "bootstrap95": [
+        0.37886093099473994,
+        0.40277877804524764
+      ],
+      "bound": 1.02,
+      "direction": "lower",
+      "verdict": "PASS"
+    }
+  ]
+}

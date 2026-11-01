@@ -465,15 +465,44 @@ The before/after binaries were built from the same tree with only
 
 ## v2.3.0 release evidence
 
-v2.3.0 retains the complete client comparisons above with their original
-source revisions, executable hashes, traffic shapes and statistical limits.
-The passing reserved-upload comparison is scoped to `0c5b1dc`; later source
-changes and final package identities are not silently substituted. Native
-browser profile cost is distinct from implementation regression. Current
-stock-Xray compatibility is qualified with the pinned official reference in
-`tools/fixtures/stock-xray.json`; the older Xray tables below remain historical
-comparisons. Final publication requires exact-main qualification and verified
-package execution, and does not establish production-WAN behavior.
+The retained comparisons keep their exact source, executable, workload and
+statistical scope. The [official-package comparison at `76dd5448`](../../benchmarks/evidence/releases/v2.3.0/client-data-combined-official-76dd544/performance-assessment.json)
+passes all 56 protected client metrics against the pinned official `d72abc25`
+baseline: 20 ABBA blocks, concurrency 1/8/32/64 and five 16-MiB traffic shapes.
+This candidate predates the NXR frame-writer optimization; its result does not
+substitute for a later source or final release executable. The large throughput
+improvement over `d72abc25` already existed before vectored upload and is not
+attributed solely to that change.
+
+The [combined official package at `37391f86`](../../benchmarks/evidence/releases/v2.3.0/client-data-official-37391f8/README.md)
+also passes all 56 protected metrics in a separate 20-block ABBA campaign with
+the same baseline and guards. This includes the NXR frame-writer change.
+All 80 slots completed; no intervals were pooled with the older campaign.
+This remains candidate-specific evidence, not final-main qualification.
+
+[Allocation and resource diagnostics at `76dd5448`](../../benchmarks/evidence/releases/v2.3.0/client-allocation-combined-76dd544/README.md)
+retain a measured tradeoff: lifecycle allocation-call counts increase about
+1.08%, while tracked peak heap falls from 17.88 MB to 9.29 MB. Instrumented
+memory and timing are not production acceptance metrics. Separate uninstrumented
+observations recover descriptors in all 80 slots and show median per-slot
+incremental anonymous residency of 39 KiB per held connection versus 82.44 KiB
+for the baseline after the declared traffic. These are workload observations,
+not cold object sizes or a long-term leak proof.
+
+The [NXR frame-writer diagnostic at `37391f86`](../../benchmarks/evidence/releases/v2.3.0/nxr-frame-single-buffer/after-37391f8/README.md)
+removes one temporary allocation per frame without an address and two with an
+address. All 15 address/payload cases have zero incremental encoder allocations
+when caller storage is already reserved. The separate 20-block ABBA CPU
+comparison measures 1.9%-10.4% lower encoder CPU. This is not a claim of zero
+allocations throughout a UDP association or the same gain in network throughput.
+Frame bytes and MAC semantics remain unchanged; NXR UDP still uses TCP carriage.
+
+Native browser profile cost remains distinct from implementation regression.
+Current stock-Xray compatibility uses the official pinned reference in
+`tools/fixtures/stock-xray.json`; older Xray tables remain historical comparisons.
+Final publication requires exact-main qualification and execution of the actual
+packages. Loopback and isolated VM results do not establish production-WAN
+behavior or complete browser traffic indistinguishability.
 
 ## v2.2.0 release evidence
 

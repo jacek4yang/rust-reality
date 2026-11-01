@@ -1,0 +1,11 @@
+{
+  "source": "75a1d04075a7b26282fd36a67348fbbc5a7f47da",
+  "binarySha256": "fb78af51740f718a9ced16902ef5fb37d00d607cc7dc9a71986a825179777786",
+  "symbolTwinTextIdentical": false,
+  "method": "Unique 128-byte function-prefix match followed by inspection of the actual frozen executable disassembly; dynamic relocations resolve external call targets. No global symbol-address equivalence claimed.",
+  "function": "UploadRecord::complete_in_place",
+  "actualAddress": "0x536eb0",
+  "symbolTwinAddress": "0x536f20",
+  "inspection": "Frame header stores and padding memset; no payload memmove call in this function. This alone does not establish a throughput or CPU improvement.",
+  "disassemblySha256": "b6d55cd332c83d90d522c2ecb7bc85e17acecd4af332bc64d78d719a5eafa2eb"
+}

@@ -1,0 +1,8 @@
+{
+  "scope": "Host observations and their limits",
+  "detectedRustOrCCompilerSamples": 0,
+  "thermalThrottleCountIncrement": 0,
+  "cpuPolicyRestoredExactly": true,
+  "auxiliaryActivities": "Read-only GitHub/progress queries, small evidence Git writes and Python helper preparation/syntax checks were pinned to CPU8 while the workload used CPUs0,2,4,6. No Cargo/Rust/C build, archive verification or allocation profiler ran during collection.",
+  "limitations": "Processes share physical host resources; this is not a claim of exclusive hardware or absence of every possible interference source."
+}

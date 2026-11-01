@@ -1,0 +1,353 @@
+{
+  "scope": "Six-block diagnostic; no resolving confidence intervals or acceptance verdict can be inferred. Qualified collector threshold remains unchanged.",
+  "verdict": "UNRESOLVED",
+  "primaryBenefit": "UNRESOLVED",
+  "decision": "NOT_ACCEPTED_INVESTIGATE_OR_REJECT",
+  "counts": {
+    "data": {
+      "UNRESOLVED": 20
+    },
+    "setup": {
+      "UNRESOLVED": 8
+    }
+  },
+  "assessmentFailure": "assessor-failure.json",
+  "cells": [
+    {
+      "scope": "data",
+      "cell": "bidi:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9973982994259041,
+      "observedBlockRatioRange": [
+        0.9830353874737913,
+        1.004801440803801
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9942338672786578,
+      "observedBlockRatioRange": [
+        0.9863995904666129,
+        1.0010310226567845
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9769085508219251,
+      "observedBlockRatioRange": [
+        0.9623159580898462,
+        0.986198542480776
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "bidi:c64",
+      "metric": "mibPerSecond",
+      "median": 1.0069523985297775,
+      "observedBlockRatioRange": [
+        1.0023465472838995,
+        1.0133505861613699
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9979448441930852,
+      "observedBlockRatioRange": [
+        0.9621056921819783,
+        1.011419070348295
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9998765569711828,
+      "observedBlockRatioRange": [
+        0.996296785555105,
+        1.0033133333454727
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 1.0004750737758115,
+      "observedBlockRatioRange": [
+        0.9908198893679987,
+        1.0064570059190703
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-download:c64",
+      "metric": "mibPerSecond",
+      "median": 0.9993751433874261,
+      "observedBlockRatioRange": [
+        0.9965118191909831,
+        1.0046534716009374
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9529816013707825,
+      "observedBlockRatioRange": [
+        0.94254781683417,
+        0.9695639528195233
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9988046283513909,
+      "observedBlockRatioRange": [
+        0.9965386662174756,
+        1.0047153412308232
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9731062871910174,
+      "observedBlockRatioRange": [
+        0.965356352388524,
+        0.9832228320644474
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "direct-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 0.999000808010079,
+      "observedBlockRatioRange": [
+        0.9930194124557034,
+        1.0049216899421638
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9956279647542503,
+      "observedBlockRatioRange": [
+        0.9869736622510493,
+        1.007019169877238
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9996233596161657,
+      "observedBlockRatioRange": [
+        0.9969013475594866,
+        1.0022970321886089
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9994474655438503,
+      "observedBlockRatioRange": [
+        0.9954764864671889,
+        1.005696809436134
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-download:c64",
+      "metric": "mibPerSecond",
+      "median": 0.9981045968617441,
+      "observedBlockRatioRange": [
+        0.9954499877834989,
+        1.004151686642558
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c1",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.9702055933658327,
+      "observedBlockRatioRange": [
+        0.9563403398381279,
+        0.9925135880720579
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c1",
+      "metric": "mibPerSecond",
+      "median": 0.9977694512647493,
+      "observedBlockRatioRange": [
+        0.9960800745590064,
+        1.0009430117114668
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c64",
+      "metric": "cpuSecondsPerGiB",
+      "median": 0.8598332476197474,
+      "observedBlockRatioRange": [
+        0.842894081792979,
+        0.8899668086334619
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "data",
+      "cell": "framed-upload:c64",
+      "metric": "mibPerSecond",
+      "median": 1.061467163703617,
+      "observedBlockRatioRange": [
+        1.054842170516997,
+        1.0782717678258387
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "connectionsPerSecond",
+      "median": 1.0017963678270596,
+      "observedBlockRatioRange": [
+        0.9896158615158971,
+        1.0028503835926417
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "clientCpuPerConnection",
+      "median": 0.9961082951999884,
+      "observedBlockRatioRange": [
+        0.9737244731031172,
+        1.0474776357092874
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "p50Seconds",
+      "median": 0.9977899393446632,
+      "observedBlockRatioRange": [
+        0.9927575542638689,
+        1.0064087620809177
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "1",
+      "metric": "p99Seconds",
+      "median": 1.0024146439405088,
+      "observedBlockRatioRange": [
+        0.9513394136689888,
+        1.039169743223336
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "connectionsPerSecond",
+      "median": 0.9937327164623244,
+      "observedBlockRatioRange": [
+        0.976788009130624,
+        1.0385046687636743
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "clientCpuPerConnection",
+      "median": 1.0086367714665343,
+      "observedBlockRatioRange": [
+        0.9985363274501358,
+        1.0266712657259476
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "p50Seconds",
+      "median": 0.981431684960182,
+      "observedBlockRatioRange": [
+        0.9441438095990243,
+        1.0403233253356496
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    },
+    {
+      "scope": "setup",
+      "cell": "64",
+      "metric": "p99Seconds",
+      "median": 0.9598879804997392,
+      "observedBlockRatioRange": [
+        0.9384124828652679,
+        1.04739025147891
+      ],
+      "verdict": "UNRESOLVED",
+      "reason": "fewer than the resolving block count: the block bootstrap resampled too few blocks for this interval to describe the sampling distribution, so it is reported as the range of the observed blocks and must not be read as a confidence bound or cited as resolution"
+    }
+  ]
+}
