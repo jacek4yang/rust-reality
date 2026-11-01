@@ -8,7 +8,23 @@
   "udp443Correction": "Exact unchanged test passed in owned network namespace with namespace-local port floor zero and original unprivileged uid. Host network unchanged.",
   "focusedFuzzSmoke": "nxr_udp_frames PASS",
   "strictClippy": "PASS",
-  "fullLocalGate": "PENDING at archival time",
+  "fullLocalGate": {
+    "verdict": "PASS",
+    "stages": 19,
+    "elapsedSeconds": 588.7,
+    "receipt": "1793514349099-2176865"
+  },
   "securityRun": 41280033381,
-  "securityConclusion": "success"
+  "securityConclusion": "success",
+  "ciRun": 41280033550,
+  "ciConclusion": "success",
+  "candidatePackagesRun": 41280033481,
+  "candidatePackagesConclusion": "success",
+  "productionCliClientHello": {
+    "samples": 64,
+    "chrome": 32,
+    "firefox": 32,
+    "verdict": "PASS",
+    "scope": "Actual package CLI wire capture; stops before ServerHello, not an authenticated-session test."
+  }
 }

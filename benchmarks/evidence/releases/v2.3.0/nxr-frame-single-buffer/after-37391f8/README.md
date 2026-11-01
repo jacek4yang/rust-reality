@@ -39,3 +39,15 @@ are unchanged. Rebuild the exact Rust driver using `identity.json` and the
 baseline README's compiler instructions. No instrumentation or dependency
 enters production. The initial incomplete archival attempt and its correction
 are recorded separately; they do not change any measurement outcome.
+
+The exact official GNU package is additionally captured through 64 fresh
+production CLI processes: 32 Chrome offers (16 omitted defaults, 16 explicit)
+and 32 Firefox offers. Independent structure and freshness comparisons pass
+against frozen native Windows browser fixtures. Capture stops before the
+server flight; these files do not establish authenticated-session behavior.
+All four candidate archives, source-file contents, executable hashes, native
+smoke receipts, harness bytes and command-output hashes verify independently.
+ARM native execution is attested by its matching hosted runner; local ARM
+execution is explicitly not run. These are candidate assets, not a published
+release. The full local check passes all 19 stages at the runtime source,
+with hosted CI and Security PASS; Native/Frozen qualification remains separate.

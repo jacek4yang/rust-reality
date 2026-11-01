@@ -1,0 +1,39 @@
+{
+  "source": "37391f86c8d58ade672c25453a855b69e7d81932",
+  "scope": "Supplemental independent receipt/content verification; release publication is not implied.",
+  "verdict": "PASS",
+  "tiers": [
+    {
+      "tier": "linux-aarch64-generic",
+      "archiveSha256": "8fee212ea948b6ee10d4f47d7aad3a547a6d04d1cc39527a1202b15ecc800d8c",
+      "binarySha256": "6fa0077717a405d5ea139d8147a56eff1c524d6ed335b630db4bef2d58a48fb1",
+      "harnessSha256": "35629e2bc2379ac9ae0258267ceb3ca859f2961a59555e6fdfa8f4ddac4a68dd",
+      "receiptSha256": "a1ab46cab6f5d6ad7829d92131eeccec660e92f17782ad3c38069f90ffeb6af4",
+      "commandOutputDigestsVerified": true
+    },
+    {
+      "tier": "linux-x86_64-generic",
+      "archiveSha256": "0e6d97090a7340bb06d66c872ef9fc93bd79b6d226c91eca3064f49005c8cd4a",
+      "binarySha256": "cba868a43e3f1fbd0d2a7bdb4cd7bd1113359f201bc1bec55d8b877c5b836182",
+      "harnessSha256": "a4cb8339f501b3e47a23c284da42112f48fe82ae77c878774375b4c13c335176",
+      "receiptSha256": "25ba8a30d51efa9d6d5650f3ec0638c8796654a57718c8ff9c063850fda58cbe",
+      "commandOutputDigestsVerified": true
+    },
+    {
+      "tier": "linux-x86_64-musl",
+      "archiveSha256": "bbbd0eab220c058c020a348171907082d568443e1b8189b3a6c0332a702ca032",
+      "binarySha256": "7dec2a4e0bf382e9491f8a28072fc148739ac1f95cadd0a1edc830f59ca39f1a",
+      "harnessSha256": "a4cb8339f501b3e47a23c284da42112f48fe82ae77c878774375b4c13c335176",
+      "receiptSha256": "1a19b8b6314399681630963492796ab31200bed52a3427510313c974329c6002",
+      "commandOutputDigestsVerified": true
+    },
+    {
+      "tier": "linux-x86_64-v3",
+      "archiveSha256": "dfdb05f26d9a05a76c69024e50a9b1b048dca493681fa065143ebd662949d5d7",
+      "binarySha256": "246651f932158c702b47e8f5ec808ebe18a40a7912ff424d921a9bc54ad63102",
+      "harnessSha256": "a4cb8339f501b3e47a23c284da42112f48fe82ae77c878774375b4c13c335176",
+      "receiptSha256": "b4d2a83a3f9d66363973a42dd26400ed12cf029a0e289e7919b66381fc9adf43",
+      "commandOutputDigestsVerified": true
+    }
+  ]
+}

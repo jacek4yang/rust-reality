@@ -1,0 +1,7 @@
+{
+  "status": "CANDIDATE_NOT_PUBLISHED",
+  "run": 41280033481,
+  "source": "37391f86c8d58ade672c25453a855b69e7d81932",
+  "verification": "Four actual candidate archives, manifest, checksums, native execution receipts, harness bytes, command output digests and exact source documents independently verified. ARM was executed by matching native hosted runner; local ARM execution is not claimed.",
+  "supplementFirstAttempt": "All supplemental content assertions passed, but receipt write raced primary verifier output directory creation. Rerun after primary verifier completed; no source, assets or assertions changed."
+}
