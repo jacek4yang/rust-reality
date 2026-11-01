@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "d72abc250791f804e310818fdee148540aabfed9",
+  "binarySha256": "610746b002c7837d4fdffab3c63360ea35647ef556922337d47a51b548d68f72",
+  "archiveSha256": "9d89e146a2132724678ac855f19b93dc093e90e78ef2cb556b45b655bfe4b1ee",
+  "packageArtifactId": 13057370983,
+  "receiptArtifactId": 13057056433,
+  "nativeCommandsPassed": 7,
+  "version": "rust-reality 2.2.0\ncommit: d72abc250791f804e310818fdee148540aabfed9\n",
+  "elfNotes": "\nDisplaying notes found in: .note.ABI-tag\n  Owner                Data size \tDescription\n  GNU                  0x00000010\tNT_GNU_ABI_TAG (ABI version tag)\n    OS: Linux, ABI: 3.2.0\n\nDisplaying notes found in: .note.gnu.build-id\n  Owner                Data size \tDescription\n  GNU                  0x00000014\tNT_GNU_BUILD_ID (unique build ID bitstring)\n    Build ID: ea912ca80a4552d034b47e7b3480f8f23dd6f840\n",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "target": "x86_64-unknown-linux-gnu",
+  "targetCpu": "x86-64",
+  "cargoFeatures": [
+    "default"
+  ],
+  "scope": "Historical candidate GNU package only; the historical matrix is not a passing release and is not the published v2.2.0 source.",
+  "sha256sumsVerified": true,
+  "checksumProvenance": "Local SHA256SUMS independently checked after comparison with official GitHub artifact digests and native package receipt before/after identities."
+}

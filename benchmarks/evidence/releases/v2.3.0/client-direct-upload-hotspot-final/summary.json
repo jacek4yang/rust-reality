@@ -1,0 +1,20 @@
+{
+  "verdict": "DIAGNOSTIC_ONLY",
+  "sourceCommit": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "attempts": [
+    {
+      "name": "phase",
+      "verdict": "DIAGNOSTIC_ONLY",
+      "observations": 67,
+      "slots": 12
+    }
+  ],
+  "interpretation": "All 12 completed phase windows retain 3355 baseline-client and 3365 candidate-client leaf samples. Candidate client memmove weighted shares range from 0.9972% to 2.4080%; kernel shares range from 62.3701% to 70.0791%. These observed phase subsets motivate an isolated vectored payload-read experiment. They do not prove causality for the 16-MiB unresolved interval or establish acceptance timing. Binary leaves remain stripped/unknown; no symbolic crypto attribution is claimed.",
+  "frequencyRestoration": "Exact prior CPU policies restored; collector exit 0.",
+  "sourceHashes": {
+    "rr-v230-direct-upload-profile-final-controller.py": "6ca56b72f2358c77b8120799b357cbd939d70de9ae5cdd6e17b3d2697db5a840",
+    "rr-v230-direct-upload-profile-final-supervisor.py": "9cdd08c9b93ce97724ae95c2ccdfa093aa445a4527c354a4d52ffdb908d4a4c4",
+    "rr-v230-direct-upload-profile-final-totals.py": "2a41d96f595a34ee43edf4a822fbc060e4e97b6ec91f984091b7793b9b1732b3",
+    "rr-v230-direct-upload-profile-final-leaves.py": "a36594b668fbb4fc11a6dbd4a998a1b384d790eb17d23fa83bea590d12b8d43a"
+  }
+}

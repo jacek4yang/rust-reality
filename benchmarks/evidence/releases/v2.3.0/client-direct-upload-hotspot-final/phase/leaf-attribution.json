@@ -1,0 +1,425 @@
+{
+  "scope": "All 12 completed diagnostic windows. Weighted leaf attribution per recorded owner, not whole-request costs or acceptance timing. Stripped executable leaf symbols remain unknown.",
+  "slots": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "sampleCount": {
+        "client": 548,
+        "server": 469
+      },
+      "weightedCycles": {
+        "client": {
+          "kernel": 3869903203,
+          "client-or-server-binary": 1875177270,
+          "libc-other": 234768124,
+          "memmove": 165772874
+        },
+        "server": {
+          "kernel": 3028134007,
+          "client-or-server-binary": 1765010823,
+          "memmove": 232278518,
+          "libc-other": 56137879
+        }
+      },
+      "weightedPercent": {
+        "client": {
+          "kernel": 62.970087260683485,
+          "client-or-server-binary": 30.512410809038585,
+          "libc-other": 3.8200876039604035,
+          "memmove": 2.697414326317528
+        },
+        "server": {
+          "kernel": 59.590623269685935,
+          "client-or-server-binary": 34.73363291623683,
+          "memmove": 4.571006972538836,
+          "libc-other": 1.1047368415384047
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "sampleCount": {
+        "client": 566,
+        "server": 565
+      },
+      "weightedCycles": {
+        "client": {
+          "libc-other": 104985438,
+          "client-or-server-binary": 1628865089,
+          "kernel": 4302168416,
+          "memmove": 102997285
+        },
+        "server": {
+          "kernel": 3925077185,
+          "client-or-server-binary": 1843251328,
+          "libc-other": 69716416,
+          "memmove": 202221583
+        }
+      },
+      "weightedPercent": {
+        "client": {
+          "libc-other": 1.7101345574094156,
+          "client-or-server-binary": 26.532998586496,
+          "kernel": 70.0791178296263,
+          "memmove": 1.6777490264682844
+        },
+        "server": {
+          "kernel": 64.98185431391443,
+          "client-or-server-binary": 30.51605958674295,
+          "libc-other": 1.1541943697599548,
+          "memmove": 3.3478917295826762
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "sampleCount": {
+        "client": 568,
+        "server": 538
+      },
+      "weightedCycles": {
+        "client": {
+          "client-or-server-binary": 1783513750,
+          "kernel": 4207425851,
+          "libc-other": 86397265,
+          "memmove": 110964193
+        },
+        "server": {
+          "client-or-server-binary": 2033881012,
+          "memmove": 180466420,
+          "libc-other": 126414039,
+          "kernel": 3535804059
+        }
+      },
+      "weightedPercent": {
+        "client": {
+          "client-or-server-binary": 28.820733396707226,
+          "kernel": 67.98999936955072,
+          "libc-other": 1.3961386845319608,
+          "memmove": 1.7931285492101008
+        },
+        "server": {
+          "client-or-server-binary": 34.610028623300316,
+          "memmove": 3.0709505250765066,
+          "libc-other": 2.1511550982398386,
+          "kernel": 60.16786575338334
+        }
+      }
+    },
+    {
+      "slot": "block-01-slot-04-baseline",
+      "sampleCount": {
+        "client": 557,
+        "server": 483
+      },
+      "weightedCycles": {
+        "client": {
+          "kernel": 3847802332,
+          "client-or-server-binary": 1940739063,
+          "libc-other": 238859965,
+          "memmove": 241657499
+        },
+        "server": {
+          "kernel": 3144023366,
+          "client-or-server-binary": 1855152687,
+          "memmove": 112385401,
+          "libc-other": 21996521
+        }
+      },
+      "weightedPercent": {
+        "client": {
+          "kernel": 61.37767117110425,
+          "client-or-server-binary": 30.95742290270304,
+          "libc-other": 3.81014073040784,
+          "memmove": 3.8547651957848688
+        },
+        "server": {
+          "kernel": 61.244528284498436,
+          "client-or-server-binary": 36.13775662093307,
+          "memmove": 2.1892301898080735,
+          "libc-other": 0.42848490476042594
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-01-candidate",
+      "sampleCount": {
+        "client": 588,
+        "server": 570
+      },
+      "weightedCycles": {
+        "client": {
+          "memmove": 64137949,
+          "kernel": 4265611192,
+          "client-or-server-binary": 2002735101,
+          "libc-other": 99621687
+        },
+        "server": {
+          "memmove": 127115314,
+          "kernel": 4136642270,
+          "client-or-server-binary": 1934474377,
+          "libc-other": 49764795
+        }
+      },
+      "weightedPercent": {
+        "client": {
+          "memmove": 0.9971531829229612,
+          "kernel": 66.31748977839324,
+          "client-or-server-binary": 31.1365379100864,
+          "libc-other": 1.5488191285974078
+        },
+        "server": {
+          "memmove": 2.034497119063485,
+          "kernel": 66.20749708340598,
+          "client-or-server-binary": 30.96151378667585,
+          "libc-other": 0.7964920108546868
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-02-baseline",
+      "sampleCount": {
+        "client": 573,
+        "server": 486
+      },
+      "weightedCycles": {
+        "client": {
+          "client-or-server-binary": 1974728334,
+          "kernel": 3909202087,
+          "libc-other": 240554967,
+          "memmove": 255724751
+        },
+        "server": {
+          "kernel": 3197837993,
+          "client-or-server-binary": 1807076492,
+          "memmove": 148046910,
+          "libc-other": 84010007
+        }
+      },
+      "weightedPercent": {
+        "client": {
+          "client-or-server-binary": 30.950835332666777,
+          "kernel": 61.27074190087268,
+          "libc-other": 3.770329844303581,
+          "memmove": 4.008092922156964
+        },
+        "server": {
+          "kernel": 61.062735453906534,
+          "client-or-server-binary": 34.50613633883655,
+          "memmove": 2.8269566250344784,
+          "libc-other": 1.604171582222438
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-03-baseline",
+      "sampleCount": {
+        "server": 506,
+        "client": 563
+      },
+      "weightedCycles": {
+        "server": {
+          "client-or-server-binary": 1962338997,
+          "kernel": 3355926919,
+          "memmove": 167572084,
+          "libc-other": 25085709
+        },
+        "client": {
+          "client-or-server-binary": 2139846723,
+          "kernel": 3719191933,
+          "memmove": 132297607,
+          "libc-other": 219109406
+        }
+      },
+      "weightedPercent": {
+        "server": {
+          "client-or-server-binary": 35.60816844180341,
+          "kernel": 60.89590595346781,
+          "memmove": 3.040725890041531,
+          "libc-other": 0.45519971468724973
+        },
+        "client": {
+          "client-or-server-binary": 34.45560652243104,
+          "kernel": 59.88607148702197,
+          "memmove": 2.130243368207461,
+          "libc-other": 3.528078622339527
+        }
+      }
+    },
+    {
+      "slot": "block-02-slot-04-candidate",
+      "sampleCount": {
+        "server": 530,
+        "client": 539
+      },
+      "weightedCycles": {
+        "server": {
+          "kernel": 3922294151,
+          "client-or-server-binary": 1682556412,
+          "libc-other": 73618059,
+          "memmove": 103192743
+        },
+        "client": {
+          "client-or-server-binary": 1828949280,
+          "kernel": 3948267486,
+          "memmove": 116099726,
+          "libc-other": 49517110
+        }
+      },
+      "weightedPercent": {
+        "server": {
+          "kernel": 67.84026084170358,
+          "client-or-server-binary": 29.101607752151704,
+          "libc-other": 1.2733028510741913,
+          "memmove": 1.7848285550705199
+        },
+        "client": {
+          "client-or-server-binary": 30.775710754958475,
+          "kernel": 66.4374564462187,
+          "memmove": 1.9536088972931671,
+          "libc-other": 0.8332239015296595
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-01-baseline",
+      "sampleCount": {
+        "server": 474,
+        "client": 569
+      },
+      "weightedCycles": {
+        "server": {
+          "client-or-server-binary": 1746428629,
+          "memmove": 166779970,
+          "kernel": 3003592328,
+          "libc-other": 25044698
+        },
+        "client": {
+          "client-or-server-binary": 1993028645,
+          "kernel": 3938739581,
+          "libc-other": 293391314,
+          "memmove": 128619243
+        }
+      },
+      "weightedPercent": {
+        "server": {
+          "client-or-server-binary": 35.33960308604338,
+          "memmove": 3.374851880364029,
+          "kernel": 60.77875668161933,
+          "libc-other": 0.506788351973257
+        },
+        "client": {
+          "client-or-server-binary": 31.367611512262496,
+          "kernel": 61.99050542235411,
+          "libc-other": 4.61758780121508,
+          "memmove": 2.024295264168312
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-02-candidate",
+      "sampleCount": {
+        "client": 560,
+        "server": 540
+      },
+      "weightedCycles": {
+        "client": {
+          "client-or-server-binary": 2079914138,
+          "kernel": 3851104806,
+          "memmove": 148681391,
+          "libc-other": 94897130
+        },
+        "server": {
+          "client-or-server-binary": 1841706950,
+          "kernel": 3888649052,
+          "libc-other": 48803163,
+          "memmove": 81217279
+        }
+      },
+      "weightedPercent": {
+        "client": {
+          "client-or-server-binary": 33.68501590249009,
+          "kernel": 62.37013550809664,
+          "memmove": 2.4079527749425527,
+          "libc-other": 1.536895814470717
+        },
+        "server": {
+          "client-or-server-binary": 31.426427424906905,
+          "kernel": 66.3549362256634,
+          "libc-other": 0.8327649847471129,
+          "memmove": 1.3858713646825926
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-03-candidate",
+      "sampleCount": {
+        "server": 535,
+        "client": 544
+      },
+      "weightedCycles": {
+        "server": {
+          "kernel": 3653993288,
+          "client-or-server-binary": 1921410367,
+          "memmove": 148371786,
+          "libc-other": 83329636
+        },
+        "client": {
+          "client-or-server-binary": 1872923216,
+          "kernel": 3766712531,
+          "memmove": 140227642,
+          "libc-other": 92041489
+        }
+      },
+      "weightedPercent": {
+        "server": {
+          "kernel": 62.92280300682425,
+          "client-or-server-binary": 33.08723264901928,
+          "memmove": 2.555004327158656,
+          "libc-other": 1.4349600169978118
+        },
+        "client": {
+          "client-or-server-binary": 31.89634803208745,
+          "kernel": 64.1480509180687,
+          "memmove": 2.3881116079619162,
+          "libc-other": 1.5674894418819296
+        }
+      }
+    },
+    {
+      "slot": "block-03-slot-04-baseline",
+      "sampleCount": {
+        "server": 461,
+        "client": 545
+      },
+      "weightedCycles": {
+        "server": {
+          "memmove": 154400541,
+          "client-or-server-binary": 1820339847,
+          "kernel": 2847367373,
+          "libc-other": 57185983
+        },
+        "client": {
+          "kernel": 3768241908,
+          "client-or-server-binary": 1810488774,
+          "memmove": 242026432,
+          "libc-other": 273821993
+        }
+      },
+      "weightedPercent": {
+        "server": {
+          "memmove": 3.1644034792917357,
+          "client-or-server-binary": 37.307445349820284,
+          "kernel": 58.356137637775305,
+          "libc-other": 1.1720135331126726
+        },
+        "client": {
+          "kernel": 61.82940350502534,
+          "client-or-server-binary": 29.706543179012016,
+          "memmove": 3.971175494662424,
+          "libc-other": 4.49287782130022
+        }
+      }
+    }
+  ]
+}
