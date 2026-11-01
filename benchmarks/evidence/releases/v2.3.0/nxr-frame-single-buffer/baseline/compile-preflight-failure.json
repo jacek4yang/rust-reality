@@ -1,0 +1,7 @@
+{
+  "stage": "driver compile before measurement",
+  "error": "E0514: scratch cwd selected rustc 1.96.0 while repository rlib uses pinned 1.99.1",
+  "samplesCollected": 0,
+  "correction": "Use repository cwd/toolchain and explicit release/deps search path; no product or metric change",
+  "secondFailure": "Driver default unwind conflicts with release panic=abort; align driver panic strategy."
+}

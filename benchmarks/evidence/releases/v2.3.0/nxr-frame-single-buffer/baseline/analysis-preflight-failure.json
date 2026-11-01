@@ -1,0 +1,5 @@
+{
+  "error": "heaptrack_print print-allocators is Boolean, not count; 10 rejected before analysis",
+  "correction": "Use print-allocators=1 with documented default peak-limit=10. Retain existing zero-iteration trace and analyze it; do not recollect or pool it.",
+  "completedTrace": "none-64-0.gz.zst"
+}
