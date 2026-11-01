@@ -87,12 +87,19 @@ pub fn encode_frame(
         return Err(NxrUdpError::Direction);
     }
 
-    let dest_bytes = match destination {
-        Some(dest) => Some(encode_destination(dest)?),
-        None => None,
-    };
-    let flags = u8::from(dest_bytes.is_some()) * FRAME_FLAG_DESTINATION;
-    let dest_len = dest_bytes.as_ref().map_or(0, Vec::len);
+    // Validate every fallible field before modifying the caller's buffer.
+    let destination_shape = destination
+        .map(|dest| {
+            let (kind, len) = address_shape(dest.address())?;
+            if dest.port() == 0 {
+                return Err(NxrUdpError::Port);
+            }
+            let len = u16::try_from(len).map_err(|_| NxrUdpError::Address)?;
+            Ok((kind, len))
+        })
+        .transpose()?;
+    let flags = u8::from(destination.is_some()) * FRAME_FLAG_DESTINATION;
+    let dest_len = destination_shape.map_or(0, |(_, len)| 5 + usize::from(len));
     let body_len = 1_usize
         .checked_add(1)
         .and_then(|n| n.checked_add(4))
@@ -104,34 +111,33 @@ pub fn encode_frame(
         return Err(NxrUdpError::Length);
     }
 
-    let mut body = Vec::new();
-    body.try_reserve_exact(body_len)
-        .map_err(|_| NxrUdpError::Allocation)?;
-    body.push(frame_type);
-    body.push(flags);
-    body.extend_from_slice(&seq.to_be_bytes());
-    if let Some(bytes) = &dest_bytes {
-        body.extend_from_slice(bytes);
-    }
     let payload_len = u16::try_from(payload.len()).map_err(|_| NxrUdpError::Payload)?;
-    body.extend_from_slice(&payload_len.to_be_bytes());
-    body.extend_from_slice(payload);
-
-    let tag = session.frame_tag(direction, &body);
     let wire_len = FRAME_LEN_SIZE
-        .checked_add(body.len())
+        .checked_add(body_len)
         .and_then(|n| n.checked_add(SESSION_TAG_LEN))
         .ok_or(NxrUdpError::Length)?;
+    let body_len = u32::try_from(body_len).map_err(|_| NxrUdpError::Length)?;
     output.clear();
     output
         .try_reserve_exact(wire_len)
         .map_err(|_| NxrUdpError::Allocation)?;
-    output.extend_from_slice(
-        &u32::try_from(body.len())
-            .map_err(|_| NxrUdpError::Length)?
-            .to_be_bytes(),
-    );
-    output.extend_from_slice(&body);
+    output.extend_from_slice(&body_len.to_be_bytes());
+    output.push(frame_type);
+    output.push(flags);
+    output.extend_from_slice(&seq.to_be_bytes());
+    if let (Some(dest), Some((kind, len))) = (destination, destination_shape) {
+        output.push(kind);
+        output.extend_from_slice(&len.to_be_bytes());
+        output.extend_from_slice(&dest.port().to_be_bytes());
+        match dest.address() {
+            Address::Ipv4(address) => output.extend_from_slice(&address.octets()),
+            Address::Domain(domain) => output.extend_from_slice(domain.as_bytes()),
+            Address::Ipv6(address) => output.extend_from_slice(&address.octets()),
+        }
+    }
+    output.extend_from_slice(&payload_len.to_be_bytes());
+    output.extend_from_slice(payload);
+    let tag = session.frame_tag(direction, &output[FRAME_LEN_SIZE..]);
     output.extend_from_slice(&tag);
     Ok(())
 }
@@ -252,27 +258,6 @@ fn parse_frame_body(body: &[u8]) -> Result<NxrUdpFrame, NxrUdpError> {
         destination,
         payload: body[offset..end].to_vec(),
     })
-}
-
-fn encode_destination(destination: &Destination) -> Result<Vec<u8>, NxrUdpError> {
-    let (address_type, address_length) = address_shape(destination.address())?;
-    if destination.port() == 0 {
-        return Err(NxrUdpError::Port);
-    }
-    let mut out = Vec::with_capacity(5 + address_length);
-    out.push(address_type);
-    out.extend_from_slice(
-        &u16::try_from(address_length)
-            .map_err(|_| NxrUdpError::Address)?
-            .to_be_bytes(),
-    );
-    out.extend_from_slice(&destination.port().to_be_bytes());
-    match destination.address() {
-        Address::Ipv4(address) => out.extend_from_slice(&address.octets()),
-        Address::Domain(domain) => out.extend_from_slice(domain.as_bytes()),
-        Address::Ipv6(address) => out.extend_from_slice(&address.octets()),
-    }
-    Ok(out)
 }
 
 fn decode_destination(input: &[u8]) -> Result<(Destination, usize), NxrUdpError> {
@@ -402,6 +387,76 @@ mod sequence_exhaustion_tests {
         assert_eq!(sequence.next_out(), Ok(u32::MAX));
         for _ in 0..3 {
             assert_eq!(sequence.next_out(), Err(NxrUdpError::Sequence));
+        }
+    }
+}
+
+#[cfg(test)]
+mod encoder_storage_tests {
+    use super::*;
+    use crate::protocol::nxr_udp::MAX_FRAME_WIRE_LEN;
+
+    #[test]
+    fn frame_writer_preserves_frozen_wire_and_reuses_storage() {
+        // Captured from the qualified pre-optimization writer at 54c204af.
+        let expected = [
+            0x00, 0x00, 0x00, 0x15, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x01,
+            0xbb, 0xc0, 0x00, 0x02, 0x01, 0x00, 0x04, 0x5a, 0x5a, 0x5a, 0x5a, 0xa4, 0x8c, 0xf2,
+            0x9c, 0x1f, 0x30, 0xc5, 0xbf, 0xdf, 0x03, 0x05, 0xe2, 0x7c, 0xee, 0xe5, 0xa0, 0xb4,
+            0x9d, 0x31, 0x7c, 0x12, 0x72, 0x12, 0xa1, 0xc6, 0x93, 0xd5, 0x69, 0x0d, 0xfd, 0x0f,
+            0xcf,
+        ];
+        let session = NxrUdpSessionKey::derive(
+            &NxrKey::new([0x33; 32]),
+            b"local-synthetic-allocation-probe",
+        );
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::new(192, 0, 2, 1)), 443);
+        let mut output = Vec::with_capacity(MAX_FRAME_WIRE_LEN);
+        let pointer = output.as_ptr();
+        for length in [NXR_UDP_MAX_PAYLOAD, 4, 0, 4] {
+            let payload = vec![0x5a; length];
+            encode_frame(
+                &session,
+                DIR_LINE_TO_LANDING,
+                FRAME_TYPE_DATAGRAM,
+                0,
+                Some(&destination),
+                &payload,
+                &mut output,
+            )
+            .unwrap();
+            assert_eq!(output.as_ptr(), pointer);
+            let (decoded, consumed) = decode_frame(&output, &session, DIR_LINE_TO_LANDING).unwrap();
+            assert_eq!(consumed, output.len());
+            assert_eq!(decoded.payload, payload);
+            if length == 4 {
+                assert_eq!(output, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_destination_preserves_previous_output() {
+        let session = NxrUdpSessionKey::derive(&NxrKey::new([0x33; 32]), b"invalid-input");
+        for destination in [
+            Destination::new(Address::Domain(String::new()), 443),
+            Destination::new(Address::Domain("a".repeat(MAX_DOMAIN_LEN + 1)), 443),
+            Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 0),
+        ] {
+            let mut output = vec![0xa5; 100];
+            assert!(
+                encode_frame(
+                    &session,
+                    DIR_LINE_TO_LANDING,
+                    FRAME_TYPE_DATAGRAM,
+                    0,
+                    Some(&destination),
+                    b"payload",
+                    &mut output
+                )
+                .is_err()
+            );
+            assert_eq!(output, [0xa5; 100]);
         }
     }
 }

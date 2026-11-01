@@ -1,0 +1,242 @@
+[
+  {
+    "case": "none",
+    "payloadBytes": 64,
+    "iterations": 0,
+    "allocationCalls": 21,
+    "trace": "none-64-0.gz.zst",
+    "traceSha256": "32abf82fd332a0caf890678f2bb5b7b61e93866f52725efefca0ad1eaf33a545"
+  },
+  {
+    "case": "none",
+    "payloadBytes": 64,
+    "iterations": 10000,
+    "allocationCalls": 10021,
+    "trace": "none-64-10000.gz.zst",
+    "traceSha256": "280e93997aa0377385fecbc819d995780fb3e950307ef9df05d8563a1536ab4b"
+  },
+  {
+    "case": "none",
+    "payloadBytes": 1200,
+    "iterations": 0,
+    "allocationCalls": 21,
+    "trace": "none-1200-0.gz.zst",
+    "traceSha256": "96cd6a7a2361a320f5a1adc5ea21b245f18ebdabde4e6688f9f8d8a186a62ef3"
+  },
+  {
+    "case": "none",
+    "payloadBytes": 1200,
+    "iterations": 10000,
+    "allocationCalls": 10021,
+    "trace": "none-1200-10000.gz.zst",
+    "traceSha256": "ee10b867325ad4270888edf2396d39d3e0eea6cf67c02df40365328ef1298916"
+  },
+  {
+    "case": "none",
+    "payloadBytes": 7526,
+    "iterations": 0,
+    "allocationCalls": 21,
+    "trace": "none-7526-0.gz.zst",
+    "traceSha256": "ed3136f2fafa8f17c31f75019a1f2f5ad87c3fb471162d3d41ae84454fa1fbc6"
+  },
+  {
+    "case": "none",
+    "payloadBytes": 7526,
+    "iterations": 10000,
+    "allocationCalls": 10021,
+    "trace": "none-7526-10000.gz.zst",
+    "traceSha256": "e54b28e1c8391fb636f6b26f8174ec6a24bbc6d7b42c717020799b8c88a48d8d"
+  },
+  {
+    "case": "ipv4",
+    "payloadBytes": 64,
+    "iterations": 0,
+    "allocationCalls": 22,
+    "trace": "ipv4-64-0.gz.zst",
+    "traceSha256": "de776612dc93d82739d7f211ff109db304b3f73f9708c3248363946160e9ae8f"
+  },
+  {
+    "case": "ipv4",
+    "payloadBytes": 64,
+    "iterations": 10000,
+    "allocationCalls": 20022,
+    "trace": "ipv4-64-10000.gz.zst",
+    "traceSha256": "ae7f61c370059015b0a9c0a7409819768924e218eee0c91e7541e837dc092899"
+  },
+  {
+    "case": "ipv4",
+    "payloadBytes": 1200,
+    "iterations": 0,
+    "allocationCalls": 22,
+    "trace": "ipv4-1200-0.gz.zst",
+    "traceSha256": "de7ccccf5952ce3a4cdff12e085723b60a182fa2d5c3ffb5e3ef18d4b0bf14bf"
+  },
+  {
+    "case": "ipv4",
+    "payloadBytes": 1200,
+    "iterations": 10000,
+    "allocationCalls": 20022,
+    "trace": "ipv4-1200-10000.gz.zst",
+    "traceSha256": "ec6541ddab535981e3d6dce44856d8687b82a3e39c4b3a998100422ac377762a"
+  },
+  {
+    "case": "ipv4",
+    "payloadBytes": 7526,
+    "iterations": 0,
+    "allocationCalls": 22,
+    "trace": "ipv4-7526-0.gz.zst",
+    "traceSha256": "71aca057f6a13b404ab427e39ecc531abe7818210908a9a6a6aa4059e694bafc"
+  },
+  {
+    "case": "ipv4",
+    "payloadBytes": 7526,
+    "iterations": 10000,
+    "allocationCalls": 20022,
+    "trace": "ipv4-7526-10000.gz.zst",
+    "traceSha256": "55596c26aa6122930bc94e0bc81f935860a127dbee32b50735abe7038004c361"
+  },
+  {
+    "case": "ipv6",
+    "payloadBytes": 64,
+    "iterations": 0,
+    "allocationCalls": 22,
+    "trace": "ipv6-64-0.gz.zst",
+    "traceSha256": "bb4d6f9a86fbc192d9483c4a89c892cc23f8308b65e18cf1a6c8ba5b6df1e790"
+  },
+  {
+    "case": "ipv6",
+    "payloadBytes": 64,
+    "iterations": 10000,
+    "allocationCalls": 20022,
+    "trace": "ipv6-64-10000.gz.zst",
+    "traceSha256": "473dcbb6e4041dca22edd143c33ce836f26d7fcca8901e46ce1cda064d9d7402"
+  },
+  {
+    "case": "ipv6",
+    "payloadBytes": 1200,
+    "iterations": 0,
+    "allocationCalls": 22,
+    "trace": "ipv6-1200-0.gz.zst",
+    "traceSha256": "9cd667c111e6f7976ba29fd77bbb6ed06a8a8ff937800ed4647ded0bd83fc157"
+  },
+  {
+    "case": "ipv6",
+    "payloadBytes": 1200,
+    "iterations": 10000,
+    "allocationCalls": 20022,
+    "trace": "ipv6-1200-10000.gz.zst",
+    "traceSha256": "f612c54b96b772e8d63d3fae343813e4f643a0304ddff93cef39c96cd6959d9a"
+  },
+  {
+    "case": "ipv6",
+    "payloadBytes": 7526,
+    "iterations": 0,
+    "allocationCalls": 22,
+    "trace": "ipv6-7526-0.gz.zst",
+    "traceSha256": "4146d6c8bda3edecb21426e908e6f4dfa16436501e299aae124e9ec1051e1970"
+  },
+  {
+    "case": "ipv6",
+    "payloadBytes": 7526,
+    "iterations": 10000,
+    "allocationCalls": 20022,
+    "trace": "ipv6-7526-10000.gz.zst",
+    "traceSha256": "16ecf2780633983f472b1395ecdda7c356c1ba95c509fde599019696540fa414"
+  },
+  {
+    "case": "domain",
+    "payloadBytes": 64,
+    "iterations": 0,
+    "allocationCalls": 24,
+    "trace": "domain-64-0.gz.zst",
+    "traceSha256": "5e8aed879e5d53dac00cf6dbf25aafb5b774193c3047ffabdac3d4a47d684dc8"
+  },
+  {
+    "case": "domain",
+    "payloadBytes": 64,
+    "iterations": 10000,
+    "allocationCalls": 20024,
+    "trace": "domain-64-10000.gz.zst",
+    "traceSha256": "02b1a5fc58007e80bb5c5b4a26807cae2638488eb3abbd5cab4709800dd99c0a"
+  },
+  {
+    "case": "domain",
+    "payloadBytes": 1200,
+    "iterations": 0,
+    "allocationCalls": 24,
+    "trace": "domain-1200-0.gz.zst",
+    "traceSha256": "02d6d0ce9714c70b63488298419079dd852c852f6026914931941120fbb97500"
+  },
+  {
+    "case": "domain",
+    "payloadBytes": 1200,
+    "iterations": 10000,
+    "allocationCalls": 20024,
+    "trace": "domain-1200-10000.gz.zst",
+    "traceSha256": "975cd81e7defc418e8294bd5ae176d516831ada58298a0ec35fbbd5cf4120212"
+  },
+  {
+    "case": "domain",
+    "payloadBytes": 7526,
+    "iterations": 0,
+    "allocationCalls": 24,
+    "trace": "domain-7526-0.gz.zst",
+    "traceSha256": "4bf109eaad6913eff79b358a85dc8653db19ee2a4dec18f894779ed631969a6e"
+  },
+  {
+    "case": "domain",
+    "payloadBytes": 7526,
+    "iterations": 10000,
+    "allocationCalls": 20024,
+    "trace": "domain-7526-10000.gz.zst",
+    "traceSha256": "3892ea09d6f1a55ab6004ae6ce732ce987e001884ea10e4ca520fb6dda962a4e"
+  },
+  {
+    "case": "maximum-domain",
+    "payloadBytes": 64,
+    "iterations": 0,
+    "allocationCalls": 24,
+    "trace": "maximum-domain-64-0.gz.zst",
+    "traceSha256": "c9238f2603720e9bc899651e8a4b66884ff49f0b7b7e7eaacd769438f142bbbc"
+  },
+  {
+    "case": "maximum-domain",
+    "payloadBytes": 64,
+    "iterations": 10000,
+    "allocationCalls": 20024,
+    "trace": "maximum-domain-64-10000.gz.zst",
+    "traceSha256": "4c514805166714ca722f6cafbc6aeeb557e60cc0e53e6d1869b60a30b5891a67"
+  },
+  {
+    "case": "maximum-domain",
+    "payloadBytes": 1200,
+    "iterations": 0,
+    "allocationCalls": 24,
+    "trace": "maximum-domain-1200-0.gz.zst",
+    "traceSha256": "1ae06d22c6fcd6905b6d01eaff88335baee52ad67a0dc167b4e5f0637117861b"
+  },
+  {
+    "case": "maximum-domain",
+    "payloadBytes": 1200,
+    "iterations": 10000,
+    "allocationCalls": 20024,
+    "trace": "maximum-domain-1200-10000.gz.zst",
+    "traceSha256": "c02b6aeb6548fb2213ded07605a57a1e970fb173dc0fafe3db76b4f4fff774b0"
+  },
+  {
+    "case": "maximum-domain",
+    "payloadBytes": 7526,
+    "iterations": 0,
+    "allocationCalls": 24,
+    "trace": "maximum-domain-7526-0.gz.zst",
+    "traceSha256": "12d5d96132fec96e840efdaefdac07bb46e63198c0b273cdb7253723d16d69e4"
+  },
+  {
+    "case": "maximum-domain",
+    "payloadBytes": 7526,
+    "iterations": 10000,
+    "allocationCalls": 20024,
+    "trace": "maximum-domain-7526-10000.gz.zst",
+    "traceSha256": "cc531db4a2849f10c48d03057da348021a85322ab5577322e9cb88ce4307e1f8"
+  }
+]

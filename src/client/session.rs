@@ -1,5 +1,5 @@
 //! TCP relay over one authenticated LINE, preserving each half-close.
-use super::vision_io::{VisionIo, VisionTunnelError};
+use super::vision_io::{UPLOAD_RECORD_PAYLOAD, VisionIo, VisionTunnelError, read_upload};
 use crate::protocol::{
     reality::{
         ClientSession,
@@ -7,9 +7,7 @@ use crate::protocol::{
     },
     vless::{Destination, UserId, encode_vision_tcp_request},
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-
-const UPLOAD_RECORD_PAYLOAD: usize = 2 * (crate::protocol::vless::VISION_FRAME_SIZE - 5);
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// Bidirectional Vision tunnel to a destination through an entry.
 pub struct VisionTunnel {
@@ -32,11 +30,11 @@ impl VisionTunnel {
         Ok(Self { io })
     }
 
-    /// Relays application bytes between a local SOCKS stream and this tunnel.
-    pub async fn relay<S>(&mut self, local: &mut S) -> Result<(), VisionTunnelError>
-    where
-        S: AsyncRead + AsyncWrite + Unpin,
-    {
+    /// Relays application bytes between a local TCP stream and this tunnel.
+    pub async fn relay(
+        &mut self,
+        local: &mut tokio::net::TcpStream,
+    ) -> Result<(), VisionTunnelError> {
         // Reuse the writer's allocation for local reads and final AEAD slots.
         // A full read enables the second slot for two available records.
         let mut local_buf = self.io.take_upload_storage();
@@ -47,7 +45,6 @@ impl VisionTunnel {
             .try_reserve_exact((2 * initial_capacity).saturating_sub(local_buf.len()))
             .map_err(|_| VisionTunnelError::Io(std::io::ErrorKind::OutOfMemory.into()))?;
         local_buf.resize(initial_capacity, 0);
-        let mut read_limit = UPLOAD_RECORD_PAYLOAD;
         let mut upload_open = true;
         let mut download_open = true;
         let activity = self.io.activity.clone();
@@ -82,7 +79,7 @@ impl VisionTunnel {
                         }
                     }
                 }
-                read = local.read(&mut local_buf[..read_limit]), if upload_open => {
+                read = read_upload(local, &mut local_buf), if upload_open => {
                     let n = read.map_err(VisionTunnelError::Io)?;
                     if n == 0 {
                         self.io.shutdown().await?;
@@ -91,8 +88,7 @@ impl VisionTunnel {
                         continue;
                     }
                     self.io.write_upload(&mut local_buf, n).await?;
-                    if n == UPLOAD_RECORD_PAYLOAD && read_limit == UPLOAD_RECORD_PAYLOAD {
-                        read_limit = 2 * UPLOAD_RECORD_PAYLOAD;
+                    if n == UPLOAD_RECORD_PAYLOAD && local_buf.len() == initial_capacity {
                         let capacity = 2 * crate::protocol::reality::tls13::RECORD_SLOT_WIRE_CAPACITY;
                         if local_buf.len() < capacity {
                             local_buf.try_reserve_exact(capacity - local_buf.len())
@@ -131,6 +127,7 @@ fn local_io_failure(error: IdleError) -> VisionTunnelError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test(start_paused = true)]
     async fn local_reader_stall_expires_after_partial_progress() {

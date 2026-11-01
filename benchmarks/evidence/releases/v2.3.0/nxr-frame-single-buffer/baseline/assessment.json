@@ -1,0 +1,95 @@
+{
+  "scope": "Diagnostic only; not latency or full-session allocation evidence",
+  "cases": [
+    {
+      "case": "none",
+      "payloadBytes": 64,
+      "incrementalAllocationCalls": 10000,
+      "callsPerEncode": 1.0
+    },
+    {
+      "case": "none",
+      "payloadBytes": 1200,
+      "incrementalAllocationCalls": 10000,
+      "callsPerEncode": 1.0
+    },
+    {
+      "case": "none",
+      "payloadBytes": 7526,
+      "incrementalAllocationCalls": 10000,
+      "callsPerEncode": 1.0
+    },
+    {
+      "case": "ipv4",
+      "payloadBytes": 64,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "ipv4",
+      "payloadBytes": 1200,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "ipv4",
+      "payloadBytes": 7526,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "ipv6",
+      "payloadBytes": 64,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "ipv6",
+      "payloadBytes": 1200,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "ipv6",
+      "payloadBytes": 7526,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "domain",
+      "payloadBytes": 64,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "domain",
+      "payloadBytes": 1200,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "domain",
+      "payloadBytes": 7526,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "maximum-domain",
+      "payloadBytes": 64,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "maximum-domain",
+      "payloadBytes": 1200,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    },
+    {
+      "case": "maximum-domain",
+      "payloadBytes": 7526,
+      "incrementalAllocationCalls": 20000,
+      "callsPerEncode": 2.0
+    }
+  ]
+}
