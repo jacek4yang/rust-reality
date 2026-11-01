@@ -1,0 +1,108 @@
+{
+  "scope": "Eight instrumented process runs; allocation-function calls include startup and full connection lifecycle. No CPU/throughput/RSS acceptance or leak/zero-steady-state-allocation claim.",
+  "source": "76dd5448fbdd488f2d1cfa8b03a6ff8e7ef51506",
+  "rows": [
+    {
+      "name": "r1-baseline",
+      "allocationCalls": 11697,
+      "callsPerConnectionIncludingStartupAndCleanup": 91.3828125,
+      "peakHeapText": "17.88M",
+      "traceSha256": "5ee7218dbb5bbe2e41006ec4b307aea31d271891ffafe14f37f769d6705acc83",
+      "analysisSha256": "b90f5503567cdc5b3aaf94a8b24ee97878100465240bce61e3550af75c53eb7a",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    },
+    {
+      "name": "r1-candidate",
+      "allocationCalls": 11823,
+      "callsPerConnectionIncludingStartupAndCleanup": 92.3671875,
+      "peakHeapText": "9.29M",
+      "traceSha256": "07f597eff0653bf2cbb29a028dab6c825ca2ebd01d4797ff5e6d29380bba581f",
+      "analysisSha256": "17d88f006d577047679296b837da225a5a78e85b59d89decbcebe793ff2eb6b6",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    },
+    {
+      "name": "r2-baseline",
+      "allocationCalls": 11707,
+      "callsPerConnectionIncludingStartupAndCleanup": 91.4609375,
+      "peakHeapText": "17.88M",
+      "traceSha256": "b40f727047445c20577788d30a5681e032494c17045d8fa0dcfcffe868d8cafd",
+      "analysisSha256": "bb1c686a11fe4092efd9e519df1c8581654b11fc0b36cf8414d539d6c92a4152",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    },
+    {
+      "name": "r2-candidate",
+      "allocationCalls": 11833,
+      "callsPerConnectionIncludingStartupAndCleanup": 92.4453125,
+      "peakHeapText": "9.29M",
+      "traceSha256": "ce7e55707da714ed31a92bdc3fe5b1815bcbae54a9b5a6d7849995a6cd2777f5",
+      "analysisSha256": "82d6994f126050085f73f886a880b304da2cb30201a88574a60ba6f0f26e9feb",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    },
+    {
+      "name": "r3-baseline",
+      "allocationCalls": 11693,
+      "callsPerConnectionIncludingStartupAndCleanup": 91.3515625,
+      "peakHeapText": "17.88M",
+      "traceSha256": "f75335472f993569161988e13643880efa32459c46fa20e2f04580b59151fc89",
+      "analysisSha256": "3a65691667b28f8e2ea540e905d371a583facf95d0215750f7c46ae02a1ae914",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    },
+    {
+      "name": "r3-candidate",
+      "allocationCalls": 11833,
+      "callsPerConnectionIncludingStartupAndCleanup": 92.4453125,
+      "peakHeapText": "9.29M",
+      "traceSha256": "89dfbc028ee4045b42451d04408c714e42290e041639a9b6baefd0d6277661fc",
+      "analysisSha256": "899106b8da1298ed69503777d0009a8cb1b5016882738a108b250c08e9e7c964",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    },
+    {
+      "name": "r4-baseline",
+      "allocationCalls": 11705,
+      "callsPerConnectionIncludingStartupAndCleanup": 91.4453125,
+      "peakHeapText": "17.88M",
+      "traceSha256": "901032364a16cb1016a35df1f644417a6dfe13c3af925eb5b6fc409868a2b395",
+      "analysisSha256": "8606b6ff1e6d87fc08bdfcace46ff5d0c5866f033862671d742e51db9c5f62fb",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    },
+    {
+      "name": "r4-candidate",
+      "allocationCalls": 11825,
+      "callsPerConnectionIncludingStartupAndCleanup": 92.3828125,
+      "peakHeapText": "9.29M",
+      "traceSha256": "d901d40baa49d2479d2b5336bf644df82834dd886c6339958787808c13059fc4",
+      "analysisSha256": "13c1a5f3e56733970fda15c6711601a6436115727dcdfd5c0fca825447d13471",
+      "fdBefore": 14,
+      "fdAfter": 14,
+      "wrapperExit": 143
+    }
+  ],
+  "pairedCandidateBaselineRatios": [
+    1.0107719928186714,
+    1.0107627914922697,
+    1.0119729752843583,
+    1.0102520290474157
+  ],
+  "medianRatio": 1.0107673921554705,
+  "maximumRatio": 1.0119729752843583,
+  "diagnosticGuard": 1.05,
+  "diagnosticResult": "NO_OBSERVED_INCREASE_OVER_5_PERCENT",
+  "verifiedTransfers": 3072,
+  "verifiedPutReceipts": 1024,
+  "fdRecoveryRuns": 8,
+  "failedAttempt": "Separate attempt1 fixture assertion failure retained; not pooled."
+}

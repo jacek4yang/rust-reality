@@ -1,0 +1,968 @@
+{
+  "scope": "Descriptive residency observations from the completed uninstrumented 80-slot performance campaign, after earlier traffic in each process. Increment is held-128 minus held-0, not an allocation-count or cold per-connection size claim. No timing or long-term leak verdict inferred from these snapshots.",
+  "unit": "KiB",
+  "rows": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22328,
+      "anonymousHeld128KiB": 33676,
+      "incrementPerHeldConnectionKiB": 88.65625
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7932,
+      "anonymousHeld128KiB": 13256,
+      "incrementPerHeldConnectionKiB": 41.59375
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9404,
+      "anonymousHeld128KiB": 14132,
+      "incrementPerHeldConnectionKiB": 36.9375
+    },
+    {
+      "slot": "block-01-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 27424,
+      "anonymousHeld128KiB": 35664,
+      "incrementPerHeldConnectionKiB": 64.375
+    },
+    {
+      "slot": "block-02-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9640,
+      "anonymousHeld128KiB": 13744,
+      "incrementPerHeldConnectionKiB": 32.0625
+    },
+    {
+      "slot": "block-02-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 23496,
+      "anonymousHeld128KiB": 34456,
+      "incrementPerHeldConnectionKiB": 85.625
+    },
+    {
+      "slot": "block-02-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25416,
+      "anonymousHeld128KiB": 37032,
+      "incrementPerHeldConnectionKiB": 90.75
+    },
+    {
+      "slot": "block-02-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8480,
+      "anonymousHeld128KiB": 12216,
+      "incrementPerHeldConnectionKiB": 29.1875
+    },
+    {
+      "slot": "block-03-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 27688,
+      "anonymousHeld128KiB": 38452,
+      "incrementPerHeldConnectionKiB": 84.09375
+    },
+    {
+      "slot": "block-03-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 10380,
+      "anonymousHeld128KiB": 15484,
+      "incrementPerHeldConnectionKiB": 39.875
+    },
+    {
+      "slot": "block-03-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9512,
+      "anonymousHeld128KiB": 14356,
+      "incrementPerHeldConnectionKiB": 37.84375
+    },
+    {
+      "slot": "block-03-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26444,
+      "anonymousHeld128KiB": 36016,
+      "incrementPerHeldConnectionKiB": 74.78125
+    },
+    {
+      "slot": "block-04-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9040,
+      "anonymousHeld128KiB": 13456,
+      "incrementPerHeldConnectionKiB": 34.5
+    },
+    {
+      "slot": "block-04-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 30060,
+      "anonymousHeld128KiB": 39464,
+      "incrementPerHeldConnectionKiB": 73.46875
+    },
+    {
+      "slot": "block-04-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 18192,
+      "anonymousHeld128KiB": 29536,
+      "incrementPerHeldConnectionKiB": 88.625
+    },
+    {
+      "slot": "block-04-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 6916,
+      "anonymousHeld128KiB": 12372,
+      "incrementPerHeldConnectionKiB": 42.625
+    },
+    {
+      "slot": "block-05-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19916,
+      "anonymousHeld128KiB": 30112,
+      "incrementPerHeldConnectionKiB": 79.65625
+    },
+    {
+      "slot": "block-05-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9436,
+      "anonymousHeld128KiB": 14128,
+      "incrementPerHeldConnectionKiB": 36.65625
+    },
+    {
+      "slot": "block-05-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 11416,
+      "anonymousHeld128KiB": 16816,
+      "incrementPerHeldConnectionKiB": 42.1875
+    },
+    {
+      "slot": "block-05-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 22032,
+      "anonymousHeld128KiB": 33688,
+      "incrementPerHeldConnectionKiB": 91.0625
+    },
+    {
+      "slot": "block-06-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9276,
+      "anonymousHeld128KiB": 14284,
+      "incrementPerHeldConnectionKiB": 39.125
+    },
+    {
+      "slot": "block-06-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24036,
+      "anonymousHeld128KiB": 33116,
+      "incrementPerHeldConnectionKiB": 70.9375
+    },
+    {
+      "slot": "block-06-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19160,
+      "anonymousHeld128KiB": 29392,
+      "incrementPerHeldConnectionKiB": 79.9375
+    },
+    {
+      "slot": "block-06-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8472,
+      "anonymousHeld128KiB": 13548,
+      "incrementPerHeldConnectionKiB": 39.65625
+    },
+    {
+      "slot": "block-07-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 27704,
+      "anonymousHeld128KiB": 38908,
+      "incrementPerHeldConnectionKiB": 87.53125
+    },
+    {
+      "slot": "block-07-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8164,
+      "anonymousHeld128KiB": 13108,
+      "incrementPerHeldConnectionKiB": 38.625
+    },
+    {
+      "slot": "block-07-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 11108,
+      "anonymousHeld128KiB": 15448,
+      "incrementPerHeldConnectionKiB": 33.90625
+    },
+    {
+      "slot": "block-07-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19560,
+      "anonymousHeld128KiB": 30172,
+      "incrementPerHeldConnectionKiB": 82.90625
+    },
+    {
+      "slot": "block-08-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9600,
+      "anonymousHeld128KiB": 13300,
+      "incrementPerHeldConnectionKiB": 28.90625
+    },
+    {
+      "slot": "block-08-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 23724,
+      "anonymousHeld128KiB": 33544,
+      "incrementPerHeldConnectionKiB": 76.71875
+    },
+    {
+      "slot": "block-08-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 27076,
+      "anonymousHeld128KiB": 36940,
+      "incrementPerHeldConnectionKiB": 77.0625
+    },
+    {
+      "slot": "block-08-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9460,
+      "anonymousHeld128KiB": 14380,
+      "incrementPerHeldConnectionKiB": 38.4375
+    },
+    {
+      "slot": "block-09-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24060,
+      "anonymousHeld128KiB": 34644,
+      "incrementPerHeldConnectionKiB": 82.6875
+    },
+    {
+      "slot": "block-09-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8748,
+      "anonymousHeld128KiB": 13724,
+      "incrementPerHeldConnectionKiB": 38.875
+    },
+    {
+      "slot": "block-09-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8840,
+      "anonymousHeld128KiB": 12656,
+      "incrementPerHeldConnectionKiB": 29.8125
+    },
+    {
+      "slot": "block-09-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19524,
+      "anonymousHeld128KiB": 30328,
+      "incrementPerHeldConnectionKiB": 84.40625
+    },
+    {
+      "slot": "block-10-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7912,
+      "anonymousHeld128KiB": 12640,
+      "incrementPerHeldConnectionKiB": 36.9375
+    },
+    {
+      "slot": "block-10-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 21760,
+      "anonymousHeld128KiB": 32416,
+      "incrementPerHeldConnectionKiB": 83.25
+    },
+    {
+      "slot": "block-10-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 19708,
+      "anonymousHeld128KiB": 30892,
+      "incrementPerHeldConnectionKiB": 87.375
+    },
+    {
+      "slot": "block-10-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 11120,
+      "anonymousHeld128KiB": 14904,
+      "incrementPerHeldConnectionKiB": 29.5625
+    },
+    {
+      "slot": "block-11-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24404,
+      "anonymousHeld128KiB": 35624,
+      "incrementPerHeldConnectionKiB": 87.65625
+    },
+    {
+      "slot": "block-11-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9660,
+      "anonymousHeld128KiB": 14068,
+      "incrementPerHeldConnectionKiB": 34.4375
+    },
+    {
+      "slot": "block-11-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8824,
+      "anonymousHeld128KiB": 12220,
+      "incrementPerHeldConnectionKiB": 26.53125
+    },
+    {
+      "slot": "block-11-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 21576,
+      "anonymousHeld128KiB": 31992,
+      "incrementPerHeldConnectionKiB": 81.375
+    },
+    {
+      "slot": "block-12-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 6640,
+      "anonymousHeld128KiB": 12508,
+      "incrementPerHeldConnectionKiB": 45.84375
+    },
+    {
+      "slot": "block-12-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24612,
+      "anonymousHeld128KiB": 34948,
+      "incrementPerHeldConnectionKiB": 80.75
+    },
+    {
+      "slot": "block-12-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 31764,
+      "anonymousHeld128KiB": 39776,
+      "incrementPerHeldConnectionKiB": 62.59375
+    },
+    {
+      "slot": "block-12-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7752,
+      "anonymousHeld128KiB": 13484,
+      "incrementPerHeldConnectionKiB": 44.78125
+    },
+    {
+      "slot": "block-13-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25408,
+      "anonymousHeld128KiB": 35540,
+      "incrementPerHeldConnectionKiB": 79.15625
+    },
+    {
+      "slot": "block-13-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8280,
+      "anonymousHeld128KiB": 13492,
+      "incrementPerHeldConnectionKiB": 40.71875
+    },
+    {
+      "slot": "block-13-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9820,
+      "anonymousHeld128KiB": 14844,
+      "incrementPerHeldConnectionKiB": 39.25
+    },
+    {
+      "slot": "block-13-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 20812,
+      "anonymousHeld128KiB": 30620,
+      "incrementPerHeldConnectionKiB": 76.625
+    },
+    {
+      "slot": "block-14-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8080,
+      "anonymousHeld128KiB": 13172,
+      "incrementPerHeldConnectionKiB": 39.78125
+    },
+    {
+      "slot": "block-14-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25808,
+      "anonymousHeld128KiB": 36328,
+      "incrementPerHeldConnectionKiB": 82.1875
+    },
+    {
+      "slot": "block-14-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24248,
+      "anonymousHeld128KiB": 34860,
+      "incrementPerHeldConnectionKiB": 82.90625
+    },
+    {
+      "slot": "block-14-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7820,
+      "anonymousHeld128KiB": 13364,
+      "incrementPerHeldConnectionKiB": 43.3125
+    },
+    {
+      "slot": "block-15-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25672,
+      "anonymousHeld128KiB": 37436,
+      "incrementPerHeldConnectionKiB": 91.90625
+    },
+    {
+      "slot": "block-15-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8992,
+      "anonymousHeld128KiB": 14276,
+      "incrementPerHeldConnectionKiB": 41.28125
+    },
+    {
+      "slot": "block-15-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9520,
+      "anonymousHeld128KiB": 14776,
+      "incrementPerHeldConnectionKiB": 41.0625
+    },
+    {
+      "slot": "block-15-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 25584,
+      "anonymousHeld128KiB": 35388,
+      "incrementPerHeldConnectionKiB": 76.59375
+    },
+    {
+      "slot": "block-16-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8544,
+      "anonymousHeld128KiB": 13888,
+      "incrementPerHeldConnectionKiB": 41.75
+    },
+    {
+      "slot": "block-16-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 21536,
+      "anonymousHeld128KiB": 31768,
+      "incrementPerHeldConnectionKiB": 79.9375
+    },
+    {
+      "slot": "block-16-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 17920,
+      "anonymousHeld128KiB": 28036,
+      "incrementPerHeldConnectionKiB": 79.03125
+    },
+    {
+      "slot": "block-16-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 10096,
+      "anonymousHeld128KiB": 15580,
+      "incrementPerHeldConnectionKiB": 42.84375
+    },
+    {
+      "slot": "block-17-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24968,
+      "anonymousHeld128KiB": 35892,
+      "incrementPerHeldConnectionKiB": 85.34375
+    },
+    {
+      "slot": "block-17-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8640,
+      "anonymousHeld128KiB": 13892,
+      "incrementPerHeldConnectionKiB": 41.03125
+    },
+    {
+      "slot": "block-17-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9696,
+      "anonymousHeld128KiB": 15224,
+      "incrementPerHeldConnectionKiB": 43.1875
+    },
+    {
+      "slot": "block-17-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 18204,
+      "anonymousHeld128KiB": 30404,
+      "incrementPerHeldConnectionKiB": 95.3125
+    },
+    {
+      "slot": "block-18-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8080,
+      "anonymousHeld128KiB": 13104,
+      "incrementPerHeldConnectionKiB": 39.25
+    },
+    {
+      "slot": "block-18-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 20456,
+      "anonymousHeld128KiB": 32132,
+      "incrementPerHeldConnectionKiB": 91.21875
+    },
+    {
+      "slot": "block-18-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 24576,
+      "anonymousHeld128KiB": 35276,
+      "incrementPerHeldConnectionKiB": 83.59375
+    },
+    {
+      "slot": "block-18-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 8208,
+      "anonymousHeld128KiB": 14244,
+      "incrementPerHeldConnectionKiB": 47.15625
+    },
+    {
+      "slot": "block-19-slot-01-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 23024,
+      "anonymousHeld128KiB": 32660,
+      "incrementPerHeldConnectionKiB": 75.28125
+    },
+    {
+      "slot": "block-19-slot-02-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 9004,
+      "anonymousHeld128KiB": 13744,
+      "incrementPerHeldConnectionKiB": 37.03125
+    },
+    {
+      "slot": "block-19-slot-03-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7788,
+      "anonymousHeld128KiB": 12440,
+      "incrementPerHeldConnectionKiB": 36.34375
+    },
+    {
+      "slot": "block-19-slot-04-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26588,
+      "anonymousHeld128KiB": 36520,
+      "incrementPerHeldConnectionKiB": 77.59375
+    },
+    {
+      "slot": "block-20-slot-01-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 10872,
+      "anonymousHeld128KiB": 14676,
+      "incrementPerHeldConnectionKiB": 29.71875
+    },
+    {
+      "slot": "block-20-slot-02-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 16104,
+      "anonymousHeld128KiB": 27508,
+      "incrementPerHeldConnectionKiB": 89.09375
+    },
+    {
+      "slot": "block-20-slot-03-baseline",
+      "variant": "baseline",
+      "anonymousHeld0KiB": 26368,
+      "anonymousHeld128KiB": 36568,
+      "incrementPerHeldConnectionKiB": 79.6875
+    },
+    {
+      "slot": "block-20-slot-04-candidate",
+      "variant": "candidate",
+      "anonymousHeld0KiB": 7800,
+      "anonymousHeld128KiB": 12724,
+      "incrementPerHeldConnectionKiB": 38.46875
+    }
+  ],
+  "descriptorRecovery": [
+    {
+      "slot": "block-01-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-01-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-01-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-01-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-02-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-02-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-02-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-02-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-03-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-03-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-03-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-03-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-04-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-04-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-04-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-04-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-05-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-05-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-05-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-05-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-06-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-06-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-06-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-06-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-07-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-07-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-07-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-07-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-08-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-08-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-08-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-08-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-09-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-09-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-09-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-09-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-10-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-10-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-10-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-10-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-11-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-11-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-11-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-11-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-12-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-12-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-12-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-12-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-13-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-13-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-13-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-13-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-14-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-14-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-14-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-14-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-15-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-15-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-15-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-15-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-16-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-16-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-16-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-16-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-17-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-17-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-17-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-17-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-18-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-18-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-18-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-18-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-19-slot-01-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-19-slot-02-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-19-slot-03-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-19-slot-04-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-20-slot-01-candidate",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-20-slot-02-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-20-slot-03-baseline",
+      "before": 10,
+      "closed": 10
+    },
+    {
+      "slot": "block-20-slot-04-candidate",
+      "before": 10,
+      "closed": 10
+    }
+  ]
+}

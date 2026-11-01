@@ -1,0 +1,16 @@
+{
+  "status": "COMPLETE",
+  "runs": 8,
+  "verifiedTransfers": 3072,
+  "rows": [
+    "r1-baseline",
+    "r1-candidate",
+    "r2-candidate",
+    "r2-baseline",
+    "r3-baseline",
+    "r3-candidate",
+    "r4-candidate",
+    "r4-baseline"
+  ],
+  "scope": "Heaptrack counts are interpreted separately after all traces flush. Profiled residency is not production memory and timing is not accepted."
+}
