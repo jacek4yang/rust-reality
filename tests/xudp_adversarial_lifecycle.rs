@@ -33,7 +33,6 @@ use rust_reality::server::xudp::{
     XUDP_ASSOCIATION_IDLE, XUDP_MAX_ASSOCIATIONS, XudpDirectAssociation, XudpEgressCapability,
     XudpGlobalMap, XudpOutboundUnsupported, XudpRouteClass, XudpSessionError,
     authorize_xudp_egress, drain_xudp_frames, require_direct_xudp_landward,
-    require_direct_xudp_route,
 };
 use tokio::net::UdpSocket;
 
@@ -529,7 +528,9 @@ fn fail_detection_demo_route_class_gate() {
         "GATE: Direct must authorize as Direct"
     );
     assert!(
-        require_direct_xudp_route(XudpRouteClass::Direct).is_ok(),
+        authorize_xudp_egress(XudpRouteClass::Direct)
+            .and_then(require_direct_xudp_landward)
+            .is_ok(),
         "GATE: Direct landward must remain eligible"
     );
     assert_eq!(
@@ -555,7 +556,9 @@ fn fail_detection_demo_route_class_gate() {
         XudpRouteClass::Unsupported,
     ] {
         assert!(
-            require_direct_xudp_route(class).is_err(),
+            authorize_xudp_egress(class)
+                .and_then(require_direct_xudp_landward)
+                .is_err(),
             "GATE: {class:?} must not open Direct landward (no silent Direct fallback)"
         );
     }
@@ -620,7 +623,9 @@ fn fault_matrix_nxr_handoff_never_silent_direct_fallback() {
             "{class:?} must not authorize as Direct"
         );
         assert!(
-            require_direct_xudp_route(class).is_err(),
+            authorize_xudp_egress(class)
+                .and_then(require_direct_xudp_landward)
+                .is_err(),
             "{class:?} must fail Direct landward (no silent Direct fallback)"
         );
         assert!(
