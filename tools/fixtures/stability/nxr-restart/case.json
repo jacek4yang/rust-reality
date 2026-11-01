@@ -1,0 +1,376 @@
+{
+  "provenance": {
+    "source": "ba0313c5aab4f4237cb4bae7e10673b44e276296",
+    "run": 41299700110,
+    "attempt": 2,
+    "artifactId": 13084716020,
+    "artifactSha256": "b3a540b8e6a114cf3d0d1f2f44cd956a68e7e493404554158847eda19f898d78",
+    "originalLineLogSha256": "e3e38dfde1b6ae53964621ae188f0473b7fcb294c98721121b6920a34ff113ab",
+    "transformation": "Retain restart attribution inputs only. LINE log contains its single original rejection; unrelated samples and transfers omitted. This unit fixture is not a complete qualification bundle."
+  },
+  "cell": {
+    "name": "nxr/constrained",
+    "started_unix_ms": 1793532023733,
+    "started": true,
+    "completed": true,
+    "roles": [
+      {
+        "name": "line-a",
+        "process": {
+          "pid": 2629,
+          "start_ticks": 5125,
+          "boot_id": "0d6cb39a-f1db-43aa-b32b-3792a1ea6321",
+          "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+        },
+        "vcpus": 1,
+        "memory_limit_bytes": 1073741824,
+        "swap_limit_bytes": 0,
+        "policy": {
+          "runtime_unix_sockets": 3,
+          "fixed_fds": 7,
+          "fixed_descriptor_targets": [
+            "/dev/null",
+            "/home/rrtest/rr-stability/output/server.log",
+            "/home/rrtest/rr-stability/output/server.log",
+            "anon_inode:[eventpoll]",
+            "anon_inode:[eventfd]",
+            "anon_inode:[eventpoll]",
+            "/dev/null"
+          ],
+          "listener_sockets": 1,
+          "idle_inbound_capacity": 128,
+          "dynamic_fd_budget": 7626,
+          "pipe_pair_capacity": 60,
+          "warm_socket_capacity": 80,
+          "active_socket_capacity": 7626,
+          "relay_fd_capacity": 7626,
+          "soft_fd_limit": 8192,
+          "replay_capacity": 14772,
+          "replay_expiry_ms": 120000,
+          "retirement_deadline_ms": 120000
+        },
+        "startup": {
+          "path": "nxr-constrained/line-a/startup-server.json",
+          "sha256": "b3233ef9adff90c85c003672d128487adf1a0a64a8264c215b6c5687258373e9"
+        },
+        "environment": [
+          {
+            "path": "nxr-constrained/line-a/environment-before.json",
+            "sha256": "85d48ed4dfdbe3f17dc1f84434d6b21aa31cf47da662f46c306a2165ef34bfff"
+          },
+          {
+            "path": "nxr-constrained/line-a/environment-after.json",
+            "sha256": "a7dfcc2f70c17316108a1ccc70116f163cb21ad646925096efa65110150b0649"
+          }
+        ],
+        "clocks": [
+          {
+            "path": "nxr-constrained/line-a-clock-before.json",
+            "sha256": "1b327b4838b959ce36651fbb1833741bddd6de33891077a3c5e9a565217531ac"
+          },
+          {
+            "path": "nxr-constrained/line-a-clock-after.json",
+            "sha256": "3428ba199135cac8ae93ea4b96e06072e865bd24dc772a6089d134ef614ef93c"
+          }
+        ],
+        "terminal_status": {
+          "path": "nxr-constrained/line-a/terminal-status.json",
+          "sha256": "146a1fc3657a7761fa3030added0991f82b65cbd5bae325b7ecda9c89b7f0b1b"
+        },
+        "server_logs": [
+          {
+            "path": "nxr-constrained/line-a/server.log",
+            "sha256": "40d51abe67bcc1b272fd43d8d09755e98197f56778ab3ec017f4ed6dbb9d9832"
+          }
+        ]
+      },
+      {
+        "name": "line-b",
+        "process": {
+          "pid": 2624,
+          "start_ticks": 3758,
+          "boot_id": "2ce9730e-8925-44b3-9d6e-c3354cbe622a",
+          "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+        },
+        "vcpus": 1,
+        "memory_limit_bytes": 1073741824,
+        "swap_limit_bytes": 0,
+        "policy": {
+          "runtime_unix_sockets": 3,
+          "fixed_fds": 7,
+          "fixed_descriptor_targets": [
+            "/dev/null",
+            "/home/rrtest/rr-stability/output/server.log",
+            "/home/rrtest/rr-stability/output/server.log",
+            "anon_inode:[eventpoll]",
+            "anon_inode:[eventfd]",
+            "anon_inode:[eventpoll]",
+            "/dev/null"
+          ],
+          "listener_sockets": 1,
+          "idle_inbound_capacity": 128,
+          "dynamic_fd_budget": 7626,
+          "pipe_pair_capacity": 60,
+          "warm_socket_capacity": 80,
+          "active_socket_capacity": 7626,
+          "relay_fd_capacity": 7626,
+          "soft_fd_limit": 8192,
+          "replay_capacity": 14772,
+          "replay_expiry_ms": 120000,
+          "retirement_deadline_ms": 120000
+        },
+        "startup": {
+          "path": "nxr-constrained/line-b/startup-server.json",
+          "sha256": "bc113f30e92e49bd0ea084111f553f239356b0e73f7707259bc9718edc956366"
+        },
+        "environment": [
+          {
+            "path": "nxr-constrained/line-b/environment-before.json",
+            "sha256": "241a8d0d666a02c0c51c2a971491a92bdee6be5af3d780e29ffb994d4249d90a"
+          },
+          {
+            "path": "nxr-constrained/line-b/environment-after.json",
+            "sha256": "dcd6a1bce28acb2568233eb822ced76645b40c797ecdddc599bcaa46d9842082"
+          }
+        ],
+        "clocks": [
+          {
+            "path": "nxr-constrained/line-b-clock-before.json",
+            "sha256": "c20c589427395d15dd6beb96d1b0fead52ac820f248fa887428d74b92229a007"
+          },
+          {
+            "path": "nxr-constrained/line-b-clock-after.json",
+            "sha256": "01483f0ef98b51c9960cdc6bdd72ce3e573ad8b07076a57f8ed87a94d8790c7c"
+          }
+        ],
+        "terminal_status": {
+          "path": "nxr-constrained/line-b/terminal-status.json",
+          "sha256": "27aa982051a831431f6af6c4333042a0b4103228b95faf6bba8542ae32663f76"
+        },
+        "server_logs": [
+          {
+            "path": "nxr-constrained/line-b/server.log",
+            "sha256": "9eb3e52581d99109fa7df252a3923aaac1d7b8f53bfbbd0979dfebe5d09352c4"
+          }
+        ]
+      },
+      {
+        "name": "landing",
+        "process": {
+          "pid": 2601,
+          "start_ticks": 6476,
+          "boot_id": "28be7896-0acd-4ce7-a701-59ad10f93a55",
+          "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+        },
+        "vcpus": 1,
+        "memory_limit_bytes": 1073741824,
+        "swap_limit_bytes": 0,
+        "policy": {
+          "runtime_unix_sockets": 3,
+          "fixed_fds": 7,
+          "fixed_descriptor_targets": [
+            "/dev/null",
+            "/home/rrtest/rr-stability/output/server.log",
+            "/home/rrtest/rr-stability/output/server.log",
+            "anon_inode:[eventpoll]",
+            "anon_inode:[eventfd]",
+            "anon_inode:[eventpoll]",
+            "/dev/null"
+          ],
+          "listener_sockets": 1,
+          "idle_inbound_capacity": 128,
+          "dynamic_fd_budget": 7626,
+          "pipe_pair_capacity": 60,
+          "warm_socket_capacity": 0,
+          "active_socket_capacity": 7626,
+          "relay_fd_capacity": 7626,
+          "soft_fd_limit": 8192,
+          "replay_capacity": 80308,
+          "replay_expiry_ms": 120000,
+          "retirement_deadline_ms": 120000
+        },
+        "startup": {
+          "path": "nxr-constrained/landing/startup-server.json",
+          "sha256": "2af5ac415d050d60c0fbfe6c5058aa0f603f6d8ea9d000f3f91b0c039a3f2988"
+        },
+        "environment": [
+          {
+            "path": "nxr-constrained/landing/environment-before.json",
+            "sha256": "20fe920af97c3fbf9ac80e1a5abc42b2cf0af7c7ff21c67f6e5ddab1bee4c0e4"
+          },
+          {
+            "path": "nxr-constrained/landing/environment-after.json",
+            "sha256": "9ee59a6c8d4901ae9d783299b166de10336d82dc2951b64f447b06ccf4a7b891"
+          }
+        ],
+        "clocks": [
+          {
+            "path": "nxr-constrained/landing-clock-before.json",
+            "sha256": "995ed290290fa875c7301541b234b935734ea3debdf56a7634ee883dc2202a3e"
+          },
+          {
+            "path": "nxr-constrained/landing-clock-after.json",
+            "sha256": "e5e368ed8cea875348675cee6a1aa1e13cbe654f35efee2c5249e09954d349a1"
+          }
+        ],
+        "terminal_status": {
+          "path": "nxr-constrained/landing/terminal-status.json",
+          "sha256": "a6e4a26a297c2330d73d06f8dbb04962b5476f8884539a29d9d7a7066004d279"
+        },
+        "server_logs": [
+          {
+            "path": "nxr-constrained/landing/server-before-restart.log",
+            "sha256": "e28d7acf451f63d68f7c4edda4e204fd57a8d14a7b10087df88d2d8c69d5ee82"
+          },
+          {
+            "path": "nxr-constrained/landing/server.log",
+            "sha256": "11999b209221a84c0e8a0982051020f519261c4cf1e461aa7f1e26c73ec3aaf5"
+          }
+        ]
+      }
+    ],
+    "final_processes": [
+      {
+        "role": "line-a",
+        "identity": {
+          "pid": 2629,
+          "start_ticks": 5125,
+          "boot_id": "0d6cb39a-f1db-43aa-b32b-3792a1ea6321",
+          "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+        }
+      },
+      {
+        "role": "line-b",
+        "identity": {
+          "pid": 2624,
+          "start_ticks": 3758,
+          "boot_id": "2ce9730e-8925-44b3-9d6e-c3354cbe622a",
+          "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+        }
+      },
+      {
+        "role": "landing",
+        "identity": {
+          "pid": 12860,
+          "start_ticks": 256836,
+          "boot_id": "28be7896-0acd-4ce7-a701-59ad10f93a55",
+          "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+        }
+      }
+    ],
+    "cycles": [],
+    "faults": [
+      {
+        "name": "landing-restart",
+        "actions": [
+          {
+            "path": "nxr-constrained/line-a/action-landing-restart-begin.json",
+            "sha256": "64282f8bb5e4e01d82cc35efe7b03ccd24a712465d3c56627ab07a73bdc75f02"
+          },
+          {
+            "path": "nxr-constrained/landing/action-landing-restart-begin.json",
+            "sha256": "fba1b983010a7819902da85705370a282ae0f79e215d073f083cf18ca0748bed"
+          }
+        ],
+        "started_ms": 2464000,
+        "restored_ms": 2474000,
+        "first_admission_ms": 2481865,
+        "before_processes": [
+          {
+            "role": "line-a",
+            "identity": {
+              "pid": 2629,
+              "start_ticks": 5125,
+              "boot_id": "0d6cb39a-f1db-43aa-b32b-3792a1ea6321",
+              "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+            }
+          },
+          {
+            "role": "line-b",
+            "identity": {
+              "pid": 2624,
+              "start_ticks": 3758,
+              "boot_id": "2ce9730e-8925-44b3-9d6e-c3354cbe622a",
+              "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+            }
+          },
+          {
+            "role": "landing",
+            "identity": {
+              "pid": 2601,
+              "start_ticks": 6476,
+              "boot_id": "28be7896-0acd-4ce7-a701-59ad10f93a55",
+              "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+            }
+          }
+        ],
+        "after_processes": [
+          {
+            "role": "line-a",
+            "identity": {
+              "pid": 2629,
+              "start_ticks": 5125,
+              "boot_id": "0d6cb39a-f1db-43aa-b32b-3792a1ea6321",
+              "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+            }
+          },
+          {
+            "role": "line-b",
+            "identity": {
+              "pid": 2624,
+              "start_ticks": 3758,
+              "boot_id": "2ce9730e-8925-44b3-9d6e-c3354cbe622a",
+              "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+            }
+          },
+          {
+            "role": "landing",
+            "identity": {
+              "pid": 12860,
+              "start_ticks": 256836,
+              "boot_id": "28be7896-0acd-4ce7-a701-59ad10f93a55",
+              "executable_sha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2"
+            }
+          }
+        ],
+        "checkpoints": [],
+        "during_transfers": [],
+        "recovery_transfers": [],
+        "affected_prefix": {
+          "id": "nxr-constrained-landing-restart-prefix",
+          "line": "line-a",
+          "direction": "download",
+          "started_ms": 2463000,
+          "completed_ms": 2466426,
+          "expected_bytes": 40960,
+          "received_bytes": 40960,
+          "expected_sha256": "90b3b375e4565eb5cf64f68b23809e221918ee6a0b78fac98debf002ffaf2c4d",
+          "received_sha256": "90b3b375e4565eb5cf64f68b23809e221918ee6a0b78fac98debf002ffaf2c4d",
+          "source": {
+            "path": "nxr-constrained/traffic/nxr-constrained-landing-restart-prefix-expected-prefix.bin",
+            "sha256": "90b3b375e4565eb5cf64f68b23809e221918ee6a0b78fac98debf002ffaf2c4d"
+          },
+          "download": {
+            "path": "nxr-constrained/traffic/nxr-constrained-landing-restart-prefix-received-prefix.bin",
+            "sha256": "90b3b375e4565eb5cf64f68b23809e221918ee6a0b78fac98debf002ffaf2c4d"
+          },
+          "upload": null
+        },
+        "expected_failures": [
+          2466426
+        ],
+        "unexpected_failures": 0
+      }
+    ],
+    "integrity": [],
+    "integrity_checkpoints": [],
+    "unexpected_exits": 0,
+    "panics": 0,
+    "oom_kills": 0,
+    "unexpected_rejections": 1,
+    "terminal": {
+      "path": "nxr-constrained/cell-terminal.json",
+      "sha256": "e13669fe243f8b8beda44b04b16062d7d63ed7b1f2ed1a2eb7560e759a7927f3"
+    }
+  }
+}

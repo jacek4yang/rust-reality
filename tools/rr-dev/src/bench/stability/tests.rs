@@ -1906,53 +1906,122 @@ fn stale_eviction_peers_are_exact_socket_rows_not_substring_matches() {
 }
 
 #[test]
-fn restart_disconnect_matches_only_one_witnessed_handoff_epipe() {
-    use super::execution::product_log_with_faults;
-    let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,
-        "peer":"127.0.0.1:43028","reason":"outbound","failure":{"stage":"handoff_relay","cause":"io","errno":32}});
-    let encode = |v: &Value| format!("{v}\n").into_bytes();
-    let proof = || Some(("127.0.0.1:43028".to_owned(), 100, 110));
-    let mut expected = proof();
-    assert_eq!(
-        product_log_with_faults(&encode(&event), &mut vec![], &mut expected)
-            .unwrap()
-            .rejections,
-        0
-    );
-    assert!(expected.is_none());
-    assert_eq!(
-        product_log_with_faults(&encode(&event), &mut vec![], &mut expected)
-            .unwrap()
-            .rejections,
-        1
-    );
-    for (pointer, value) in [
-        ("/peer", json!("127.0.0.1:43029")),
-        ("/reason", json!("authentication")),
-        ("/failure/stage", json!("connect")),
-        ("/failure/cause", json!("timeout")),
-        ("/failure/errno", json!(104)),
-        ("/timestampUnixMs", json!(99)),
-        ("/timestampUnixMs", json!(111)),
-        ("/event", json!("admission_limited")),
-    ] {
-        let mut changed = event.clone();
-        *changed.pointer_mut(pointer).unwrap() = value;
+fn restart_disconnect_matches_only_one_witnessed_topology_epipe() {
+    use super::execution::{RestartDisconnect, product_log_with_faults};
+    for stage in ["handoff_relay", "session_relay"] {
+        let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,
+        "peer":"127.0.0.1:43028","reason":"outbound","failure":{"stage":stage,"cause":"io","errno":32}});
+        let encode = |v: &Value| format!("{v}\n").into_bytes();
+        let proof = || {
+            Some(RestartDisconnect {
+                peer: "127.0.0.1:43028".to_owned(),
+                start_ms: 100,
+                end_ms: 110,
+                stage,
+            })
+        };
+        let mut expected = proof();
         assert_eq!(
-            product_log_with_faults(&encode(&changed), &mut vec![], &mut proof())
+            product_log_with_faults(&encode(&event), &mut vec![], &mut expected)
                 .unwrap()
                 .rejections,
-            1,
-            "{pointer}"
+            0
         );
+        assert!(expected.is_none());
+        assert_eq!(
+            product_log_with_faults(&encode(&event), &mut vec![], &mut expected)
+                .unwrap()
+                .rejections,
+            1
+        );
+        for (pointer, value) in [
+            ("/peer", json!("127.0.0.1:43029")),
+            ("/reason", json!("authentication")),
+            ("/failure/stage", json!("connect")),
+            (
+                "/failure/stage",
+                json!(if stage == "handoff_relay" {
+                    "session_relay"
+                } else {
+                    "handoff_relay"
+                }),
+            ),
+            ("/failure/cause", json!("timeout")),
+            ("/failure/errno", json!(104)),
+            ("/timestampUnixMs", json!(99)),
+            ("/timestampUnixMs", json!(111)),
+            ("/event", json!("admission_limited")),
+        ] {
+            let mut changed = event.clone();
+            *changed.pointer_mut(pointer).unwrap() = value;
+            assert_eq!(
+                product_log_with_faults(&encode(&changed), &mut vec![], &mut proof())
+                    .unwrap()
+                    .rejections,
+                1,
+                "{pointer}"
+            );
+        }
     }
+}
+
+#[test]
+fn captured_nxr_restart_requires_matching_ack_kill_and_intact_prefix() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/stability/nxr-restart");
+    let fixture: Value =
+        serde_json::from_slice(&std::fs::read(root.join("case.json")).unwrap()).unwrap();
+    let cell: schema::Cell = serde_json::from_value(fixture["cell"].clone()).unwrap();
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let verify = |cell: &schema::Cell| {
+        let role = cell
+            .roles
+            .iter()
+            .find(|role| role.name == "line-a")
+            .unwrap();
+        super::product_logs(&root, cell, role, &contract)
+    };
+    assert_eq!(verify(&cell).unwrap().rejections, 0);
+    // The original complete campaign failed. This reconstructs only the
+    // witnessed injected disconnect, never a replacement qualification PASS.
+    assert_eq!(cell.unexpected_rejections, 1);
+    let mut wrong_topology = cell.clone();
+    wrong_topology.name = "handoff/constrained".to_owned();
+    assert_eq!(verify(&wrong_topology).unwrap().rejections, 1);
+    for missing in ["line-a", "landing"] {
+        let mut changed = cell.clone();
+        changed.faults[0]
+            .actions
+            .retain(|reference| !reference.path.contains(&format!("/{missing}/")));
+        assert!(verify(&changed).is_err(), "missing {missing} proof");
+    }
+    let mut no_disconnect = cell.clone();
+    no_disconnect.faults[0].expected_failures.clear();
+    assert!(verify(&no_disconnect).is_err());
+    let mut corrupt_prefix = cell.clone();
+    corrupt_prefix.faults[0].affected_prefix.received_sha256 = "0".repeat(64);
+    assert!(verify(&corrupt_prefix).is_err());
+    let mut wrong_boot = cell.clone();
+    wrong_boot
+        .roles
+        .iter_mut()
+        .find(|role| role.name == "line-a")
+        .unwrap()
+        .process
+        .boot_id = "wrong-boot".to_owned();
+    assert!(verify(&wrong_boot).is_err());
 }
 
 #[test]
 fn duplicate_restart_failure_fields_are_invalid_not_expected() {
     let bytes = br#"{"event":"connection_rejected","level":"warn","timestampUnixMs":105,"peer":"127.0.0.1:43028","reason":"outbound","failure":{"stage":"handoff_relay","cause":"io","errno":104,"errno":32}}
 "#;
-    let mut proof = Some(("127.0.0.1:43028".to_owned(), 100, 110));
+    let mut proof = Some(super::execution::RestartDisconnect {
+        peer: "127.0.0.1:43028".to_owned(),
+        start_ms: 100,
+        end_ms: 110,
+        stage: "handoff_relay",
+    });
     assert!(super::execution::product_log_with_faults(bytes, &mut vec![], &mut proof).is_err());
     assert!(proof.is_some());
 }

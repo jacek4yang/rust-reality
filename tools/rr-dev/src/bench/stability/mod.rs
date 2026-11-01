@@ -69,7 +69,14 @@ fn product_logs(
         }
     }
     let mut restart = None;
-    if role.name == "line-a" && cell.name.starts_with("handoff/") {
+    let restart_stage = match cell.name.split_once('/') {
+        Some(("handoff", _)) => Some("handoff_relay"),
+        Some(("nxr", _)) => Some("session_relay"),
+        _ => None,
+    };
+    if role.name == "line-a"
+        && let Some(stage) = restart_stage
+    {
         let landing = cell
             .roles
             .iter()
@@ -92,7 +99,8 @@ fn product_logs(
                         return Err("repeated restart ingress action".to_owned());
                     }
                     // Peer + ss census completion (not LINE-A action completion).
-                    ingress = Some(action::restart_ingress(&value)?);
+                    let (peer, census_completed) = action::restart_ingress(&value)?;
+                    ingress = Some((peer, census_completed, value.completed_unix_ms));
                 } else if value.role == landing.name {
                     action::verify(&value, landing, cell, fault, contract)?;
                     if killed.is_some() {
@@ -125,7 +133,8 @@ fn product_logs(
                 .checked_add(prefix.completed_ms)
                 .and_then(|time| time.checked_add(contract.clock_guard_ms()))
                 .ok_or("restart receipt time overflow")?;
-            let (peer, census_completed) = ingress.ok_or("missing verified restart ingress")?;
+            let (peer, census_completed, ingress_ack_completed) =
+                ingress.ok_or("missing verified restart ingress")?;
             let (acked_peer, ack_completed) = killed.ok_or("missing verified landing kill")?;
             if acked_peer != peer {
                 return Err("restart census ACK peer differs from witnessed ingress".to_owned());
@@ -138,13 +147,26 @@ fn product_logs(
                 ack_completed,
                 contract.clock_guard_ms(),
             )?;
-            let start = ack_completed
-                .checked_add(contract.clock_guard_ms())
-                .ok_or("restart clock guard overflow")?;
+            // NXR's fast relay can observe EPIPE inside the cross-guest clock
+            // uncertainty interval. Its LINE-A ACK completion and product log
+            // use the same guest clock; retain the verified peer, remote kill,
+            // intact prefix and one-shot accounting (ADR 0068).
+            let start = if stage == "session_relay" {
+                ingress_ack_completed
+            } else {
+                ack_completed
+                    .checked_add(contract.clock_guard_ms())
+                    .ok_or("restart clock guard overflow")?
+            };
             if end < start {
                 return Err("prefix failure predates landing kill".to_owned());
             }
-            restart = Some((peer, start, end));
+            restart = Some(execution::RestartDisconnect {
+                peer,
+                start_ms: start,
+                end_ms: end,
+                stage,
+            });
         }
     }
     let mut total = execution::LogCounts::default();

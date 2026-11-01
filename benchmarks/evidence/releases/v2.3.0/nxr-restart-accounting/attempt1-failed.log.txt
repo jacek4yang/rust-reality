@@ -1,0 +1,343 @@
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	﻿2026-11-01T12:32:48.2068552Z Current runner version: '2.338.2'
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2096099Z ##[group]Runner Image Provisioner
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2097547Z Hosted Compute Agent
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2098134Z Version: 20261021.618
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2098746Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2099808Z Build Date: 2026-10-21T00:45:21Z
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2100472Z Worker ID: {31b9e3c5-abcf-4742-bbd1-6f0026091e7b}
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2101362Z Region: northcentralus
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2101947Z Cloud: Azure
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2102455Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2103915Z ##[group]Operating System
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2104491Z Ubuntu
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2104966Z 24.04.5
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2105487Z LTS
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2105979Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2106509Z ##[group]Runner Image
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2107078Z Image: ubuntu-24.04
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2107626Z Version: 20261025.353.1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2108831Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261025.353/images/ubuntu/Ubuntu2404-Readme.md
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2110417Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261025.353
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2111809Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2113167Z ##[group]GITHUB_TOKEN Permissions
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2116285Z Contents: read
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2117067Z Metadata: read
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2117878Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2120936Z Secret source: Actions
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2122299Z Cache mode: write
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2123515Z Prepare workflow directory
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2842501Z Prepare all required actions
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.2914882Z Getting action download info
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.5153164Z Download action repository 'actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8' (SHA:08c6903cd8c0fde910a37f88322edcfb5dd907a8)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.6210314Z Download action repository 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' (SHA:d3f86a106a0bac45b974a628896c90dbdf5c8093)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:48.9754837Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.2249494Z Uses: jacek4yang/rust-reality/.github/workflows/qemu-specialist.yml@refs/heads/main (ba0313c5aab4f4237cb4bae7e10673b44e276296)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.2254386Z ##[group] Inputs
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.2255212Z   candidate_sha: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.2256456Z   package_artifact: package-receipt-ba0313c5aab4f4237cb4bae7e10673b44e276296-linux-x86_64-generic
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.2257563Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.2258356Z Complete job name: virtual-machines / Merge four-cell QEMU evidence
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3042536Z ##[group]Run actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3044305Z with:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3045396Z   ref: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3046540Z   persist-credentials: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3047608Z   fetch-depth: 0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3048580Z   repository: jacek4yang/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3054187Z   token: ***
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3055107Z   ssh-strict: true
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3056007Z   ssh-user: git
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3056613Z   clean: true
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3057220Z   sparse-checkout-cone-mode: true
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3057869Z   fetch-tags: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3058483Z   show-progress: true
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3059060Z   lfs: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3059598Z   submodules: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3060217Z   set-safe-directory: true
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3061637Z env:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3062297Z   HEAD_SHA: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.3063186Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5742679Z Syncing repository: jacek4yang/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5744784Z ##[group]Getting Git version info
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5746033Z Working directory is '/home/runner/work/rust-reality/rust-reality'
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5747285Z [command]/usr/bin/git version
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5805542Z git version 2.56.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5832423Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5844487Z Temporarily overriding HOME='/home/runner/work/_temp/6db0da22-f2b4-4510-8e1c-6ceef89c75a1' before making global git config changes
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5846026Z Adding repository directory to the temporary git global config as a safe directory
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5850075Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/rust-reality/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5903316Z Deleting the contents of '/home/runner/work/rust-reality/rust-reality'
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5907132Z ##[group]Initializing the repository
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.5913447Z [command]/usr/bin/git init /home/runner/work/rust-reality/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6018716Z hint: Using 'master' as the name for the initial branch. This default branch name
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6020880Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6022520Z hint: to use in all of your new repositories, which will suppress this warning,
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6023761Z hint: call:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6024467Z hint:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6025513Z hint: 	git config --global init.defaultBranch <name>
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6026516Z hint:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6027378Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6028783Z hint: 'development'. The just-created branch can be renamed via this command:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6029931Z hint:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6030934Z hint: 	git branch -m <name>
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6031768Z hint:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6033253Z hint: Disable this message with "git config set advice.defaultBranchName false"
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6047229Z Initialized empty Git repository in /home/runner/work/rust-reality/rust-reality/.git/
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6057588Z [command]/usr/bin/git remote add origin https://github.com/jacek4yang/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6106286Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6107645Z ##[group]Disabling automatic garbage collection
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6109378Z [command]/usr/bin/git config --local gc.auto 0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6139525Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6140996Z ##[group]Setting up auth
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6146486Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6184963Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6559580Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6589886Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6806940Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6851728Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6853002Z ##[group]Fetching the repository
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:49.6865835Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8698432Z From https://github.com/jacek4yang/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8700991Z  * [new branch]        evidence/v230-client-1c1930f -> origin/evidence/v230-client-1c1930f
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8702521Z  * [new branch]        investigate/261-anonymous-memory -> origin/investigate/261-anonymous-memory
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8703591Z  * [new branch]        main           -> origin/main
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8704859Z  * [new branch]        perf/client-vectored-upload -> origin/perf/client-vectored-upload
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8706515Z  * [new branch]        refactor/m4-protocol-handoff-blob-codec-extract-v2 -> origin/refactor/m4-protocol-handoff-blob-codec-extract-v2
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8708243Z  * [new branch]        refactor/m4-protocol-handoff-blob-codec-extract-v3 -> origin/refactor/m4-protocol-handoff-blob-codec-extract-v3
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8710698Z  * [new branch]        refactor/m4-protocol-handoff-blob-codec-extract-v4 -> origin/refactor/m4-protocol-handoff-blob-codec-extract-v4
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8712754Z  * [new branch]        refactor/m4-protocol-handoff-continuation-state-extract-v1 -> origin/refactor/m4-protocol-handoff-continuation-state-extract-v1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8714588Z  * [new branch]        refactor/m4-protocol-handoff-error-extract -> origin/refactor/m4-protocol-handoff-error-extract
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8715763Z  * [new branch]        refactor/m4-protocol-handoff-error-extract-v2 -> origin/refactor/m4-protocol-handoff-error-extract-v2
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8716895Z  * [new branch]        refactor/m4-protocol-handoff-error-extract-v3 -> origin/refactor/m4-protocol-handoff-error-extract-v3
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8717857Z  * [new branch]        refactor/m4-protocol-handoff-keys-extract -> origin/refactor/m4-protocol-handoff-keys-extract
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8718928Z  * [new branch]        refactor/m4-protocol-handoff-layout-constants-extract-v1 -> origin/refactor/m4-protocol-handoff-layout-constants-extract-v1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8720386Z  * [new branch]        refactor/m4-protocol-handoff-layout-constants-extract-v2 -> origin/refactor/m4-protocol-handoff-layout-constants-extract-v2
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8722057Z  * [new branch]        refactor/m4-protocol-handoff-replay-extract -> origin/refactor/m4-protocol-handoff-replay-extract
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8723095Z  * [new branch]        refactor/m4-protocol-handoff-replay-extract-v2 -> origin/refactor/m4-protocol-handoff-replay-extract-v2
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8724186Z  * [new branch]        refactor/m4-protocol-handoff-wire-header-extract-v1 -> origin/refactor/m4-protocol-handoff-wire-header-extract-v1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8726975Z  * [new branch]        refactor/m4-protocol-nxr-module-dir-v2 -> origin/refactor/m4-protocol-nxr-module-dir-v2
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8728481Z  * [new branch]        refactor/m4-server-handoff-line-landing-split -> origin/refactor/m4-server-handoff-line-landing-split
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8730047Z  * [new branch]        refactor/m4-server-nxr-error-extract-v1 -> origin/refactor/m4-server-nxr-error-extract-v1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8731575Z  * [new branch]        refactor/xudp-canonical-authorization -> origin/refactor/xudp-canonical-authorization
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8732323Z  * [new branch]        release/v2.1.0 -> origin/release/v2.1.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8732817Z  * [new tag]           v0.1.0         -> v0.1.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8733363Z  * [new tag]           v1.0.0         -> v1.0.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8734073Z  * [new tag]           v1.1.0         -> v1.1.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8734541Z  * [new tag]           v1.2.0         -> v1.2.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8735050Z  * [new tag]           v1.3.0         -> v1.3.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8735513Z  * [new tag]           v1.4.0         -> v1.4.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8736128Z  * [new tag]           v1.5.0         -> v1.5.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8736709Z  * [new tag]           v1.5.1         -> v1.5.1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8737331Z  * [new tag]           v1.6.0         -> v1.6.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8737789Z  * [new tag]           v1.6.1         -> v1.6.1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8738229Z  * [new tag]           v1.7.0         -> v1.7.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8738867Z  * [new tag]           v1.8.0         -> v1.8.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8739519Z  * [new tag]           v1.9.0         -> v1.9.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8740196Z  * [new tag]           v2.0.0         -> v2.0.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8741020Z  * [new tag]           v2.0.1         -> v2.0.1
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8741639Z  * [new tag]           v2.0.2         -> v2.0.2
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8742447Z  * [new tag]           v2.0.3         -> v2.0.3
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8743071Z  * [new tag]           v2.0.4         -> v2.0.4
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8743628Z  * [new tag]           v2.1.0         -> v2.1.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8744270Z  * [new tag]           v2.2.0         -> v2.2.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8746688Z [command]/usr/bin/git rev-parse --verify --quiet ba0313c5aab4f4237cb4bae7e10673b44e276296^{object}
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8748024Z ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8750161Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8751450Z ##[group]Determining the checkout info
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8752535Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:54.8754785Z [command]/usr/bin/git sparse-checkout disable
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.0047746Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.0438283Z ##[group]Checking out the ref
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.0442770Z [command]/usr/bin/git checkout --progress --force ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7327275Z Note: switching to 'ba0313c5aab4f4237cb4bae7e10673b44e276296'.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7328010Z 
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7328381Z You are in 'detached HEAD' state. You can look around, make experimental
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7329072Z changes and commit them, and you can discard any commits you make in this
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7329888Z state without impacting any branches by switching back to a branch.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7330381Z 
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7330854Z If you want to create a new branch to retain commits you create, you may
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7331543Z do so (now or later) by using -c with the switch command. Example:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7331966Z 
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7332211Z   git switch -c <new-branch-name>
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7332489Z 
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7332710Z Or undo this operation with:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7332988Z 
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7333164Z   git switch -
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7333453Z 
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7333747Z Turn off this advice by setting config variable advice.detachedHead to false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7334246Z 
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7334586Z HEAD is now at ba0313c5 Merge pull request #417 from jacek4yang/evidence/v230-final-package
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7566573Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7665877Z [command]/usr/bin/git log -1 --format=%H
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7676890Z ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7685173Z ##[group]Removing auth
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7690133Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7717011Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7924312Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7958327Z http.https://github.com/.extraheader
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7965341Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.7999401Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8196849Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8437946Z ##[group]Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8438449Z with:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8438933Z   name: hosted-qemu-prepare-ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8439441Z   path: /home/runner/work/_temp/rr-qemu-prepare
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8439874Z   merge-multiple: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8440228Z   repository: jacek4yang/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8440997Z   run-id: 41299700110
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8441370Z env:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8441701Z   HEAD_SHA: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.8442115Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:55.9954171Z Downloading single artifact
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:56.0144640Z (node:2336) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:56.0145895Z (Use `node --trace-deprecation ...` to show where the warning was created)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:56.1661898Z Preparing to download the following artifacts:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:56.1663221Z - hosted-qemu-prepare-ba0313c5aab4f4237cb4bae7e10673b44e276296 (ID: 13080809781, Size: 787182370, Expected Digest: sha256:a5273653fa506c0eeb0f0a6dda31b19ea940766d742e6f23a36d6d8b4350c551)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:56.3222677Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/020c6f5a-b135-40f7-b87d-d37cb1103b45/workflow-job-run-e6a2b542-4dc7-5afa-b058-66e39445268e/artifacts/d3b1417aed566b9f409600d426e00ec137fbbceae09c4822733dbf9fe3695ce0.zip
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:56.3224323Z Starting download of artifact to: /home/runner/work/_temp/rr-qemu-prepare
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:32:56.4946485Z (node:2336) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:07.9746361Z SHA256 digest of downloaded artifact is a5273653fa506c0eeb0f0a6dda31b19ea940766d742e6f23a36d6d8b4350c551
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:07.9747845Z Artifact download completed successfully.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:07.9748658Z Total of 1 artifact(s) downloaded
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:07.9753870Z Download artifact has finished successfully
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0064870Z ##[group]Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0065401Z with:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0065846Z   pattern: hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-*
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0066369Z   path: /home/runner/work/_temp/rr-qemu-cells
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0066784Z   merge-multiple: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0067174Z   repository: jacek4yang/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0067562Z   run-id: 41299700110
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0067875Z env:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0068260Z   HEAD_SHA: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.0068639Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.1768307Z (node:2354) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.1769620Z (Use `node --trace-deprecation ...` to show where the warning was created)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.3476749Z Found 19 artifact(s)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.3478156Z Filtering artifacts by pattern 'hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-*'
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.3503646Z Preparing to download the following artifacts:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.3504862Z - hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-handoff-ordinary (ID: 13083891067, Size: 215569244, Expected Digest: sha256:b347faefafb8f74371cacda045e5ab3203f2f71dccdd570702ee9fc2f6e4b135)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.3506545Z - hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-nxr-constrained (ID: 13083626950, Size: 212449011, Expected Digest: sha256:69fb9e339a59e998f91af68662da94e5d3e01e66e61ebee3c0259db7ad5fb8df)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.3508340Z - hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-nxr-ordinary (ID: 13083374887, Size: 213016416, Expected Digest: sha256:73fcbeb71273ba639e6cf6abc4d749507ecfa6267a870ed4331ecd9bf04ea60c)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.3510013Z - hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-handoff-constrained (ID: 13082519393, Size: 216236583, Expected Digest: sha256:8aed2f72cfae1b42aee17410f7a361aeef0fd0bc1d7d4bbcfd1596423cf48fd9)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.5103540Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/020c6f5a-b135-40f7-b87d-d37cb1103b45/workflow-job-run-ed0bb98b-dfca-5af7-9caf-4e7cb728723d/artifacts/83ffe8a9f0c5956b7f265eafd2258c88f39dc26189651d47b34eb8d6caae71a7.zip
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.5106100Z Starting download of artifact to: /home/runner/work/_temp/rr-qemu-cells/hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-handoff-ordinary
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.5466378Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/020c6f5a-b135-40f7-b87d-d37cb1103b45/workflow-job-run-00ccd549-0c0c-58eb-a0b6-ff82e30ff4af/artifacts/5322b346fbca840f3f4ef7478d5a3192a525b608218ef2c213a2484edb842d87.zip
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.5469231Z Starting download of artifact to: /home/runner/work/_temp/rr-qemu-cells/hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-nxr-ordinary
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.5546124Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/020c6f5a-b135-40f7-b87d-d37cb1103b45/workflow-job-run-d4179870-56f7-5610-8d3c-61d63c68aaab/artifacts/253cc8a5359a46efcd85e5633fd090954cfe0e6d443137a6b55a9f75e736a18d.zip
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.5552754Z Starting download of artifact to: /home/runner/work/_temp/rr-qemu-cells/hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-nxr-constrained
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.6314270Z Redirecting to blob download url: https://productionresultssa3.blob.core.windows.net/actions-results/020c6f5a-b135-40f7-b87d-d37cb1103b45/workflow-job-run-661eacef-a88f-5240-adda-905e4c5d3ea3/artifacts/bf31668c176b41a1cada2c185f02101fffbd68f742ae604b63a003e191b451af.zip
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.6317230Z Starting download of artifact to: /home/runner/work/_temp/rr-qemu-cells/hosted-qemu-cell-ba0313c5aab4f4237cb4bae7e10673b44e276296-handoff-constrained
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:33:08.6926943Z (node:2354) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:07.3185628Z SHA256 digest of downloaded artifact is 69fb9e339a59e998f91af68662da94e5d3e01e66e61ebee3c0259db7ad5fb8df
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:07.3188676Z Artifact download completed successfully.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:07.6560330Z SHA256 digest of downloaded artifact is 73fcbeb71273ba639e6cf6abc4d749507ecfa6267a870ed4331ecd9bf04ea60c
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:07.6562043Z Artifact download completed successfully.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:07.8705427Z SHA256 digest of downloaded artifact is 8aed2f72cfae1b42aee17410f7a361aeef0fd0bc1d7d4bbcfd1596423cf48fd9
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:07.8706378Z Artifact download completed successfully.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3177239Z ##[group]Run set -euo pipefail
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3178120Z ^[[36;1mset -euo pipefail^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3178677Z ^[[36;1mtest "$(git rev-parse HEAD)" = "$HEAD_SHA"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3179321Z ^[[36;1mchmod 0755 "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3180076Z ^[[36;1m# Discover cell-matrix.json markers in Rust (ADR 0046); no Python.^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3181278Z ^[[36;1m"$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-merge-cells \^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3182156Z ^[[36;1m  --output "$RUNNER_TEMP/rr-cloud-campaign" \^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3182750Z ^[[36;1m  --cells-root "$RUNNER_TEMP/rr-qemu-cells"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3183586Z ^[[36;1m# Keep the historical campaign artifact contract for frozen acceptance.^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3184332Z ^[[36;1mcp "$RUNNER_TEMP/rr-qemu-prepare/bin/rr-dev" "$RUNNER_TEMP/rr-cloud-campaign/rr-dev"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3185329Z ^[[36;1mcp "$RUNNER_TEMP/rr-qemu-prepare/bin/rust-reality" "$RUNNER_TEMP/rr-cloud-campaign/rust-reality"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3186186Z ^[[36;1mcp "$RUNNER_TEMP/rr-qemu-prepare/tools/xray/xray" "$RUNNER_TEMP/rr-cloud-campaign/xray"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3187029Z ^[[36;1mcp "$RUNNER_TEMP/rr-qemu-prepare/tools/openssl/bin/openssl" "$RUNNER_TEMP/rr-cloud-campaign/openssl"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3187898Z ^[[36;1m# ADR 0055: relocated openssl needs a colocated openssl.cnf (OPENSSLDIR is absolute).^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3188801Z ^[[36;1mcp "$RUNNER_TEMP/rr-qemu-prepare/tools/openssl/ssl/openssl.cnf" "$RUNNER_TEMP/rr-cloud-campaign/openssl.cnf"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3189714Z ^[[36;1mchmod 0755 "$RUNNER_TEMP/rr-cloud-campaign/rr-dev" "$RUNNER_TEMP/rr-cloud-campaign/rust-reality" \^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3190478Z ^[[36;1m  "$RUNNER_TEMP/rr-cloud-campaign/xray" "$RUNNER_TEMP/rr-cloud-campaign/openssl"^[[0m
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3923374Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3923869Z env:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3924346Z   HEAD_SHA: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:35:08.3924759Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.6696138Z bench stability-merge-cells: No such file or directory (os error 2)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.6795056Z ##[error]Process completed with exit code 1.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7506010Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7506553Z with:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7507079Z   name: hosted-qemu-campaign-ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7507943Z   path: /home/runner/work/_temp/rr-cloud-campaign/
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7508435Z   if-no-files-found: warn
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7508793Z   retention-days: 7
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7509213Z   compression-level: 9
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7509679Z   overwrite: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7510280Z   include-hidden-files: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7511472Z env:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7512420Z   HEAD_SHA: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:00.7512934Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:01.0892505Z (node:2430) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:01.0893301Z (Use `node --trace-deprecation ...` to show where the warning was created)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:02.0262283Z With the provided path, there will be 11306 files uploaded
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:02.0263108Z Artifact name is valid!
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:02.0263514Z Root directory input is valid!
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:02.3869698Z Beginning upload of artifact content to blob storage
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:05.5578105Z (node:2430) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:05.9716864Z Uploaded bytes 8388608
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:08.1494660Z Uploaded bytes 16777216
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:10.4211113Z Uploaded bytes 25165824
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:12.7773433Z Uploaded bytes 33554432
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:15.0372768Z Uploaded bytes 41943040
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:17.2524625Z Uploaded bytes 50331648
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:20.4141165Z Uploaded bytes 58720256
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:30.5578721Z Uploaded bytes 67108864
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:40.0166028Z Uploaded bytes 75497472
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:49.2464427Z Uploaded bytes 83886080
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:51.0626185Z Uploaded bytes 92274688
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:51.4268229Z Uploaded bytes 100663296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:51.9193034Z Uploaded bytes 109051904
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:52.3035244Z Uploaded bytes 117440512
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:52.6767636Z Uploaded bytes 125829120
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:53.1072574Z Uploaded bytes 134217728
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:53.5083032Z Uploaded bytes 142606336
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:53.8567200Z Uploaded bytes 150994944
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:54.2501798Z Uploaded bytes 159383552
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:54.6110728Z Uploaded bytes 167772160
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:54.9587941Z Uploaded bytes 176160768
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:55.3411336Z Uploaded bytes 184549376
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:55.6221531Z Uploaded bytes 192937984
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:57.4826377Z Uploaded bytes 201326592
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:36:58.4797838Z Uploaded bytes 209715200
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:00.8172799Z Uploaded bytes 215963689
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:00.8528514Z Finished uploading artifact content to blob storage!
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:00.8530682Z SHA256 digest of uploaded artifact zip is 545fd93d9eba2d3ba55204ca1394867f48981e3f72cf8d75c339a266960d13fb
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:00.8532441Z Finalizing artifact upload
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3407731Z Artifact hosted-qemu-campaign-ba0313c5aab4f4237cb4bae7e10673b44e276296.zip successfully finalized. Artifact ID 13083692366
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3409005Z Artifact hosted-qemu-campaign-ba0313c5aab4f4237cb4bae7e10673b44e276296 has been successfully uploaded! Final size is 215963689 bytes. Artifact ID is 13083692366
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3417229Z Artifact download URL: https://github.com/jacek4yang/rust-reality/actions/runs/41299700110/artifacts/13083692366
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3730379Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3731080Z with:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3731464Z   name: hosted-qemu-diagnostics-ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3732568Z   path: /home/runner/work/_temp/rr-cloud-campaign/cells-summary.json
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	/home/runner/work/_temp/rr-cloud-campaign/merge-diagnosis.json
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	/home/runner/work/_temp/rr-cloud-campaign/campaign-terminal.json
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	/home/runner/work/_temp/rr-cloud-campaign/**/cell-diagnosis.json
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3733637Z   if-no-files-found: warn
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3733906Z   retention-days: 7
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3734164Z   compression-level: 6
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3734423Z   overwrite: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3734680Z   include-hidden-files: false
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3734949Z env:
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3735213Z   HEAD_SHA: ba0313c5aab4f4237cb4bae7e10673b44e276296
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.3735536Z ##[endgroup]
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.5332300Z (node:2458) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:01.5332991Z (Use `node --trace-deprecation ...` to show where the warning was created)
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.2099756Z ##[warning]No files were found with the provided path: /home/runner/work/_temp/rr-cloud-campaign/cells-summary.json
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	/home/runner/work/_temp/rr-cloud-campaign/merge-diagnosis.json
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	/home/runner/work/_temp/rr-cloud-campaign/campaign-terminal.json
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	/home/runner/work/_temp/rr-cloud-campaign/**/cell-diagnosis.json. No artifacts will be uploaded.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.2326489Z Post job cleanup.
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3214581Z [command]/usr/bin/git version
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3252962Z git version 2.56.0
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3288282Z Temporarily overriding HOME='/home/runner/work/_temp/e48b3d53-3087-45ca-9f16-65587d33ab40' before making global git config changes
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3289738Z Adding repository directory to the temporary git global config as a safe directory
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3290998Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/rust-reality/rust-reality
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3328151Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3361653Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3663595Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.3697170Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.4091455Z Cleaning up orphan processes
+virtual-machines / Merge four-cell QEMU evidence	UNKNOWN STEP	2026-11-01T12:37:02.4497402Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
