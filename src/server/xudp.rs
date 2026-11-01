@@ -64,7 +64,7 @@ impl fmt::Display for XudpOutboundUnsupported {
                 "XUDP NXR egress cannot open Direct landward sockets (use the NXR framed carrier)",
             ),
             Self::Handoff => formatter.write_str(
-                "XUDP Handoff egress is not available yet (fail-closed; no Direct fallback)",
+                "XUDP Handoff egress requires transfer to LANDING; LINE cannot open landward UDP sockets",
             ),
             Self::Block => formatter.write_str("XUDP destination is blocked by routing"),
             Self::Other => formatter.write_str(
@@ -158,9 +158,9 @@ pub fn require_nxr_xudp_landward(
     }
 }
 
-/// Returns `Ok(())` only when Handoff landward UDP is ready (currently never).
+/// Rejects opening Handoff landward UDP on LINE.
 ///
-/// Kept for symmetric call sites; LINE never opens Handoff landward UDP (transfer path).
+/// Handoff transfers TLS and XUDP ownership to LANDING before opening UDP sockets.
 ///
 /// # Errors
 ///
@@ -173,14 +173,6 @@ pub fn require_handoff_xudp_landward(
         XudpEgressCapability::Direct => Err(XudpOutboundUnsupported::Other),
         XudpEgressCapability::Nxr => Err(XudpOutboundUnsupported::Nxr),
     }
-}
-
-/// Deprecated name for [`require_direct_xudp_landward`] after class→capability.
-///
-/// Prefer [`authorize_xudp_egress`] + [`require_direct_xudp_landward`]. This
-/// helper still means "Direct landward only" and rejects NXR/Handoff/Block.
-pub fn require_direct_xudp_route(class: XudpRouteClass) -> Result<(), XudpOutboundUnsupported> {
-    require_direct_xudp_landward(authorize_xudp_egress(class)?)
 }
 
 /// Errors from server XUDP association handling.
@@ -779,7 +771,6 @@ mod tests {
         let cap = authorize_xudp_egress(XudpRouteClass::Direct).unwrap();
         assert_eq!(cap, XudpEgressCapability::Direct);
         require_direct_xudp_landward(cap).unwrap();
-        require_direct_xudp_route(XudpRouteClass::Direct).unwrap();
     }
 
     #[test]
@@ -816,14 +807,6 @@ mod tests {
             require_direct_xudp_landward(handoff),
             Err(XudpOutboundUnsupported::Handoff)
         );
-        assert_eq!(
-            require_direct_xudp_route(XudpRouteClass::Nxr),
-            Err(XudpOutboundUnsupported::Nxr)
-        );
-        assert_eq!(
-            require_direct_xudp_route(XudpRouteClass::Handoff),
-            Err(XudpOutboundUnsupported::Handoff)
-        );
     }
 
     #[test]
@@ -835,10 +818,6 @@ mod tests {
         assert_eq!(
             authorize_xudp_egress(XudpRouteClass::Unsupported),
             Err(XudpOutboundUnsupported::Other)
-        );
-        assert_eq!(
-            require_direct_xudp_route(XudpRouteClass::Block),
-            Err(XudpOutboundUnsupported::Block)
         );
     }
 
