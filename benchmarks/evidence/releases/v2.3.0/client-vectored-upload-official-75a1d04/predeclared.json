@@ -1,0 +1,40 @@
+{
+  "scope": "Independent resolving validation of exact official GNU 75a1d04 candidate package versus exact official GNU 9265a6b package. Not final release qualification against d72. Earlier local-build observations remain separate and UNRESOLVED.",
+  "blocks": 20,
+  "order": "ABBA",
+  "slots": 80,
+  "samplesPerCell": 5,
+  "concurrencies": [
+    1,
+    64
+  ],
+  "connectionsPerSetupBatch": 128,
+  "dataMiB": 16,
+  "shapes": [
+    "direct-download",
+    "direct-upload",
+    "framed-download",
+    "framed-upload",
+    "bidi"
+  ],
+  "primaryHypothesis": "Eliminating the client upload payload move reduces Direct-upload:c1 CPU; require its bootstrap95 CPU-ratio upper bound below 1.0 for repeatable benefit.",
+  "protectedDataGuard": {
+    "cpuUpper": 1.01,
+    "rateLower": 0.99
+  },
+  "decision": "Retain and inspect every cell and setup observation. A primary interval crossing 1.0 does not prove benefit. Reject or investigate statistically supported protected-path regressions, and do not turn an unresolved interval into a pass. No early favorable stopping or pooling with prior campaigns. Even a promising diagnostic requires full baseline-d72 performance, memory/resource qualification and exact-head release gates.",
+  "host": "Same fixed 2.4GHz P-core policies 0..7 and affinity 0,2,4,6; bounded supervisor and exact policy restoration; no simultaneous compilation.",
+  "candidateSource": "75a1d04075a7b26282fd36a67348fbbc5a7f47da",
+  "candidateSha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+  "baselineSource": "9265a6b919691e5f377cd5f85ef439415dc7136e",
+  "baselineSha256": "ee7e0092849a6e8b35fe1ac31544bad9d254d7a78cef40d8c02818e1588881ed",
+  "helperSha256": {
+    "controller.py": "ccd1dd6f989ec5227a442f7460955b32baa254bfa0ee618702fbf83e7e290bdb",
+    "frequency-supervisor.py": "d3c70408bb4ef596cf0326cb69b32712947f672ac0c44e9b08d923bdb82160ba",
+    "assess.py": "9300bb7fec7db99709e1e7d3b3dd59d0880642f6f66c8b1d44d74f7265e4d85e"
+  },
+  "dataBatches": 4000,
+  "verifiedDataRequests": 156000,
+  "collectorResolvingMinimum": 12,
+  "reason": "Use the actual downloadable CI candidate after finding local and hosted same-source executables differ. Meet the unchanged minimum of 12 resolving blocks; no sample pooling or identity substitution."
+}

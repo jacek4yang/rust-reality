@@ -1,0 +1,20 @@
+{
+  "source": "75a1d04075a7b26282fd36a67348fbbc5a7f47da",
+  "scope": "Same source is not same binary. Local six-block diagnostic cannot establish performance of the hosted candidate; no address or measurement substitution.",
+  "binaries": [
+    {
+      "build": "local",
+      "binarySha256": "fb78af51740f718a9ced16902ef5fb37d00d607cc7dc9a71986a825179777786",
+      "textAddress": 1964160,
+      "textSize": 5832054,
+      "textSha256": "bcb212ae92af1d08f7ab085609a02016efcbcda5cb6c154b97feda3be7877fc4"
+    },
+    {
+      "build": "hosted",
+      "binarySha256": "99fa10713069b12cd393812508654deca321c0eb0676385e152de4ceea8624b3",
+      "textAddress": 1964544,
+      "textSize": 5822454,
+      "textSha256": "6b782eb6af85600477fcfcba4e318b0eb90200a5fc2fa368bf7972e064b5eee1"
+    }
+  ]
+}
