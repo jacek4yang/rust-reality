@@ -30,3 +30,20 @@ are retained; generated secret-bearing inputs are excluded.
 
 The sibling client-data and profile-cost evidence sets retain the exact
 official executable's complete measured results and their scope limitations.
+
+The latest explicit exact-main Frozen coordinator, run 41315269573, completed
+successfully. Every job passed, including all four QEMU lifecycle cells, all
+four guest-kernel UDP cells, native qualification and the complete offline
+verdict. Independent download verification checks the artifact digest, every
+covered member and nested checksum manifest. The retained final verdict is
+PASS with no findings. The artifact metadata identifies the complete hosted
+raw bundle; the compact receipt does not replace that bundle.
+
+`hosted-gates.json` retains the successful CI/Security/Native identities.
+`text-comparison.json` additionally records identical production `.text` bytes
+against the earlier BA package; this is not whole-binary identity and is not
+used to substitute earlier qualification for the final source's own runs.
+
+These records qualify the immutable release source and candidate assets.
+Public release existence and independent downloaded-asset verification are
+recorded separately in PR #423 and Issue #325 after publication.

@@ -1,0 +1,22 @@
+{
+  "scope": "Executable .text byte comparison only; does not imply whole-ELF, metadata, packaging or qualification identity. All final-source gates remain independently required.",
+  "sources": [
+    "47f039fe62c05e913e69db13572f909933fc07cc",
+    "ba0313c5aab4f4237cb4bae7e10673b44e276296"
+  ],
+  "executables": [
+    {
+      "binarySha256": "a8521c7147290c426e62afb3ce7934da84215b8c925458d562186c64c1949290",
+      "textOffset": 1960448,
+      "textSize": 5822390,
+      "textSha256": "64095911cc50f5e865f851ed81ce8acdf980aeaf7bf721018fac3d5e8e3e301b"
+    },
+    {
+      "binarySha256": "c11a7b660499424ca1f881c744587dc2e0a061028bfa6e6fc4ff33f1ad66eef2",
+      "textOffset": 1960448,
+      "textSize": 5822390,
+      "textSha256": "64095911cc50f5e865f851ed81ce8acdf980aeaf7bf721018fac3d5e8e3e301b"
+    }
+  ],
+  "textBytesEqual": true
+}
