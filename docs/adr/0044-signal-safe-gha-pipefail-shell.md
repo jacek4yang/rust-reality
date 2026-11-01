@@ -72,3 +72,12 @@ forbidden for these proofs: a surviving descendant `sleep` inherits piped
 stdout/stderr write ends and blocks the parent forever after the bash leader
 exits (Actions CI run `38010061875` stage-14 hang). Correctness is group
 reaping, not shortening or lengthening the blocker sleep.
+
+The live-member census excludes Linux Z/X states: an exited task may remain in
+`/proc` until its parent or orphan reaper waits, but it cannot execute or retain
+pipe writers. The proof reaps its direct child, observes pipe EOF, and requires
+no live group members within the existing interrupt bound after SIGKILL. This
+is a bounded semantic wait for asynchronous termination, not a fixed sleep or
+permission to leave a live descendant. A deterministic unreaped-child regression
+and a live-caller counterexample protect this distinction; product descriptor
+accounting and resource deadlines are unchanged.

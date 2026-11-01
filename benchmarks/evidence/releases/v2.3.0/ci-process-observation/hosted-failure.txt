@@ -1,0 +1,46 @@
+Repository quality	Run repository quality checks	﻿2026-11-01T13:37:42.5257625Z ##[group]Run cargo dev check --all
+Repository quality	Run repository quality checks	2026-11-01T13:37:42.5258019Z ^[[36;1mcargo dev check --all^[[0m
+Repository quality	Run repository quality checks	2026-11-01T13:37:42.5270683Z shell: /usr/bin/bash -e {0}
+Repository quality	Run repository quality checks	2026-11-01T13:37:42.5270912Z env:
+Repository quality	Run repository quality checks	2026-11-01T13:37:42.5271097Z   CARGO_TERM_COLOR: always
+Repository quality	Run repository quality checks	2026-11-01T13:37:42.5271319Z   NEXTEST_PROFILE: ci
+Repository quality	Run repository quality checks	2026-11-01T13:37:42.5271540Z ##[endgroup]
+Repository quality	Run repository quality checks	2026-11-01T13:38:39.8728589Z check all: 19 stages; full logs: /home/runner/work/rust-reality/rust-reality/target/rr-dev/check/1793540319872-2311
+Repository quality	Run repository quality checks	2026-11-01T13:38:40.0071481Z [01/19] PASS cargo dev repo check (134ms)
+Repository quality	Run repository quality checks	2026-11-01T13:38:40.0323294Z [02/19] PASS cargo dev docs check (25ms)
+Repository quality	Run repository quality checks	2026-11-01T13:38:40.0326696Z [03/19] PASS fuzz target manifest (0ms)
+Repository quality	Run repository quality checks	2026-11-01T13:39:56.8148666Z [04/19] PASS active-probe manifest (76.8s)
+Repository quality	Run repository quality checks	2026-11-01T13:39:56.8151794Z [05/19] PASS performance/cache contract (0ms)
+Repository quality	Run repository quality checks	2026-11-01T13:39:56.8172175Z [06/19] PASS deployment summary contract (2ms)
+Repository quality	Run repository quality checks	2026-11-01T13:39:57.6543422Z [07/19] PASS cargo fmt --all --check (837ms)
+Repository quality	Run repository quality checks	2026-11-01T13:39:59.3568549Z [08/19] PASS cargo fmt --manifest-path tools/Cargo.toml --all --check (1.7s)
+Repository quality	Run repository quality checks	2026-11-01T13:40:45.3631605Z [09/19] PASS cargo clippy --workspace --all-targets --all-features --locked -- -D warnings (46.0s)
+Repository quality	Run repository quality checks	2026-11-01T13:41:13.0179542Z [10/19] PASS cargo clippy --manifest-path tools/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings (27.7s)
+Repository quality	Run repository quality checks	2026-11-01T13:41:13.9354186Z [11/19] PASS cargo deny --all-features check bans licenses sources (917ms)
+Repository quality	Run repository quality checks	2026-11-01T13:41:22.5411548Z [12/19] PASS cargo doc --workspace --all-features --locked --no-deps (8.6s)
+Repository quality	Run repository quality checks	2026-11-01T13:42:23.4654731Z [13/19] PASS cargo nextest run --workspace --all-features --locked (60.9s)
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2246364Z [14/19] FAIL cargo test --manifest-path tools/Cargo.toml --workspace --all-features --locked (214.8s)
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2247304Z reason: `cargo test --manifest-path tools/Cargo.toml --workspace --all-features --locked` failed with exit status 101
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2248190Z ^[[1m^[[92m   Compiling^[[0m ring v0.17.14
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2248642Z ^[[1m^[[92m   Compiling^[[0m powerfmt v0.2.1
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2249041Z ^[[1m^[[92m   Compiling^[[0m num-conv v0.2.2
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2249413Z ^[[1m^[[92m   Compiling^[[0m deranged v0.5.9
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2249813Z ^[[1m^[[92m   Compiling^[[0m time-core v0.1.9
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2250209Z ^[[1m^[[92m   Compiling^[[0m pem v3.0.6
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2250555Z ^[[1m^[[92m   Compiling^[[0m md-5 v0.11.0
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2250892Z ^[[1m^[[92m   Compiling^[[0m time v0.3.55
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2251280Z ^[[1m^[[92m   Compiling^[[0m rustls-webpki v0.103.15
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2251659Z ^[[1m^[[92m   Compiling^[[0m yasna v0.5.2
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2251999Z ^[[1m^[[92m   Compiling^[[0m rustls v0.23.46
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2252329Z ^[[1m^[[92m   Compiling^[[0m rcgen v0.13.2
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2252773Z ^[[1m^[[92m   Compiling^[[0m ureq v3.4.0
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2253445Z ^[[1m^[[92m   Compiling^[[0m rust-reality v2.3.0 (/home/runner/work/rust-reality/rust-reality)
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2254385Z ^[[1m^[[92m   Compiling^[[0m rr-fingerprint v0.1.0 (/home/runner/work/rust-reality/rust-reality/tools/rr-fingerprint)
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2255556Z ^[[1m^[[92m   Compiling^[[0m rr-dev v0.1.0 (/home/runner/work/rust-reality/rust-reality/tools/rr-dev)
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2256665Z ^[[1m^[[92m   Compiling^[[0m rr-evidence-observe-server v0.1.0 (/home/runner/work/rust-reality/rust-reality/tools/rr-evidence-observe-server)
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2257764Z ^[[1m^[[92m    Finished^[[0m `test` profile [unoptimized + debuginfo] target(s) in 34.22s
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2258508Z ^[[1m^[[92m     Running^[[0m unittests src/main.rs (tools/target/debug/deps/rr_dev-1f42ec5394e4cf88)
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2259213Z ^[[1m^[[91merror^[[0m: test failed, to rerun pass `-p rr-dev --bin rr-dev`
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2260136Z stderr log: /home/runner/work/rust-reality/rust-reality/target/rr-dev/check/1793540319872-2311/14-cargo-test-manifest-path-tools-cargo-toml-workspace-all-features.stderr.log
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2261705Z FAIL check all: 13/19 passed in 438.4s; slowest: cargo test --manifest-path tools/Cargo.toml --workspace --all-features --locked (214.8s); logs: /home/runner/work/rust-reality/rust-reality/target/rr-dev/check/1793540319872-2311
+Repository quality	Run repository quality checks	2026-11-01T13:45:58.2266213Z ##[error]Process completed with exit code 1.

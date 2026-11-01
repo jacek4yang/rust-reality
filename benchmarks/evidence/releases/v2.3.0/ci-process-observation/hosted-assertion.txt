@@ -1,0 +1,7 @@
+---- ci::tests::sigint_group_kill_reaps_sleep_orphan_holding_pipes stdout ----
+
+thread 'ci::tests::sigint_group_kill_reaps_sleep_orphan_holding_pipes' (17791) panicked at rr-dev/src/ci.rs:304:9:
+process group 17792 still has live members after INT+KILL: [17793]; sleep orphans are forbidden
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
