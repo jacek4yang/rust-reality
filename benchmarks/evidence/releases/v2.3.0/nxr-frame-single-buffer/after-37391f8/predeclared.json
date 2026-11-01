@@ -1,0 +1,50 @@
+{
+  "scope": "Paired NXR UDP encoder-only diagnostic; not production package throughput or full association acceptance.",
+  "baselineSource": "54c204af0a1c9a8568c530b8d3ffadaded39e25c",
+  "candidateSource": "37391f86c8d58ade672c25453a855b69e7d81932",
+  "allocationCases": {
+    "scope": "Diagnostic allocation attribution of unchanged canonical NXR UDP frame writer. Not an end-to-end, latency, throughput or release acceptance result. No product source change.",
+    "source": "54c204af0a1c9a8568c530b8d3ffadaded39e25c",
+    "runtimeComparison": "git diff 54c204af 76dd5448 -- src/protocol/nxr_udp is empty",
+    "hypothesis": "After caller buffer warmup, body and optional destination scratch vectors allocate on every frame. Heaptrack slope and stacks must substantiate this before considering optimization.",
+    "cases": [
+      "none",
+      "ipv4",
+      "ipv6",
+      "domain",
+      "maximum-domain"
+    ],
+    "payloadBytes": [
+      64,
+      1200,
+      7526
+    ],
+    "iterationCounts": [
+      0,
+      10000
+    ],
+    "criterion": "For each case subtract matched zero-iteration startup call count; inspect allocation backtraces to attribute incremental calls. No timing claims from instrumentation. No acceptance threshold or product optimization inferred from static source alone.",
+    "probeSha256": "e1e639a5b9045a762cfaa3eb1f669f1dd8f5965d84cdeba96b5326c20a8da4f5"
+  },
+  "cpuComparison": {
+    "blocks": 20,
+    "order": "ABBA (baseline,candidate,candidate,baseline)",
+    "cases": [
+      "none",
+      "ipv4",
+      "ipv6",
+      "domain",
+      "maximum-domain"
+    ],
+    "payloadBytes": [
+      64,
+      1200,
+      7526
+    ],
+    "encodesPerProcess": 100000,
+    "cpu": "Child user+system CPU via getrusage; balanced per-block arithmetic mean ratio candidate/baseline",
+    "interval": "10000 deterministic bootstrap resamples of 20 block ratios, median 95% percentile interval",
+    "guard": "All 15 upper CPU ratios <=1.05; crossing is unresolved and requires investigation. Allocation savings must repeat all 15 cases. No favorable early stop or pooling. Full product/release gates remain independently required.",
+    "host": "P-core policies 0..7 fixed 2.4 GHz, child affinity CPU2; no local compilation or archive verification; restore exact previous CPU policy on all exits."
+  }
+}

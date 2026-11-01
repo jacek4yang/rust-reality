@@ -1,0 +1,624 @@
+reading file "/home/jacek/.cache/rr-v230-nxr-frame-after/ipv6-1200-10000.gz.zst" - please wait, this might take some time...
+Debuggee command was: /home/jacek/.cache/rr-v230-nxr-frame-after/probe 10000 ipv6 1200
+finished reading file, now analyzing data:
+
+MOST CALLS TO ALLOCATION FUNCTIONS
+8 calls to allocation functions with 1.63K peak consumption from
+_RNvNtCsgFX3jaOk65H_5alloc5alloc5alloc
+  at library/alloc/src/alloc.rs:130
+  in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+_RNvMs0_NtCsgFX3jaOk65H_5alloc5allocNtB5_6Global18alloc_impl_runtime
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/alloc.rs:302
+_RNvMs0_NtCsgFX3jaOk65H_5alloc5allocNtB5_6Global10alloc_impl
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/alloc.rs:424
+_RNvXs1_NtCsgFX3jaOk65H_5alloc5allocNtB5_6GlobalNtNtCskADBYZwJmSU_4core5alloc9Allocator8allocate
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/alloc.rs:541
+_RNvMs1_NtCsgFX3jaOk65H_5alloc5boxedINtB5_3BoxeE21try_clone_from_ref_inCs8ZKwes1zzDd_3std
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:886
+_RNvMs1_NtCsgFX3jaOk65H_5alloc5boxedINtB5_3BoxeE17clone_from_ref_inCs8ZKwes1zzDd_3std
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:845
+_RNvMs0_NtCsgFX3jaOk65H_5alloc5boxedINtB5_3BoxeE14clone_from_refCs8ZKwes1zzDd_3std
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:798
+_RNvXs3_NtNtCsgFX3jaOk65H_5alloc5boxed7convertINtB7_3BoxeEINtNtCskADBYZwJmSU_4core7convert4FromReE4from
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed/convert.rs:138
+_RNvYNvYINtNtCsgFX3jaOk65H_5alloc5boxed3BoxeEINtNtCskADBYZwJmSU_4core7convert4FromReE4fromINtNtNtBL_3ops8function6FnOnceTB1h_EE9call_onceCs8ZKwes1zzDd_3std
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+_RINvMNtCskADBYZwJmSU_4core6optionINtB3_6OptionReE3mapINtNtCsgFX3jaOk65H_5alloc5boxed3BoxeENvYBP_INtNtB5_7convert4FromBI_E4fromECs8ZKwes1zzDd_3std
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/option.rs:1163
+_RNCNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow11thread_info16set_current_info0Bd_
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow/thread_info.rs:114
+_RNCINvNtNtCs8ZKwes1zzDd_3std6thread7current17with_current_nameNCNvNtNtNtNtNtB8_3sys3pal4unix14stack_overflow11thread_info16set_current_info0INtNtCskADBYZwJmSU_4core6option6OptionINtNtCsgFX3jaOk65H_5alloc5boxed3BoxeEEE0B8_
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/current.rs:234
+_RINvNtNtCs8ZKwes1zzDd_3std6thread7current16try_with_currentNCINvB2_17with_current_nameNCNvNtNtNtNtNtB6_3sys3pal4unix14stack_overflow11thread_info16set_current_info0INtNtCskADBYZwJmSU_4core6option6OptionINtNtCsgFX3jaOk65H_5alloc5boxed3BoxeEEE0B2C_EB6_
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/current.rs:204
+_RINvNtNtCs8ZKwes1zzDd_3std6thread7current17with_current_nameNCNvNtNtNtNtNtB6_3sys3pal4unix14stack_overflow11thread_info16set_current_info0INtNtCskADBYZwJmSU_4core6option6OptionINtNtCsgFX3jaOk65H_5alloc5boxed3BoxeEEEB6_
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/thread/current.rs:216
+_RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow11thread_info16set_current_info
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow/thread_info.rs:114
+4 calls with 61B peak consumption from:
+    _RNvCsaI8q6QY60dn_5probe4main
+      at /home/jacek/.cache/rr-v230-nxr-frame-after/probe.rs:4
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvYFEuINtNtNtCskADBYZwJmSU_4core3ops8function6FnOnceuE9call_onceCsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNtNtCs8ZKwes1zzDd_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166
+    _RNCINvNtCs8ZKwes1zzDd_3std2rt10lang_startuE0CsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:206
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvXs0_NtNtNtCskADBYZwJmSU_4core3ops8function5implsRDINtB7_2FnuEp6OutputlNtNtNtBb_5panic11unwind_safe13RefUnwindSafeNtNtBb_6marker4SyncEL_INtB7_6FnOnceuE9call_onceCs8ZKwes1zzDd_3std
+      at library/core/src/ops/function.rs:287
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindlRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBU_5panic11unwind_safe13RefUnwindSafeNtNtBU_6marker4SyncEL_EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBP_5panic11unwind_safe13RefUnwindSafeNtNtBP_6marker4SyncEL_lEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:175
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+1 calls with 4B peak consumption from:
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at library/std/src/sys/pal/unix/stack_overflow.rs:185
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+1 calls with 544B peak consumption from:
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at library/std/src/sys/pal/unix/stack_overflow.rs:185
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+1 calls with 0B peak consumption from:
+    _RNvCsaI8q6QY60dn_5probe4main
+      at /home/jacek/.cache/rr-v230-nxr-frame-after/probe.rs:4
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvYFEuINtNtNtCskADBYZwJmSU_4core3ops8function6FnOnceuE9call_onceCsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNtNtCs8ZKwes1zzDd_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166
+    _RNCINvNtCs8ZKwes1zzDd_3std2rt10lang_startuE0CsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:206
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvXs0_NtNtNtCskADBYZwJmSU_4core3ops8function5implsRDINtB7_2FnuEp6OutputlNtNtNtBb_5panic11unwind_safe13RefUnwindSafeNtNtBb_6marker4SyncEL_INtB7_6FnOnceuE9call_onceCs8ZKwes1zzDd_3std
+      at library/core/src/ops/function.rs:287
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindlRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBU_5panic11unwind_safe13RefUnwindSafeNtNtBU_6marker4SyncEL_EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBP_5panic11unwind_safe13RefUnwindSafeNtNtBP_6marker4SyncEL_lEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:175
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+1 calls with 1.02K peak consumption from:
+    _RNvMs0_NtNtNtNtCs8ZKwes1zzDd_3std3sys4sync4once5futexNtB5_4Once4call
+      at library/std/src/sys/sync/once/futex.rs:183
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvMs0_NtNtCs8ZKwes1zzDd_3std4sync4onceNtB6_4Once15call_once_forceNCINvMNtB8_9once_lockINtB19_8OnceLockINtNtB8_14reentrant_lock13ReentrantLockINtNtCskADBYZwJmSU_4core4cell7RefCellINtNtNtNtCsgFX3jaOk65H_5alloc2io8buffered10linewriter10LineWriterNtNtNtBa_2io5stdio9StdoutRawEEEE10initializeNCINvB18_11get_or_initNCNvB3X_6stdout0E0zE0EBa_
+      at library/std/src/sync/once.rs:226
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvMNtNtCs8ZKwes1zzDd_3std4sync9once_lockINtB3_8OnceLockINtNtB5_14reentrant_lock13ReentrantLockINtNtCskADBYZwJmSU_4core4cell7RefCellINtNtNtNtCsgFX3jaOk65H_5alloc2io8buffered10linewriter10LineWriterNtNtNtB7_2io5stdio9StdoutRawEEEE10initializeNCINvB2_11get_or_initNCNvB3c_6stdout0E0zEB7_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sync/once_lock.rs:571
+    _RINvMNtNtCs8ZKwes1zzDd_3std4sync9once_lockINtB3_8OnceLockINtNtB5_14reentrant_lock13ReentrantLockINtNtCskADBYZwJmSU_4core4cell7RefCellINtNtNtNtCsgFX3jaOk65H_5alloc2io8buffered10linewriter10LineWriterNtNtNtB7_2io5stdio9StdoutRawEEEE15get_or_try_initNCINvB2_11get_or_initNCNvB3c_6stdout0E0zEB7_
+      at library/std/src/sync/once_lock.rs:439
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvMNtNtCs8ZKwes1zzDd_3std4sync9once_lockINtB3_8OnceLockINtNtB5_14reentrant_lock13ReentrantLockINtNtCskADBYZwJmSU_4core4cell7RefCellINtNtNtNtCsgFX3jaOk65H_5alloc2io8buffered10linewriter10LineWriterNtNtNtB7_2io5stdio9StdoutRawEEEE11get_or_initNCNvB3c_6stdout0EB7_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sync/once_lock.rs:350
+    _RNvNtNtCs8ZKwes1zzDd_3std2io5stdio6stdout
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/io/stdio.rs:722
+    _RINvNtNtCs8ZKwes1zzDd_3std2io5stdio8print_toNtB2_6StdoutEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/io/stdio.rs:1167
+    _RNvNtNtCs8ZKwes1zzDd_3std2io5stdio6__print
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/io/stdio.rs:1275
+    _RNvCsaI8q6QY60dn_5probe4main
+      at /home/jacek/.cache/rr-v230-nxr-frame-after/probe.rs:26
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvYFEuINtNtNtCskADBYZwJmSU_4core3ops8function6FnOnceuE9call_onceCsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNtNtCs8ZKwes1zzDd_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166
+    _RNCINvNtCs8ZKwes1zzDd_3std2rt10lang_startuE0CsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:206
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvXs0_NtNtNtCskADBYZwJmSU_4core3ops8function5implsRDINtB7_2FnuEp6OutputlNtNtNtBb_5panic11unwind_safe13RefUnwindSafeNtNtBb_6marker4SyncEL_INtB7_6FnOnceuE9call_onceCs8ZKwes1zzDd_3std
+      at library/core/src/ops/function.rs:287
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindlRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBU_5panic11unwind_safe13RefUnwindSafeNtNtBU_6marker4SyncEL_EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBP_5panic11unwind_safe13RefUnwindSafeNtNtBP_6marker4SyncEL_lEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:175
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+3 calls to allocation functions with 9.12K peak consumption from
+_RNvNtCsgFX3jaOk65H_5alloc5alloc5alloc
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/alloc.rs:130
+  in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+_RNvMs0_NtCsgFX3jaOk65H_5alloc5allocNtB5_6Global18alloc_impl_runtime
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/alloc.rs:302
+_RNvMs0_NtCsgFX3jaOk65H_5alloc5allocNtB5_6Global10alloc_impl
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/alloc.rs:424
+_RNvXs1_NtCsgFX3jaOk65H_5alloc5allocNtB5_6GlobalNtNtCskADBYZwJmSU_4core5alloc9Allocator8allocate
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/alloc.rs:541
+_RNvMs5_NtCsgFX3jaOk65H_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inCsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:466
+_RNvMs5_NtCsgFX3jaOk65H_5alloc7raw_vecNtB5_11RawVecInner16with_capacity_inCsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:435
+_RNvMs4_NtCsgFX3jaOk65H_5alloc7raw_vecINtB5_6RawVecNtNtB7_6string6StringE16with_capacity_inCsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177
+_RNvMsG_NtCsgFX3jaOk65H_5alloc3vecINtB5_3VecNtNtB7_6string6StringE16with_capacity_inCsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969
+_RNvMNtCsgFX3jaOk65H_5alloc3vecINtB2_3VecNtNtB4_6string6StringE13with_capacityCsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522
+_RNvXNtNtCsgFX3jaOk65H_5alloc3vec21spec_from_iter_nestedINtB4_3VecNtNtB6_6string6StringEINtB2_18SpecFromIterNestedB11_NtNtCs8ZKwes1zzDd_3std3env4ArgsE9from_iterCsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/spec_from_iter_nested.rs:30
+_RNvXNtNtCsgFX3jaOk65H_5alloc3vec14spec_from_iterINtB4_3VecNtNtB6_6string6StringEINtB2_12SpecFromIterBU_NtNtCs8ZKwes1zzDd_3std3env4ArgsE9from_iterCsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/spec_from_iter.rs:33
+_RINvXsf_NtCsgFX3jaOk65H_5alloc3vecINtB6_3VecNtNtB8_6string6StringEINtNtNtNtCskADBYZwJmSU_4core4iter6traits7collect12FromIteratorBG_E9from_iterNtNtCs8ZKwes1zzDd_3std3env4ArgsECsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:3996
+_RINvYNtNtCs8ZKwes1zzDd_3std3env4ArgsNtNtNtNtCskADBYZwJmSU_4core4iter6traits8iterator8Iterator7collectINtNtCsgFX3jaOk65H_5alloc3vec3VecNtNtB1G_6string6StringEECsaI8q6QY60dn_5probe
+  at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/iter/traits/iterator.rs:2086
+_RNvCsaI8q6QY60dn_5probe4main
+  at /home/jacek/.cache/rr-v230-nxr-frame-after/probe.rs:4
+1 calls with 96B peak consumption from:
+    _RNvYFEuINtNtNtCskADBYZwJmSU_4core3ops8function6FnOnceuE9call_onceCsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNtNtCs8ZKwes1zzDd_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166
+    _RNCINvNtCs8ZKwes1zzDd_3std2rt10lang_startuE0CsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:206
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvXs0_NtNtNtCskADBYZwJmSU_4core3ops8function5implsRDINtB7_2FnuEp6OutputlNtNtNtBb_5panic11unwind_safe13RefUnwindSafeNtNtBb_6marker4SyncEL_INtB7_6FnOnceuE9call_onceCs8ZKwes1zzDd_3std
+      at library/core/src/ops/function.rs:287
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindlRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBU_5panic11unwind_safe13RefUnwindSafeNtNtBU_6marker4SyncEL_EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBP_5panic11unwind_safe13RefUnwindSafeNtNtBP_6marker4SyncEL_lEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:175
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+1 calls with 1.20K peak consumption from:
+    _RNvYFEuINtNtNtCskADBYZwJmSU_4core3ops8function6FnOnceuE9call_onceCsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNtNtCs8ZKwes1zzDd_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166
+    _RNCINvNtCs8ZKwes1zzDd_3std2rt10lang_startuE0CsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:206
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvXs0_NtNtNtCskADBYZwJmSU_4core3ops8function5implsRDINtB7_2FnuEp6OutputlNtNtNtBb_5panic11unwind_safe13RefUnwindSafeNtNtBb_6marker4SyncEL_INtB7_6FnOnceuE9call_onceCs8ZKwes1zzDd_3std
+      at library/core/src/ops/function.rs:287
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindlRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBU_5panic11unwind_safe13RefUnwindSafeNtNtBU_6marker4SyncEL_EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBP_5panic11unwind_safe13RefUnwindSafeNtNtBP_6marker4SyncEL_lEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:175
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+1 calls with 7.83K peak consumption from:
+    _RNvYFEuINtNtNtCskADBYZwJmSU_4core3ops8function6FnOnceuE9call_onceCsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNtNtCs8ZKwes1zzDd_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166
+    _RNCINvNtCs8ZKwes1zzDd_3std2rt10lang_startuE0CsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:206
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvXs0_NtNtNtCskADBYZwJmSU_4core3ops8function5implsRDINtB7_2FnuEp6OutputlNtNtNtBb_5panic11unwind_safe13RefUnwindSafeNtNtBb_6marker4SyncEL_INtB7_6FnOnceuE9call_onceCs8ZKwes1zzDd_3std
+      at library/core/src/ops/function.rs:287
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindlRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBU_5panic11unwind_safe13RefUnwindSafeNtNtBU_6marker4SyncEL_EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBP_5panic11unwind_safe13RefUnwindSafeNtNtBP_6marker4SyncEL_lEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:175
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 1.20K peak consumption from
+_RNvNtNtNtCsHnFHAC5PMO_12rust_reality8protocol7nxr_udp4wire12decode_frame
+  in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+1 calls with 1.20K peak consumption from:
+    _RNvCsaI8q6QY60dn_5probe4main
+      at /home/jacek/.cache/rr-v230-nxr-frame-after/probe.rs:20
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvYFEuINtNtNtCskADBYZwJmSU_4core3ops8function6FnOnceuE9call_onceCsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/ops/function.rs:250
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNtNtCs8ZKwes1zzDd_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/backtrace.rs:166
+    _RNCINvNtCs8ZKwes1zzDd_3std2rt10lang_startuE0CsaI8q6QY60dn_5probe
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:206
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvXs0_NtNtNtCskADBYZwJmSU_4core3ops8function5implsRDINtB7_2FnuEp6OutputlNtNtNtBb_5panic11unwind_safe13RefUnwindSafeNtNtBb_6marker4SyncEL_INtB7_6FnOnceuE9call_onceCs8ZKwes1zzDd_3std
+      at library/core/src/ops/function.rs:287
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtB13_5panic11unwind_safe13RefUnwindSafeNtNtB13_6marker4SyncEL_lEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindlRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBU_5panic11unwind_safe13RefUnwindSafeNtNtBU_6marker4SyncEL_EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindRDINtNtNtCskADBYZwJmSU_4core3ops8function2FnuEp6OutputlNtNtNtBP_5panic11unwind_safe13RefUnwindSafeNtNtBP_6marker4SyncEL_lEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:175
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 0B peak consumption from
+__pthread_getattr_np
+  at ./nptl/pthread_getattr_np.c:180
+  in /usr/lib/x86_64-linux-gnu/libc.so.6
+1 calls with 0B peak consumption from:
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp15get_stack_start
+      at library/std/src/sys/pal/unix/stack_overflow.rs:366
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp19stack_start_aligned
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:383
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp24install_main_guard_linux
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:441
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp18install_main_guard
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:407
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:161
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 0B peak consumption from
+_IO_new_fopen::__fopen_internal
+  at ./libio/iofopen.c:65
+  in /usr/lib/x86_64-linux-gnu/libc.so.6
+_IO_new_fopen
+  at ./libio/./libio/iofopen.c:86
+1 calls with 0B peak consumption from:
+    __pthread_getattr_np
+      at ./nptl/pthread_getattr_np.c:85
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp15get_stack_start
+      at library/std/src/sys/pal/unix/stack_overflow.rs:366
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp19stack_start_aligned
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:383
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp24install_main_guard_linux
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:441
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp18install_main_guard
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:407
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:161
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 0B peak consumption from
+__GI___getdelim
+  at ./libio/iogetdelim.c:65
+  in /usr/lib/x86_64-linux-gnu/libc.so.6
+1 calls with 0B peak consumption from:
+    __pthread_getattr_np
+      at ./nptl/pthread_getattr_np.c:122
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp15get_stack_start
+      at library/std/src/sys/pal/unix/stack_overflow.rs:366
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp19stack_start_aligned
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:383
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp24install_main_guard_linux
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:441
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp18install_main_guard
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:407
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:161
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 0B peak consumption from
+__GI___getdelim
+  at ./libio/iogetdelim.c:111
+  in /usr/lib/x86_64-linux-gnu/libc.so.6
+1 calls with 0B peak consumption from:
+    __pthread_getattr_np
+      at ./nptl/pthread_getattr_np.c:122
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp15get_stack_start
+      at library/std/src/sys/pal/unix/stack_overflow.rs:366
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp19stack_start_aligned
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:383
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp24install_main_guard_linux
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:441
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp18install_main_guard
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:407
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:161
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 0B peak consumption from
+__GI__IO_file_doallocate
+  at ./libio/filedoalloc.c:91
+  in /usr/lib/x86_64-linux-gnu/libc.so.6
+1 calls with 0B peak consumption from:
+    __GI__IO_doallocbuf
+      at ./libio/genops.c:373
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    _IO_new_file_underflow
+      at ./libio/fileops.c:520
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    __GI___getdelim
+      at ./libio/iogetdelim.c:81
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    __pthread_getattr_np
+      at ./nptl/pthread_getattr_np.c:122
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp15get_stack_start
+      at library/std/src/sys/pal/unix/stack_overflow.rs:366
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp19stack_start_aligned
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:383
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp24install_main_guard_linux
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:441
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp18install_main_guard
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:407
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:161
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 0B peak consumption from
+__GI___pthread_attr_setaffinity_np
+  at ./nptl/pthread_attr_setaffinity.c:51
+  in /usr/lib/x86_64-linux-gnu/libc.so.6
+1 calls with 0B peak consumption from:
+    __pthread_getattr_np
+      at ./nptl/pthread_getattr_np.c:194
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp15get_stack_start
+      at library/std/src/sys/pal/unix/stack_overflow.rs:366
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp19stack_start_aligned
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:383
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp24install_main_guard_linux
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:441
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp18install_main_guard
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:407
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:161
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+1 calls to allocation functions with 0B peak consumption from
+__pthread_attr_extension
+  at ./nptl/pthread_attr_extension.c:28
+  in /usr/lib/x86_64-linux-gnu/libc.so.6
+1 calls with 0B peak consumption from:
+    __GI___pthread_attr_setaffinity_np
+      at ./nptl/pthread_attr_setaffinity.c:45
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    __pthread_getattr_np
+      at ./nptl/pthread_getattr_np.c:194
+      in /usr/lib/x86_64-linux-gnu/libc.so.6
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp15get_stack_start
+      at library/std/src/sys/pal/unix/stack_overflow.rs:366
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp19stack_start_aligned
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:383
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp24install_main_guard_linux
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:441
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp18install_main_guard
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:407
+    _RNvNtNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix14stack_overflow3imp4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/stack_overflow.rs:161
+    _RNvNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/sys/pal/unix/mod.rs:38
+    _RNvNtCs8ZKwes1zzDd_3std2rt4init
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:118
+    _RNCNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal0B5_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:173
+    _RINvNvNtCs8ZKwes1zzDd_3std9panicking12catch_unwind7do_callNCNvNtB6_2rt19lang_start_internal0iEB6_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:576
+    _RINvNtCs8ZKwes1zzDd_3std9panicking12catch_unwindiNCNvNtB4_2rt19lang_start_internal0EB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panicking.rs:544
+    _RINvNtCs8ZKwes1zzDd_3std5panic12catch_unwindNCNvNtB4_2rt19lang_start_internal0iEB4_
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/panic.rs:359
+    _RNvNtCs8ZKwes1zzDd_3std2rt19lang_start_internal
+      at /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/rt.rs:171
+    main
+      in /home/jacek/.cache/rr-v230-nxr-frame-after/probe
+
+
+total runtime: 0.01s.
+calls to allocation functions: 20 (1818/s)
+temporary memory allocations: 2 (181/s)
+peak heap memory consumption: 85.69K
+peak RSS (including heaptrack overhead): 5.30M
+total memory leaked: 548B
