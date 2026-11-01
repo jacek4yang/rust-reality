@@ -17,6 +17,54 @@ use crate::protocol::{
     },
 };
 
+const UPLOAD_FRAME_PAYLOAD: usize = crate::protocol::vless::VISION_FRAME_SIZE - 5;
+pub(super) const UPLOAD_RECORD_PAYLOAD: usize = 2 * UPLOAD_FRAME_PAYLOAD;
+
+/// Reads only available bytes into final frame bodies. A pending readiness wait
+/// owns no input; after a successful read there is no await before returning it.
+pub(super) async fn read_upload(
+    local: &tokio::net::TcpStream,
+    storage: &mut [u8],
+) -> io::Result<usize> {
+    let regions_used = 2 * (storage.len() / RECORD_SLOT_WIRE_CAPACITY);
+    let mut regions = upload_payload_regions(storage)?;
+    std::future::poll_fn(|cx| {
+        loop {
+            std::task::ready!(local.poll_read_ready(cx))?;
+            match local.try_read_vectored(&mut regions[..regions_used]) {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                result => return std::task::Poll::Ready(result),
+            }
+        }
+    })
+    .await
+}
+
+fn upload_payload_regions(storage: &mut [u8]) -> io::Result<[io::IoSliceMut<'_>; 4]> {
+    // The committed preamble consumed the UUID. Every full frame has zero
+    // padding, so only the final partial frame needs space after its payload.
+    if storage.len() != RECORD_SLOT_WIRE_CAPACITY && storage.len() != 2 * RECORD_SLOT_WIRE_CAPACITY
+    {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let (first, second) = storage.split_at_mut(RECORD_SLOT_WIRE_CAPACITY);
+    let (a, b) =
+        first.split_at_mut(TLS_RECORD_HEADER_LEN + crate::protocol::vless::VISION_FRAME_SIZE);
+    let mut regions = [
+        io::IoSliceMut::new(&mut a[TLS_RECORD_HEADER_LEN + 5..]),
+        io::IoSliceMut::new(&mut b[5..5 + UPLOAD_FRAME_PAYLOAD]),
+        io::IoSliceMut::new(&mut []),
+        io::IoSliceMut::new(&mut []),
+    ];
+    if !second.is_empty() {
+        let (a, b) =
+            second.split_at_mut(TLS_RECORD_HEADER_LEN + crate::protocol::vless::VISION_FRAME_SIZE);
+        regions[2] = io::IoSliceMut::new(&mut a[TLS_RECORD_HEADER_LEN + 5..]);
+        regions[3] = io::IoSliceMut::new(&mut b[5..5 + UPLOAD_FRAME_PAYLOAD]);
+    }
+    Ok(regions)
+}
+
 /// Vision / VLESS session failure.
 #[derive(Debug)]
 pub enum VisionTunnelError {
@@ -235,17 +283,18 @@ impl VisionIo {
         self.writer.take_write_storage()
     }
 
-    /// Moves at most two records of local payload into final AEAD slots in the
-    /// same retained allocation. Work backwards so headers cannot overwrite
-    /// bytes belonging to a later frame. Each body moves exactly once.
+    /// Completes headers and padding around at most two records of payload read
+    /// directly into their final AEAD slots. No payload is moved or copied.
     pub(super) async fn write_upload(
         &mut self,
         storage: &mut Vec<u8>,
         length: usize,
     ) -> Result<(), VisionTunnelError> {
         if length == 0
-            || length > 4 * (crate::protocol::vless::VISION_FRAME_SIZE - 5)
-            || length > storage.len()
+            || length > 2 * UPLOAD_RECORD_PAYLOAD
+            || length > (storage.len() / RECORD_SLOT_WIRE_CAPACITY) * UPLOAD_RECORD_PAYLOAD
+            || (storage.len() != RECORD_SLOT_WIRE_CAPACITY
+                && storage.len() != 2 * RECORD_SLOT_WIRE_CAPACITY)
         {
             return Err(VisionTunnelError::Vision);
         }
@@ -258,23 +307,14 @@ impl VisionIo {
         } else {
             None
         };
-        let slots = 1 + usize::from(second.is_some());
-        let required = slots * RECORD_SLOT_WIRE_CAPACITY;
-        if storage.len() < required {
-            storage
-                .try_reserve_exact(required - storage.len())
-                .map_err(|_| VisionTunnelError::Io(io::ErrorKind::OutOfMemory.into()))?;
-            storage.resize(required, 0);
-        }
         if let Some(second) = &second {
-            second.assemble_in_place(
+            second.complete_in_place(
                 &self.encoder,
                 storage,
-                first.payload_len(),
                 RECORD_SLOT_WIRE_CAPACITY + TLS_RECORD_HEADER_LEN,
             );
         }
-        first.assemble_in_place(&self.encoder, storage, 0, TLS_RECORD_HEADER_LEN);
+        first.complete_in_place(&self.encoder, storage, TLS_RECORD_HEADER_LEN);
         self.writer
             .write_filled_storage(
                 storage,
@@ -376,22 +416,11 @@ impl UploadRecord {
         }
     }
 
-    fn assemble_in_place(
-        &self,
-        encoder: &VisionEncoder,
-        storage: &mut [u8],
-        source: usize,
-        target: usize,
-    ) {
+    fn complete_in_place(&self, encoder: &VisionEncoder, storage: &mut [u8], target: usize) {
         if let Some(second) = &self.second {
             let start = target + self.first.wire_len();
-            storage.copy_within(
-                source + self.first_len..source + self.payload_len(),
-                start + 5,
-            );
             encoder.assemble_layout(second, &mut storage[start..start + second.wire_len()]);
         }
-        storage.copy_within(source..source + self.first_len, target + 5);
         encoder.assemble_layout(
             &self.first,
             &mut storage[target..target + self.first.wire_len()],
@@ -459,6 +488,16 @@ pub fn fuzz_vision_response(input: &[u8]) {
 }
 
 #[cfg(any(test, feature = "fuzzing"))]
+fn stage_upload_payload(storage: &mut [u8], mut payload: &[u8]) {
+    for mut region in upload_payload_regions(storage).unwrap() {
+        let count = region.len().min(payload.len());
+        region[..count].copy_from_slice(&payload[..count]);
+        payload = &payload[count..];
+    }
+    assert!(payload.is_empty());
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
 fn fuzz_upload_assembly(input: &[u8]) {
     if input.is_empty() {
         return;
@@ -475,8 +514,9 @@ fn fuzz_upload_assembly(input: &[u8]) {
     let second = (first.payload_len() < input.len())
         .then(|| UploadRecord::plan(&mut encoder, input.len() - first.payload_len()).unwrap());
     let mut reference = vec![0_u8; 2 * RECORD_SLOT_WIRE_CAPACITY];
-    let mut actual = reference.clone();
-    actual[..input.len()].copy_from_slice(input);
+    let mut actual =
+        vec![0_u8; input.len().div_ceil(UPLOAD_RECORD_PAYLOAD) * RECORD_SLOT_WIRE_CAPACITY];
+    stage_upload_payload(&mut actual, input);
     if let Some(second) = &second {
         let start = RECORD_SLOT_WIRE_CAPACITY + TLS_RECORD_HEADER_LEN;
         second.assemble(
@@ -484,7 +524,7 @@ fn fuzz_upload_assembly(input: &[u8]) {
             &input[first.payload_len()..],
             &mut reference[start..start + second.wire_len()],
         );
-        second.assemble_in_place(&encoder, &mut actual, first.payload_len(), start);
+        second.complete_in_place(&encoder, &mut actual, start);
         assert_eq!(
             &actual[start..start + second.wire_len()],
             &reference[start..start + second.wire_len()]
@@ -496,7 +536,7 @@ fn fuzz_upload_assembly(input: &[u8]) {
         &input[..first.payload_len()],
         &mut reference[start..start + first.wire_len()],
     );
-    first.assemble_in_place(&encoder, &mut actual, 0, start);
+    first.complete_in_place(&encoder, &mut actual, start);
     assert_eq!(
         &actual[start..start + first.wire_len()],
         &reference[start..start + first.wire_len()]
@@ -524,6 +564,117 @@ mod tests {
                 let payload: Vec<u8> = (0..length).map(|i| (i as u8).wrapping_add(seed)).collect();
                 fuzz_upload_assembly(&payload);
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn vectored_upload_preserves_payload_and_reserved_wire_bytes() {
+        for slots in [1, 2] {
+            for length in [1, 8187, 8188, 16374, 16375, 32748] {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let (local, peer) = tokio::join!(
+                    TcpStream::connect(listener.local_addr().unwrap()),
+                    listener.accept()
+                );
+                let local = local.unwrap();
+                let (mut peer, _) = peer.unwrap();
+                let payload: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
+                peer.write_all(&payload).await.unwrap();
+                peer.shutdown().await.unwrap();
+                let mut storage = vec![0xa5; slots * RECORD_SLOT_WIRE_CAPACITY];
+                let pointer = storage.as_ptr();
+                let mut received = Vec::new();
+                loop {
+                    storage.fill(0xa5);
+                    let count = read_upload(&local, &mut storage).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    let mut remaining = count;
+                    for record in storage.as_chunks::<RECORD_SLOT_WIRE_CAPACITY>().0 {
+                        assert!(record[..TLS_RECORD_HEADER_LEN].iter().all(|b| *b == 0xa5));
+                        for frame in 0..2 {
+                            let start = TLS_RECORD_HEADER_LEN
+                                + frame * crate::protocol::vless::VISION_FRAME_SIZE;
+                            assert!(record[start..start + 5].iter().all(|b| *b == 0xa5));
+                            let size = remaining.min(UPLOAD_FRAME_PAYLOAD);
+                            received.extend_from_slice(&record[start + 5..start + 5 + size]);
+                            assert!(
+                                record[start + 5 + size..start + 5 + UPLOAD_FRAME_PAYLOAD]
+                                    .iter()
+                                    .all(|b| *b == 0xa5)
+                            );
+                            remaining -= size;
+                        }
+                        assert!(
+                            record[TLS_RECORD_HEADER_LEN + MAX_PLAINTEXT_LEN..]
+                                .iter()
+                                .all(|b| *b == 0xa5)
+                        );
+                    }
+                    assert_eq!(remaining, 0);
+                    assert_eq!(storage.as_ptr(), pointer);
+                }
+                assert_eq!(received, payload);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_vectored_upload_can_be_cancelled_without_consuming_input() {
+        use std::{
+            future::Future,
+            task::{Context, Poll, Waker},
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (local, peer) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let local = local.unwrap();
+        let (mut peer, _) = peer.unwrap();
+        let mut storage = vec![0_u8; RECORD_SLOT_WIRE_CAPACITY];
+        {
+            let mut pending = Box::pin(read_upload(&local, &mut storage));
+            assert!(matches!(
+                pending
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+        }
+        peer.write_all(b"a").await.unwrap();
+        assert_eq!(read_upload(&local, &mut storage).await.unwrap(), 1);
+        assert_eq!(storage[TLS_RECORD_HEADER_LEN + 5], b'a');
+        {
+            // A successful short read can leave cached readiness. Exhausting it
+            // must return Pending and a later write must still wake the reader.
+            let mut pending = Box::pin(read_upload(&local, &mut storage));
+            assert!(matches!(
+                pending
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+        }
+        peer.write_all(b"b").await.unwrap();
+        peer.shutdown().await.unwrap();
+        assert_eq!(read_upload(&local, &mut storage).await.unwrap(), 1);
+        assert_eq!(storage[TLS_RECORD_HEADER_LEN + 5], b'b');
+        assert_eq!(read_upload(&local, &mut storage).await.unwrap(), 0);
+    }
+
+    #[test]
+    fn vectored_upload_rejects_incomplete_or_oversized_storage() {
+        for length in [
+            0,
+            RECORD_SLOT_WIRE_CAPACITY - 1,
+            RECORD_SLOT_WIRE_CAPACITY + 1,
+            2 * RECORD_SLOT_WIRE_CAPACITY + 1,
+        ] {
+            let mut storage = vec![0; length];
+            assert!(upload_payload_regions(&mut storage).is_err());
         }
     }
 
@@ -743,12 +894,15 @@ mod tests {
         let mut received = Vec::new();
         // Exercise full one- and two-record reads, a partial second frame,
         // and the next record's sequence number without splitting a frame.
-        for length in [16374, 8190, 1, 32748, 32749, 16374] {
+        for length in [16374_usize, 8190, 1, 32748, 32749, 16374] {
             let payload: Vec<u8> = (0..length).map(|i| (i % 251) as u8).collect();
             if length <= 32748 {
                 let mut storage = io.take_upload_storage();
-                storage.resize(length, 0);
-                storage[..length].copy_from_slice(&payload);
+                storage.resize(
+                    length.div_ceil(UPLOAD_RECORD_PAYLOAD) * RECORD_SLOT_WIRE_CAPACITY,
+                    0,
+                );
+                stage_upload_payload(&mut storage, &payload);
                 io.write_upload(&mut storage, length).await.unwrap();
                 assert!(!storage.is_empty());
             } else {
