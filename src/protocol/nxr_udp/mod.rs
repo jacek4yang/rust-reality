@@ -6,9 +6,11 @@
 //! Payload bytes are not encrypted (same hop threat model as TCP NXR).
 
 mod error;
+mod fields;
 mod keys;
 mod layout;
 mod open;
+mod seq;
 mod wire;
 
 pub use error::NxrUdpError;
@@ -22,9 +24,8 @@ pub use open::{
     UdpAuthenticatedOpen, classify_open, decode_udp_open, encode_udp_open,
     open_authenticated_prefix, udp_open_len_from_header,
 };
-pub use wire::{
-    NxrUdpFrame, NxrUdpSeq, decode_frame, drain_frames, encode_frame, frame_wire_len_from_prefix,
-};
+pub use seq::NxrUdpSeq;
+pub use wire::{NxrUdpFrame, decode_frame, drain_frames, encode_frame, frame_wire_len_from_prefix};
 
 #[cfg(any(test, feature = "fuzzing"))]
 pub use wire::fuzz_decode_frame;
