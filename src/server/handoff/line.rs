@@ -5,7 +5,6 @@
 //! only — no wire, crypto, or trust changes.
 
 use std::{
-    error::Error,
     fmt, io,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -19,7 +18,7 @@ use tokio::{
 use zeroize::Zeroizing;
 
 use crate::{
-    protocol::handoff::{ContinuationState, HandoffError, HandoffPsk, seal_transfer},
+    protocol::handoff::{ContinuationState, HandoffPsk, seal_transfer},
     transport::{FdBudget, FdPermit},
 };
 use rr_session::AttemptTransport;
@@ -29,6 +28,7 @@ use super::super::{
     counted_write::write_all_counted_before,
     warm_pool::{AdaptiveTcpPool, WarmPoolAuthority, WarmUsePermit},
 };
+use super::error::HandoffLineError;
 use crate::config::node::outbound::HandoffOutboundConfig;
 use crate::runtime::policy::WarmConnectionPolicy;
 
@@ -280,61 +280,5 @@ pub(crate) async fn first_downlink_landed(stream: &TcpStream, deadline: Duration
     match time::timeout(deadline, stream.peek(&mut probe)).await {
         Ok(Ok(bytes)) => bytes > 0 && probe[0] == TLS_APPLICATION_DATA,
         Ok(Err(_)) | Err(_) => false,
-    }
-}
-
-/// One LINE-side session transfer failed; the client socket must be reset.
-#[derive(Debug)]
-pub enum HandoffLineError {
-    /// The descriptor budget denied the handoff connection.
-    DescriptorBudget,
-    /// The shared dial/write deadline elapsed.
-    Timeout,
-    /// The landing dial, socket configuration, or transfer write failed.
-    Connect(io::Error),
-    /// The system clock is before the Unix epoch.
-    Clock,
-    /// Sealing the continuation state failed.
-    Transfer(HandoffError),
-    /// The handoff socket halves could not be reunited (unreachable in practice).
-    Reunite,
-    /// LANDING produced no TLS downlink byte within the first-byte deadline:
-    /// it closed silently, stalled, or answered with non-session bytes — the
-    /// only failure signal the silent protocol carries.
-    LandingRejected,
-    /// The raw client-to-landing relay failed mid-session.
-    Relay(io::Error),
-}
-
-impl fmt::Display for HandoffLineError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DescriptorBudget => {
-                formatter.write_str("descriptor budget denied the handoff connection")
-            }
-            Self::Timeout => formatter.write_str("handoff transfer timed out"),
-            Self::Connect(_) => formatter.write_str("failed to reach the handoff landing node"),
-            Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
-            Self::Transfer(source) => source.fmt(formatter),
-            Self::Reunite => formatter.write_str("handoff socket halves did not reunite"),
-            Self::LandingRejected => {
-                formatter.write_str("handoff landing node closed without serving the session")
-            }
-            Self::Relay(_) => formatter.write_str("handoff raw relay failed"),
-        }
-    }
-}
-
-impl Error for HandoffLineError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Connect(source) | Self::Relay(source) => Some(source),
-            Self::Transfer(source) => Some(source),
-            Self::DescriptorBudget
-            | Self::Timeout
-            | Self::Clock
-            | Self::Reunite
-            | Self::LandingRejected => None,
-        }
     }
 }
