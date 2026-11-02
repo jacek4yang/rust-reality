@@ -5,8 +5,6 @@
 //! preserving modularization only — no wire, crypto, or trust changes.
 
 use std::{
-    error::Error,
-    fmt, io,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -31,19 +29,17 @@ use crate::{
         reality::tls13::{EstablishedTls, ExportedTlsState, resume_application_halves},
         vless::UserId,
     },
-    runtime::{AdmissionDenied, PressureGauge, ResourceGovernor},
-    transport::{
-        relay::RelayStats,
-        tcp_relay::{TcpRelay, TcpRelayConfigError},
-    },
+    runtime::{PressureGauge, ResourceGovernor},
+    transport::{relay::RelayStats, tcp_relay::TcpRelay},
 };
 
 use super::super::{
     connector::{DestinationConnectError, DestinationConnector},
-    outbound::{OutboundConnectError, OutboundConnectOutcome, OutboundRegistry},
-    pre_auth::{PreAuthError, PreAuthGeneration, begin_authentication},
-    vision::{VisionSessionError, run_resumed_session},
+    outbound::{OutboundConnectOutcome, OutboundRegistry},
+    pre_auth::{PreAuthGeneration, begin_authentication},
+    vision::run_resumed_session,
 };
+use super::error::{HandoffLandingConfigError, HandoffLandingError};
 use crate::config::node::network::NetworkConfig;
 use crate::runtime::policy::ResourceGovernorPolicy;
 
@@ -409,102 +405,4 @@ pub(super) fn unix_seconds() -> Result<u64, HandoffLandingError> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .map_err(|_| HandoffLandingError::Clock)
-}
-
-/// Validated Handoff listener state could not be compiled.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HandoffLandingConfigError {
-    /// PSK or static-key decoding or length did not match the protocol contract.
-    Key,
-    /// Replay capacity could not be represented on this target.
-    Capacity,
-    /// Replay cache initialization failed.
-    Replay(HandoffError),
-    /// Bounded plaintext relay state could not be compiled.
-    Relay(TcpRelayConfigError),
-}
-
-impl fmt::Display for HandoffLandingConfigError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("invalid Handoff landing listener configuration")
-    }
-}
-
-impl Error for HandoffLandingConfigError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Replay(source) => Some(source),
-            Self::Relay(source) => Some(source),
-            Self::Key | Self::Capacity => None,
-        }
-    }
-}
-
-/// One Handoff landing connection failed and must close silently.
-#[derive(Debug)]
-pub enum HandoffLandingError {
-    /// Pre-auth idle or authentication admission was refused.
-    Admission(AdmissionDenied),
-    /// An unused socket was reclaimed by pressure or generation retirement.
-    Reclaimed,
-    /// The LINE retired an unused zero-byte warm transport normally.
-    PreAuthPeerClosed,
-    /// Runtime reload retired this unused pre-auth generation normally.
-    PreAuthGenerationRetired,
-    Timeout,
-    Read(io::Error),
-    Protocol(HandoffError),
-    Allocation,
-    Clock,
-    Destination(DestinationConnectError),
-    /// The configured egress outbound could not serve the transferred
-    /// destination dial.
-    Egress(OutboundConnectError),
-    Session(VisionSessionError),
-    DescriptorBudget,
-}
-
-impl HandoffLandingError {
-    fn from_pre_auth(error: PreAuthError) -> Self {
-        match error {
-            PreAuthError::Admission(error) => Self::Admission(error),
-            PreAuthError::Timeout => Self::Timeout,
-            PreAuthError::PeerClosed => Self::PreAuthPeerClosed,
-            PreAuthError::Read(error) => Self::Read(error),
-            PreAuthError::PressureReclaimed => Self::Reclaimed,
-            PreAuthError::GenerationRetired => Self::PreAuthGenerationRetired,
-        }
-    }
-}
-
-impl fmt::Display for HandoffLandingError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Handoff landing connection closed")
-    }
-}
-
-impl Error for HandoffLandingError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Read(source) => Some(source),
-            Self::Protocol(source) => Some(source),
-            Self::Destination(source) => Some(source),
-            Self::Egress(source) => Some(source),
-            Self::Session(source) => Some(source),
-            Self::Admission(source) => Some(source),
-            Self::Reclaimed
-            | Self::PreAuthPeerClosed
-            | Self::PreAuthGenerationRetired
-            | Self::Timeout
-            | Self::Allocation
-            | Self::Clock
-            | Self::DescriptorBudget => None,
-        }
-    }
-}
-
-impl From<DestinationConnectError> for HandoffLandingError {
-    fn from(source: DestinationConnectError) -> Self {
-        Self::Destination(source)
-    }
 }

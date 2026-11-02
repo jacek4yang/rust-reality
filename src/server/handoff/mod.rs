@@ -10,11 +10,13 @@
 //! relay against the transferred destination — dialed directly, or through the
 //! listener's configured egress outbound.
 
+mod error;
 mod landing;
 mod line;
 
-pub use landing::{HandoffLandingConfigError, HandoffLandingError, HandoffLandingHandler};
-pub use line::{HandoffLine, HandoffLineError};
+pub use error::{HandoffLandingConfigError, HandoffLandingError, HandoffLineError};
+pub use landing::HandoffLandingHandler;
+pub use line::HandoffLine;
 
 pub(crate) use line::first_downlink_landed;
 
