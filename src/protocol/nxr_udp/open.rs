@@ -4,13 +4,13 @@
 //! codecs stay in [`super::wire`]; layout/HMAC helpers remain shared.
 
 use super::error::NxrUdpError;
+use super::fields::{address_shape, parse_address, read_u16, read_u64};
 use super::keys::{open_tag, verify_open_tag};
 use super::layout::{
     ADDRESS_DOMAIN, ADDRESS_IPV4, ADDRESS_IPV6, ADDRESS_LENGTH_OFFSET, ADDRESS_OFFSET, MAGIC,
     MAX_DOMAIN_LEN, MAX_UDP_OPEN_LEN, NONCE_OFFSET, OPEN_TAG_LEN, PORT_OFFSET, TIMESTAMP_OFFSET,
     UDP_OPEN_TRAILER, USER_ID_LEN,
 };
-use super::wire::{address_shape, parse_address, read_u16, read_u64};
 use crate::protocol::nxr::{
     FLAG_TCP, FLAG_UDP, FLAGS_OFFSET, NxrKey, REQUEST_HEADER_LEN, peek_open_flags,
 };

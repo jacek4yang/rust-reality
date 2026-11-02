@@ -2,19 +2,20 @@
 //!
 //! Layout constants live in [`super::layout`]; session MAC helpers in
 //! [`super::keys`]; authenticated open codecs in [`super::open`]. This module
-//! owns frame structs and the encode / length / decode / drain surface.
-
-use std::net::{Ipv4Addr, Ipv6Addr};
+//! owns frame structs and the encode / length / decode / drain surface;
+//! address and integer field codecs live in [`super::fields`] and sequence
+//! state in [`super::seq`].
 
 #[cfg(any(test, feature = "fuzzing"))]
 use super::super::nxr::NxrKey;
 use super::super::vless::{Address, Destination};
 use super::error::NxrUdpError;
+use super::fields::{address_shape, decode_destination, read_u16_at};
 use super::keys::NxrUdpSessionKey;
 use super::layout::{
-    ADDRESS_DOMAIN, ADDRESS_IPV4, ADDRESS_IPV6, DIR_LANDING_TO_LINE, DIR_LINE_TO_LANDING,
-    FRAME_FLAG_DESTINATION, FRAME_LEN_SIZE, FRAME_TYPE_CLOSE, FRAME_TYPE_DATAGRAM, MAX_DOMAIN_LEN,
-    MAX_FRAME_BODY_LEN, NXR_UDP_MAX_PAYLOAD, SESSION_TAG_LEN,
+    DIR_LANDING_TO_LINE, DIR_LINE_TO_LANDING, FRAME_FLAG_DESTINATION, FRAME_LEN_SIZE,
+    FRAME_TYPE_CLOSE, FRAME_TYPE_DATAGRAM, MAX_FRAME_BODY_LEN, NXR_UDP_MAX_PAYLOAD,
+    SESSION_TAG_LEN,
 };
 
 /// One decoded datagram/close frame (MAC already verified).
@@ -24,43 +25,6 @@ pub struct NxrUdpFrame {
     pub seq: u32,
     pub destination: Option<Destination>,
     pub payload: Vec<u8>,
-}
-
-/// Exact next-sequence tracker (rejects replay and reordering).
-#[derive(Clone, Debug, Default)]
-pub struct NxrUdpSeq {
-    // One extra state represents exhaustion without reusing a wire sequence.
-    next: u64,
-}
-
-impl NxrUdpSeq {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self { next: 0 }
-    }
-
-    /// Allocates a wire sequence once; exhaustion requires a new association.
-    ///
-    /// # Errors
-    ///
-    /// [`NxrUdpError::Sequence`] after every 32-bit sequence has been used.
-    pub fn next_out(&mut self) -> Result<u32, NxrUdpError> {
-        let seq = u32::try_from(self.next).map_err(|_| NxrUdpError::Sequence)?;
-        self.next += 1;
-        Ok(seq)
-    }
-
-    /// # Errors
-    ///
-    /// [`NxrUdpError::Sequence`] when `seq` is not expected or the
-    /// association has exhausted its wire sequence space.
-    pub fn accept_in(&mut self, seq: u32) -> Result<(), NxrUdpError> {
-        if u64::from(seq) != self.next {
-            return Err(NxrUdpError::Sequence);
-        }
-        self.next += 1;
-        Ok(())
-    }
 }
 
 /// Encodes one length-prefixed, MAC'd frame.
@@ -260,77 +224,6 @@ fn parse_frame_body(body: &[u8]) -> Result<NxrUdpFrame, NxrUdpError> {
     })
 }
 
-fn decode_destination(input: &[u8]) -> Result<(Destination, usize), NxrUdpError> {
-    if input.len() < 5 {
-        return Err(NxrUdpError::Truncated);
-    }
-    let address_type = input[0];
-    let address_len = usize::from(u16::from_be_bytes([input[1], input[2]]));
-    let port = u16::from_be_bytes([input[3], input[4]]);
-    if port == 0 {
-        return Err(NxrUdpError::Port);
-    }
-    let total = 5usize.checked_add(address_len).ok_or(NxrUdpError::Length)?;
-    if input.len() < total {
-        return Err(NxrUdpError::Truncated);
-    }
-    let address = parse_address(address_type, &input[5..total])?;
-    Ok((Destination::new(address, port), total))
-}
-
-pub(super) fn address_shape(address: &Address) -> Result<(u8, usize), NxrUdpError> {
-    match address {
-        Address::Ipv4(_) => Ok((ADDRESS_IPV4, 4)),
-        Address::Domain(domain) => {
-            if domain.is_empty() || domain.len() > MAX_DOMAIN_LEN {
-                return Err(NxrUdpError::Address);
-            }
-            Ok((ADDRESS_DOMAIN, domain.len()))
-        }
-        Address::Ipv6(_) => Ok((ADDRESS_IPV6, 16)),
-    }
-}
-
-pub(super) fn parse_address(address_type: u8, address: &[u8]) -> Result<Address, NxrUdpError> {
-    match address_type {
-        ADDRESS_IPV4 => {
-            let bytes: [u8; 4] = address.try_into().map_err(|_| NxrUdpError::Address)?;
-            Ok(Address::Ipv4(Ipv4Addr::from(bytes)))
-        }
-        ADDRESS_DOMAIN => std::str::from_utf8(address)
-            .map(str::to_owned)
-            .map(Address::Domain)
-            .map_err(|_| NxrUdpError::Address),
-        ADDRESS_IPV6 => {
-            let bytes: [u8; 16] = address.try_into().map_err(|_| NxrUdpError::Address)?;
-            Ok(Address::Ipv6(Ipv6Addr::from(bytes)))
-        }
-        _ => Err(NxrUdpError::Address),
-    }
-}
-
-pub(super) fn read_u16(input: &[u8], offset: usize) -> Result<u16, NxrUdpError> {
-    read_u16_at(input, offset)
-}
-
-pub(super) fn read_u16_at(input: &[u8], offset: usize) -> Result<u16, NxrUdpError> {
-    let bytes = input
-        .get(offset..offset + 2)
-        .ok_or(NxrUdpError::Length)?
-        .try_into()
-        .map_err(|_| NxrUdpError::Length)?;
-    Ok(u16::from_be_bytes(bytes))
-}
-
-pub(super) fn read_u64(input: &[u8], offset: usize) -> Result<u64, NxrUdpError> {
-    let bytes = input
-        .get(offset..offset + 8)
-        .ok_or(NxrUdpError::Length)?
-        .try_into()
-        .map_err(|_| NxrUdpError::Length)?;
-    Ok(u64::from_be_bytes(bytes))
-}
-
 /// Fuzz both arbitrary authenticated bodies and raw frames under a fixed session.
 #[cfg(any(test, feature = "fuzzing"))]
 pub fn fuzz_decode_frame(input: &[u8]) -> Result<(), NxrUdpError> {
@@ -345,56 +238,11 @@ pub fn fuzz_decode_frame(input: &[u8]) -> Result<(), NxrUdpError> {
 }
 
 #[cfg(test)]
-mod sequence_exhaustion_tests {
-    use super::{
-        DIR_LINE_TO_LANDING, FRAME_TYPE_DATAGRAM, NxrKey, NxrUdpError, NxrUdpSeq, NxrUdpSessionKey,
-        decode_frame, encode_frame,
-    };
-
-    #[test]
-    fn exhausted_inbound_sequence_rejects_replay() {
-        let mut sequence = NxrUdpSeq {
-            next: u64::from(u32::MAX),
-        };
-        // An old frame remains MAC-valid under this association's key. The
-        // sequence guard must still reject it after the final wire value.
-        let key = NxrKey::new([0x37; 32]);
-        let session = NxrUdpSessionKey::derive(&key, b"sequence-exhaustion-test");
-        let mut replay = Vec::new();
-        encode_frame(
-            &session,
-            DIR_LINE_TO_LANDING,
-            FRAME_TYPE_DATAGRAM,
-            0,
-            None,
-            b"old-datagram",
-            &mut replay,
-        )
-        .unwrap();
-        sequence.accept_in(u32::MAX).unwrap();
-        let (frame, consumed) = decode_frame(&replay, &session, DIR_LINE_TO_LANDING).unwrap();
-        assert_eq!(consumed, replay.len());
-        assert_eq!(sequence.accept_in(frame.seq), Err(NxrUdpError::Sequence));
-        assert_eq!(sequence.accept_in(u32::MAX), Err(NxrUdpError::Sequence));
-    }
-
-    #[test]
-    fn exhausted_outbound_sequence_never_reuses_a_wire_value() {
-        let mut sequence = NxrUdpSeq {
-            next: u64::from(u32::MAX) - 1,
-        };
-        assert_eq!(sequence.next_out(), Ok(u32::MAX - 1));
-        assert_eq!(sequence.next_out(), Ok(u32::MAX));
-        for _ in 0..3 {
-            assert_eq!(sequence.next_out(), Err(NxrUdpError::Sequence));
-        }
-    }
-}
-
-#[cfg(test)]
 mod encoder_storage_tests {
+    use std::net::Ipv4Addr;
+
     use super::*;
-    use crate::protocol::nxr_udp::MAX_FRAME_WIRE_LEN;
+    use crate::protocol::nxr_udp::{MAX_FRAME_WIRE_LEN, layout::MAX_DOMAIN_LEN};
 
     #[test]
     fn frame_writer_preserves_frozen_wire_and_reuses_storage() {
