@@ -133,7 +133,6 @@ impl ChannelEndpoint {
         self.pmtu.plpmtu()
     }
 
-    #[cfg(test)]
     pub(crate) const fn stats(&self) -> EndpointStats {
         self.stats
     }
@@ -342,7 +341,19 @@ fn invalid(error: UdpPacketError) -> io::Error {
 
 /// Default discovery timers for production sessions.
 pub(crate) fn production_timers() -> PmtuTimers {
+    #[cfg(test)]
+    if let Some(timers) = TEST_TIMERS.with(std::cell::Cell::get) {
+        return timers;
+    }
     PmtuTimers::default()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Per-test timer override (tokio current-thread tests run LINE and
+    /// LANDING on one thread), so black-hole tests run in seconds.
+    pub(crate) static TEST_TIMERS: std::cell::Cell<Option<PmtuTimers>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Upper bound on how long a timer-driven wait may sleep.

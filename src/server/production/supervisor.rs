@@ -162,8 +162,9 @@ where
             let fd_budget = server.runtime.fd_budget.clone();
             let stats = Arc::new(LandingUdpStats::default());
             let shutdown = shutdown_receiver.clone();
+            let logger = initial.logger.clone();
             listener_tasks.spawn(async move {
-                run_landing_udp(socket, policy, fd_budget, stats, shutdown).await;
+                run_landing_udp(socket, policy, fd_budget, stats, logger, shutdown).await;
                 Ok(())
             });
         }

@@ -36,6 +36,7 @@ use tokio::{
 use super::endpoint::{
     ChannelEndpoint, Received, Target, bind_dont_fragment, prober_for, production_timers,
 };
+use crate::logging::{HandoffUdpEndReason, LogEvent, Logger};
 use crate::protocol::handoff::{
     HandoffLandingKeys, HandoffReplayCache,
     udp::{MAX_UDP_PAYLOAD_LEN, OPEN_LEN, PacketType, SESSION_ID_LEN, accept_open, parse_header},
@@ -76,6 +77,8 @@ struct Session {
     bind_ip: IpAddr,
     last_activity: AtomicU64,
     epoch: Instant,
+    uplink: AtomicU64,
+    downlink: AtomicU64,
 }
 
 struct Egress {
@@ -142,12 +145,32 @@ fn unix_now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
+/// Emits the debug-only end-of-session evidence.
+async fn session_ended(logger: &Logger, session: &Session, reason: HandoffUdpEndReason) {
+    if !logger.debug_enabled() {
+        return;
+    }
+    let (plpmtu, fragmented_datagrams) = {
+        let endpoint = session.endpoint.lock().await;
+        (endpoint.plpmtu(), endpoint.stats().fragmented_datagrams)
+    };
+    let _ignored = logger.emit(&LogEvent::HandoffUdpSessionEnded {
+        peer: session.peer(),
+        reason,
+        uplink_datagrams: session.uplink.load(Ordering::Relaxed),
+        downlink_datagrams: session.downlink.load(Ordering::Relaxed),
+        plpmtu,
+        fragmented_datagrams,
+    });
+}
+
 /// Serves one landing channel socket until `shutdown` flips.
 pub async fn run_landing_udp<P>(
     socket: UdpSocket,
     policy: P,
     fd_budget: FdBudget,
     stats: Arc<LandingUdpStats>,
+    logger: Logger,
     mut shutdown: watch::Receiver<bool>,
 ) where
     P: Fn() -> Option<LandingUdpPolicy> + Send + Sync,
@@ -180,11 +203,11 @@ pub async fn run_landing_udp<P>(
                 let packet = &buffer[..length];
                 handle_packet(
                     packet, source, &socket, bind_ip, &policy, &replay, &sessions,
-                    &fd_budget, &stats,
+                    &fd_budget, &stats, &logger,
                 ).await;
             }
             _ = sweep.tick() => {
-                sweep_sessions(&socket, &sessions, &stats).await;
+                sweep_sessions(&socket, &sessions, &stats, &logger).await;
             }
         }
     }
@@ -193,6 +216,7 @@ pub async fn run_landing_udp<P>(
         .map(|(_, session)| session)
         .collect();
     for session in drained {
+        session_ended(&logger, &session, HandoffUdpEndReason::Shutdown).await;
         let peer = session.peer();
         let _ = session
             .endpoint
@@ -211,7 +235,12 @@ fn lock(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-async fn sweep_sessions(socket: &Arc<UdpSocket>, sessions: &Sessions, stats: &LandingUdpStats) {
+async fn sweep_sessions(
+    socket: &Arc<UdpSocket>,
+    sessions: &Sessions,
+    stats: &LandingUdpStats,
+    logger: &Logger,
+) {
     let now = Instant::now();
     let snapshot: Vec<_> = lock(sessions)
         .iter()
@@ -221,6 +250,7 @@ async fn sweep_sessions(socket: &Arc<UdpSocket>, sessions: &Sessions, stats: &La
         if session.idle_for(now) >= LANDING_UDP_SESSION_IDLE {
             if lock(sessions).remove(&id).is_some() {
                 stats.sessions_closed.fetch_add(1, Ordering::Relaxed);
+                session_ended(logger, &session, HandoffUdpEndReason::Idle).await;
             }
             continue;
         }
@@ -250,6 +280,7 @@ async fn handle_packet<P>(
     sessions: &Sessions,
     fd_budget: &FdBudget,
     stats: &Arc<LandingUdpStats>,
+    logger: &Logger,
 ) where
     P: Fn() -> Option<LandingUdpPolicy>,
 {
@@ -320,11 +351,13 @@ async fn handle_packet<P>(
             // Egress errors (unreachable destination) never end the session.
             if egress.send_to(&payload, destination).await.is_ok() {
                 stats.uplink_datagrams.fetch_add(1, Ordering::Relaxed);
+                session.uplink.fetch_add(1, Ordering::Relaxed);
             }
         }
         Received::Close => {
             if lock(sessions).remove(&session_id).is_some() {
                 stats.sessions_closed.fetch_add(1, Ordering::Relaxed);
+                session_ended(logger, &session, HandoffUdpEndReason::Close).await;
             }
         }
         Received::OpenAck | Received::Handled => {}
@@ -386,6 +419,8 @@ async fn open_session<P>(
         bind_ip,
         last_activity: AtomicU64::new(0),
         epoch: now,
+        uplink: AtomicU64::new(0),
+        downlink: AtomicU64::new(0),
     });
     {
         let mut map = lock(sessions);
@@ -476,6 +511,7 @@ async fn pump_downlink(
             .await;
         if sent.is_ok() {
             session.touch(now);
+            session.downlink.fetch_add(1, Ordering::Relaxed);
             stats.downlink_datagrams.fetch_add(1, Ordering::Relaxed);
         }
     }

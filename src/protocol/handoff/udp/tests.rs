@@ -350,6 +350,30 @@ fn pmtu_detects_black_hole_and_researches() {
 }
 
 #[test]
+fn pmtu_validates_base_first_and_finds_a_path_below_it_quickly() {
+    let start = Instant::now();
+    let mut prober = PmtuProber::discover(1472, PmtuTimers::default(), start);
+    // The very first probe confirms the starting size.
+    assert_eq!(
+        prober.poll(start).map(|probe| probe.size),
+        Some(BASE_PLPMTU)
+    );
+    // Path silently drops everything above 1000 bytes from the start:
+    // three lost base probes (3 s) fall back to the floor.
+    let now = run_search(&mut prober, 1000, start, 14);
+    assert_eq!(prober.black_holes(), 1);
+    assert!(prober.plpmtu() < 1000);
+    // The search then climbs to just under the silent limit.
+    run_search(&mut prober, 1000, now, 120);
+    assert!(prober.search_complete());
+    assert!(
+        (1000 - 16..=1000).contains(&prober.plpmtu()),
+        "plpmtu {}",
+        prober.plpmtu()
+    );
+}
+
+#[test]
 fn pmtu_kernel_feedback_lowers_and_raise_recovers() {
     let start = Instant::now();
     let timers = PmtuTimers {

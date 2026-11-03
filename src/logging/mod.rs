@@ -6,5 +6,6 @@ mod sink;
 pub use failure::{FailureCause, FailureDetail, FailureStage};
 
 pub use sink::{
-    AdmissionResource, BackendStatus, LogEvent, LogWriteError, Logger, RejectionReason,
+    AdmissionResource, BackendStatus, HandoffUdpEndReason, LogEvent, LogWriteError, Logger,
+    RejectionReason,
 };

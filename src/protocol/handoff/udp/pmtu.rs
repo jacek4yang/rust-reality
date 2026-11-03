@@ -119,6 +119,11 @@ pub struct PmtuProber {
     next_id: u32,
     next_confirm: Instant,
     black_holes: u64,
+    /// Whether `current` was acknowledged by a probe since the last fall
+    /// back. A search first confirms its starting size (RFC 8899 BASE
+    /// state), so a path below the base is detected within one probe
+    /// timeout budget instead of after a full upward search.
+    floor_validated: bool,
 }
 
 impl PmtuProber {
@@ -138,6 +143,7 @@ impl PmtuProber {
             next_id: 1,
             next_confirm: now + timers.confirm_interval,
             black_holes: 0,
+            floor_validated: false,
         }
     }
 
@@ -155,6 +161,7 @@ impl PmtuProber {
             next_id: 1,
             next_confirm: now,
             black_holes: 0,
+            floor_validated: true,
         }
     }
 
@@ -215,6 +222,7 @@ impl PmtuProber {
                     high: failed.saturating_sub(1).max(self.current),
                 };
                 self.next_confirm = now + self.timers.confirm_interval;
+                self.floor_validated = false;
             }
         }
     }
@@ -243,6 +251,9 @@ impl PmtuProber {
         match self.phase {
             Phase::Fixed => None,
             Phase::Search { high } => {
+                if !self.floor_validated {
+                    return Some(self.launch(self.current, Purpose::Confirm, now));
+                }
                 let low = self.current;
                 if high <= low || high - low < self.timers.granularity {
                     self.phase = Phase::Complete {
@@ -306,6 +317,7 @@ impl PmtuProber {
                 }
             }
             Purpose::Confirm => {
+                self.floor_validated = true;
                 self.next_confirm = now + self.timers.confirm_interval;
             }
         }

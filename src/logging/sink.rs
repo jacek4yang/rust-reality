@@ -330,6 +330,24 @@ pub enum LogEvent {
         /// Stable JSON path; never a value from the configuration.
         field: String,
     },
+    /// A native Handoff UDP channel session ended on LANDING (ADR 0069).
+    ///
+    /// Debug evidence only: counts and the discovered packet size, never
+    /// destinations, payload, or key material.
+    HandoffUdpSessionEnded {
+        /// Bound LINE peer of the session.
+        peer: SocketAddr,
+        /// Why the session ended.
+        reason: HandoffUdpEndReason,
+        /// Datagrams LANDING forwarded to destinations.
+        uplink_datagrams: u64,
+        /// Datagrams LANDING returned to LINE.
+        downlink_datagrams: u64,
+        /// LANDING→LINE packetization limit at the end.
+        plpmtu: usize,
+        /// Downlink datagrams sent as fragments.
+        fragmented_datagrams: u64,
+    },
     /// A Handoff landing listener was published with a key-rotation window
     /// still open: retired keys remain accepted.
     ///
@@ -589,6 +607,7 @@ impl LogEvent {
             | Self::ConnectionTaskOwnership { .. }
             | Self::ConnectionAccepted { .. }
             | Self::ConnectionClosed { .. }
+            | Self::HandoffUdpSessionEnded { .. }
             | Self::CoverFlightSelected { .. }
             | Self::ConnectionCompleted { .. } => LogLevel::Debug,
             Self::ConnectionRejected { .. }
@@ -604,6 +623,18 @@ impl LogEvent {
             Self::AdaptiveCeilingChanged { .. } => LogLevel::Info,
         }
     }
+}
+
+/// Why a native Handoff UDP session ended.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffUdpEndReason {
+    /// LINE sent an authenticated CLOSE.
+    Close,
+    /// No authenticated traffic for the idle bound.
+    Idle,
+    /// The landing listener shut down.
+    Shutdown,
 }
 
 #[derive(Serialize)]
