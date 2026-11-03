@@ -644,6 +644,8 @@ async fn line_transfer_failure_on_unreachable_landing_fails_the_session() {
 fn handoff_line_rejects_undecodable_settings() {
     assert!(
         HandoffLine::from_settings(&HandoffOutboundConfig {
+            udp_port: None,
+            udp_mtu: None,
             address: "127.0.0.1".to_owned(),
             port: 443,
             psk: SecretString::new("not-base64!"),
@@ -656,6 +658,8 @@ fn handoff_line_rejects_undecodable_settings() {
     );
     assert!(
         HandoffLine::from_settings(&HandoffOutboundConfig {
+            udp_port: None,
+            udp_mtu: None,
             address: "127.0.0.1".to_owned(),
             port: 443,
             psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),

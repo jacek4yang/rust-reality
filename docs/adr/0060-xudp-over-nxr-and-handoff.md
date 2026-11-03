@@ -1,6 +1,9 @@
 # ADR 0060: XUDP over NXR and Handoff
 
-Status: Accepted
+Status: Accepted. §3 and the Handoff rows of §4 are superseded by
+[ADR 0069](0069-native-udp-channel-for-handoff-xudp.md): Handoff XUDP no
+longer transfers TLS or a policy snapshot; LINE routes every datagram and
+sends it to LANDING over a native UDP channel. The NXR design is unchanged.
 
 ## Context
 

@@ -129,6 +129,15 @@ sudo iptables -A INPUT -p tcp --dport 7443 -s <entry-node-address> -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 7443 -j DROP
 ```
 
+A Handoff landing also listens on **UDP** at the same port number (the native
+channel that carries Handoff XUDP, ADR 0069; `landing.udpPort` overrides it).
+Restrict it the same way:
+
+```shell
+sudo iptables -A INPUT -p udp --dport 7443 -s <entry-node-address> -j ACCEPT
+sudo iptables -A INPUT -p udp --dport 7443 -j DROP
+```
+
 A landing reachable from the internet is a landing whose IP can be discovered,
 which defeats the reason for having one. Bind it to its private address rather
 than the wildcard, so a firewall mistake does not expose it:

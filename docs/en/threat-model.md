@@ -165,6 +165,25 @@ After a complete write, LANDING may already have reserved replay state,
 resolved or connected a destination, or resumed a session, so the logical flow
 is never repeated because of a late close or response failure.
 
+### Handoff UDP channel
+
+Handoff XUDP does not transfer TLS. The line node keeps the client session and
+makes every routing decision. It sends authorized datagrams to the landing over
+a native UDP channel
+([ADR 0069](../adr/0069-native-udp-channel-for-handoff-xudp.md)). Each
+association opens one session with a fresh ephemeral X25519 share against the
+landing static key, mixed with the PSK under a label distinct from the TCP
+transfer. Packets are sealed with ChaCha20-Poly1305 and checked against a
+1024-packet replay window. An OPEN must first carry a PSK-keyed admission tag.
+Only then are a replay nonce reserved and DH performed, so a spoofed-source
+flood without the PSK cannot burn replay capacity or force key agreement. The
+landing never sends anything to an unauthenticated source: no reflection, no
+amplification. The forward-secrecy bound and the rotation-window caveat are
+those of the TCP transfer. A holder of the PSK and landing public key can use
+the landing as a UDP egress: the landing trusts the line node's authorization,
+as for TCP. The landing sees the plaintext datagrams it forwards. Its UDP port
+must be reachable only from the line nodes' addresses.
+
 ## Resource and kernel boundaries
 
 All pre-authentication work, connections, fallbacks, cryptographic work, replay

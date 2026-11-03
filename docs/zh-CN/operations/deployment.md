@@ -114,6 +114,14 @@ sudo iptables -A INPUT -p tcp --dport 7443 -s <入口节点地址> -j ACCEPT
 sudo iptables -A INPUT -p tcp --dport 7443 -j DROP
 ```
 
+Handoff 落地节点还会在同一端口号上监听 **UDP**（承载 Handoff XUDP 的原生通道，
+ADR 0069；可用 `landing.udpPort` 覆盖）。同样加以限制：
+
+```shell
+sudo iptables -A INPUT -p udp --dport 7443 -s <entry-node-address> -j ACCEPT
+sudo iptables -A INPUT -p udp --dport 7443 -j DROP
+```
+
 一个从互联网可达的落地节点，就是一个 IP 可以被发现的落地节点，这就把要它的理由抵消
 了。把它绑到私有地址而不是通配地址，这样防火墙配错也不会把它暴露出去：
 

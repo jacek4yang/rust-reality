@@ -101,6 +101,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "handoff_udp_packets"
+path = "fuzz_targets/handoff_udp_packets.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "nxr_round_trip"
 path = "fuzz_targets/nxr_round_trip.rs"
 test = false

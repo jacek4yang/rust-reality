@@ -6,8 +6,9 @@
 //!
 //! ADR 0060 / Issue #314: NXR and Handoff are **authorized** route classes (not
 //! silently remapped to Direct). NXR landward uses framed datagrams over the
-//! existing LINE→LANDING TCP hop ([`XudpNxrAssociation`]). Handoff UDP remains
-//! opened via Handoff transfer (LINE never owns landward UDP) — never silently as Direct.
+//! existing LINE→LANDING TCP hop ([`XudpNxrAssociation`]). Handoff UDP uses the
+//! native LINE→LANDING UDP channel (ADR 0069,
+//! [`crate::server::handoff::udp::XudpHandoffUdpAssociation`]) — never silently as Direct.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -64,7 +65,7 @@ impl fmt::Display for XudpOutboundUnsupported {
                 "XUDP NXR egress cannot open Direct landward sockets (use the NXR framed carrier)",
             ),
             Self::Handoff => formatter.write_str(
-                "XUDP Handoff egress requires transfer to LANDING; LINE cannot open landward UDP sockets",
+                "XUDP Handoff egress uses the native Handoff UDP channel; LINE opens no direct landward sockets for it",
             ),
             Self::Block => formatter.write_str("XUDP destination is blocked by routing"),
             Self::Other => formatter.write_str(
@@ -158,18 +159,18 @@ pub fn require_nxr_xudp_landward(
     }
 }
 
-/// Rejects opening Handoff landward UDP on LINE.
-///
-/// Handoff transfers TLS and XUDP ownership to LANDING before opening UDP sockets.
+/// Admits Handoff landward UDP on LINE: datagrams go to LANDING over the
+/// native UDP channel (ADR 0069) after LINE authorized them.
 ///
 /// # Errors
 ///
-/// Always [`XudpOutboundUnsupported::Handoff`] (or Direct/Other mismatch).
+/// Direct and NXR capabilities fail closed here so they cannot silently use
+/// the Handoff channel.
 pub fn require_handoff_xudp_landward(
     capability: XudpEgressCapability,
 ) -> Result<(), XudpOutboundUnsupported> {
     match capability {
-        XudpEgressCapability::Handoff => Err(XudpOutboundUnsupported::Handoff),
+        XudpEgressCapability::Handoff => Ok(()),
         XudpEgressCapability::Direct => Err(XudpOutboundUnsupported::Other),
         XudpEgressCapability::Nxr => Err(XudpOutboundUnsupported::Nxr),
     }
@@ -198,6 +199,12 @@ pub enum XudpSessionError {
     AssociationConflict,
     /// Client sent a Vision Direct command on an XUDP (UDP-only) session.
     UnexpectedVisionDirect,
+    /// Native Handoff UDP channel packet construction failed on LINE.
+    HandoffUdp(crate::protocol::handoff::udp::UdpPacketError),
+    /// LANDING never acknowledged the native Handoff UDP open.
+    HandoffUdpOpenTimeout,
+    /// LANDING closed the native Handoff UDP session.
+    HandoffUdpClosed,
 }
 
 impl fmt::Display for XudpSessionError {
@@ -229,6 +236,14 @@ impl fmt::Display for XudpSessionError {
             Self::UnexpectedVisionDirect => {
                 formatter.write_str("Vision Direct is not valid on an XUDP session")
             }
+            Self::HandoffUdp(error) => write!(formatter, "XUDP Handoff UDP channel error: {error}"),
+            Self::HandoffUdpOpenTimeout => formatter.write_str(
+                "XUDP Handoff UDP open was not acknowledged by LANDING \
+                 (check that the landing UDP port is reachable from this node)",
+            ),
+            Self::HandoffUdpClosed => {
+                formatter.write_str("XUDP Handoff UDP session was closed by LANDING")
+            }
         }
     }
 }
@@ -241,6 +256,7 @@ impl Error for XudpSessionError {
             Self::Io(error) => Some(error),
             Self::NxrConnect(error) => Some(error),
             Self::NxrCarrier(error) => Some(error),
+            Self::HandoffUdp(error) => Some(error),
             _ => None,
         }
     }
@@ -784,9 +800,15 @@ mod tests {
             require_nxr_xudp_landward(XudpEgressCapability::Handoff),
             Err(XudpOutboundUnsupported::Handoff)
         );
+        // ADR 0069: Handoff XUDP is served on LINE over the native channel.
+        require_handoff_xudp_landward(XudpEgressCapability::Handoff).unwrap();
         assert_eq!(
-            require_handoff_xudp_landward(XudpEgressCapability::Handoff),
-            Err(XudpOutboundUnsupported::Handoff)
+            require_handoff_xudp_landward(XudpEgressCapability::Direct),
+            Err(XudpOutboundUnsupported::Other)
+        );
+        assert_eq!(
+            require_handoff_xudp_landward(XudpEgressCapability::Nxr),
+            Err(XudpOutboundUnsupported::Nxr)
         );
     }
 

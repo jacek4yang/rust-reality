@@ -37,6 +37,7 @@ mod policy;
 mod replay;
 mod state;
 mod transfer;
+pub mod udp;
 mod wire;
 
 #[cfg(feature = "fuzzing")]

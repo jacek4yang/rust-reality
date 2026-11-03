@@ -10,7 +10,6 @@ use crate::protocol::handoff::{
     ContinuationState, HandoffError, HandoffPolicySnapshot, SessionKind,
 };
 use crate::protocol::reality::tls13::{TlsApplicationReader, TlsApplicationWriter};
-use crate::protocol::vless::{Destination, UserId};
 use crate::server::handoff::HandoffLineError;
 use crate::server::xudp::XudpSessionError;
 use crate::transport::RelayContext;
@@ -177,121 +176,6 @@ impl VisionHandler {
         }
         // The counts are raw ciphertext bytes moved by the splice, matching how
         // the Direct transition counts its raw phase.
-        Ok(VisionRelayStats {
-            uplink_bytes: outcome.inbound_to_outbound(),
-            downlink_bytes: outcome.outbound_to_inbound(),
-            relay_backend: Some(outcome.backend()),
-            handoff_server_sequence: Some(server_sequence),
-            pipe_capacity_downgraded: outcome.pipe_downgrade().is_some(),
-            ..VisionRelayStats::default()
-        })
-    }
-
-    /// Transfers one XUDP Vision session to a Handoff landing node.
-    ///
-    /// LINE never sends a client-visible Vision response; LANDING resumes TLS,
-    /// writes the first success, owns UDP, and frames XUDP (ADR 0060). After a
-    /// successful transfer this node only splices ciphertext.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "explicit transfer boundary fields"
-    )]
-    pub(super) async fn relay_via_handoff_xudp(
-        &self,
-        line: &crate::server::handoff::HandoffLine,
-        client_reader: TlsApplicationReader<OwnedReadHalf>,
-        client_writer: TlsApplicationWriter<OwnedWriteHalf>,
-        user_id: UserId,
-        destination: Destination,
-        inbound_tag: &str,
-        outbound_tag: &str,
-        prefetched_vision_wire: Vec<u8>,
-        client_random: [u8; 32],
-    ) -> Result<VisionRelayStats, VisionSessionError> {
-        let (pending, client_read_half, client_records) = client_reader.into_handoff_parts();
-        let (client_write_half, server_records, key_update_response_pending) =
-            client_writer.into_handoff_parts();
-        let (transferred, server_sequence) = {
-            let mut client_abort = SocketAbortGuard::new(&client_read_half);
-            let (suite, client_traffic_secret, client_sequence) = client_records
-                .into_exported_state()
-                .map_err(|_| HandoffLineError::Transfer(HandoffError::State))
-                .map_err(VisionSessionError::HandoffLine)?
-                .into_parts();
-            let (_suite, server_traffic_secret, server_sequence) = server_records
-                .into_exported_state()
-                .map_err(|_| HandoffLineError::Transfer(HandoffError::State))
-                .map_err(VisionSessionError::HandoffLine)?
-                .into_parts();
-            let policy =
-                self.routing
-                    .seal_handoff_xudp_policy(user_id, outbound_tag, destination.clone());
-            let state = ContinuationState::new(
-                suite,
-                client_traffic_secret,
-                client_sequence,
-                server_traffic_secret,
-                server_sequence,
-                key_update_response_pending,
-                SessionKind::Xudp,
-                *user_id.as_bytes(),
-                inbound_tag,
-                destination,
-                pending,
-                prefetched_vision_wire,
-                policy,
-            )
-            .map_err(HandoffLineError::Transfer)
-            .map_err(VisionSessionError::HandoffLine)?;
-            let transferred = line
-                .transfer(self.relay.fd_budget(), &state, client_random)
-                .await
-                .map_err(VisionSessionError::HandoffLine)?;
-            drop(state);
-            client_abort.disarm();
-            (transferred, server_sequence)
-        };
-        let _fd_permit = transferred.1;
-        let handoff_stream = transferred.0;
-        let client_stream =
-            reunite_handoff_client(client_read_half, client_write_half, &handoff_stream)?;
-        let landed = {
-            let mut landing_abort = SocketAbortGuard::new(&handoff_stream);
-            let mut client_abort = SocketAbortGuard::new(&client_stream);
-            let landed = crate::server::handoff::first_downlink_landed(
-                &handoff_stream,
-                line.first_byte_timeout(),
-            )
-            .await;
-            if landed {
-                client_abort.disarm();
-                landing_abort.disarm();
-            }
-            landed
-        };
-        if !landed {
-            return Err(VisionSessionError::HandoffLine(
-                HandoffLineError::LandingRejected,
-            ));
-        }
-        let result = self
-            .relay
-            .relay_owned(
-                client_stream,
-                handoff_stream,
-                RelayContext::owned()
-                    .with_write_stall(self.io_timeout)
-                    .with_source_reset_as_eof(),
-            )
-            .await;
-        let outcome = result
-            .map_err(HandoffLineError::Relay)
-            .map_err(VisionSessionError::HandoffLine)?;
-        if outcome.outbound_to_inbound() == 0 {
-            return Err(VisionSessionError::HandoffLine(
-                HandoffLineError::LandingRejected,
-            ));
-        }
         Ok(VisionRelayStats {
             uplink_bytes: outcome.inbound_to_outbound(),
             downlink_bytes: outcome.outbound_to_inbound(),

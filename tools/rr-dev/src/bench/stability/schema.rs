@@ -240,6 +240,10 @@ pub struct Policy {
     pub fixed_fds: u64,
     pub fixed_descriptor_targets: Vec<String>,
     pub listener_sockets: u64,
+    /// Bound datagram listeners (LANDING's native Handoff UDP channel). They
+    /// are startup inventory: no accept task and no reserved accept permit.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub udp_listener_sockets: u64,
     pub idle_inbound_capacity: u64,
     pub dynamic_fd_budget: u64,
     pub pipe_pair_capacity: u64,
@@ -561,4 +565,9 @@ where
         }
     }
     deserializer.deserialize_map(Unique)
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }

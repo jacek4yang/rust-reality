@@ -71,6 +71,8 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         &[
             "src/protocol/handoff/transfer.rs",
             "src/protocol/handoff/tests.rs",
+            // ADR 0069: native Handoff UDP channel packet AEAD.
+            "src/protocol/handoff/udp/wire.rs",
             "src/protocol/reality/tls13/record.rs",
         ],
     ),
@@ -90,6 +92,8 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             "crates/rr-crypto/src/x25519/aarch64.rs",
             "crates/rr-crypto/src/x25519/x86_64.rs",
             "src/protocol/handoff/transfer.rs",
+            // ADR 0069: handoff-udp HKDF/HMAC digest (key schedule, OPEN admission tag).
+            "src/protocol/handoff/udp/wire.rs",
             "src/protocol/nxr/keys.rs",
             // ADR 0060 Option A: NXR UDP open/session MAC digests.
             "src/protocol/nxr_udp/keys.rs",
@@ -105,6 +109,8 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     (
         "hmac",
         &[
+            // ADR 0069: handoff-udp OPEN admission tag (PSK-keyed, before DH).
+            "src/protocol/handoff/udp/wire.rs",
             "src/protocol/nxr/keys.rs",
             // ADR 0060 Option A: NXR UDP open HMAC + frame session MAC.
             "src/protocol/nxr_udp/keys.rs",
@@ -117,6 +123,8 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         "hkdf",
         &[
             "src/protocol/handoff/transfer.rs",
+            // ADR 0069: handoff-udp key schedule and admission subkey.
+            "src/protocol/handoff/udp/wire.rs",
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/tls13/keys.rs",
         ],

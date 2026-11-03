@@ -2,6 +2,19 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+- Carry Handoff XUDP over a new native, encrypted LINE→LANDING UDP channel
+  (ADR 0069) instead of a TLS transfer. LINE keeps REALITY/Vision/XUDP and
+  makes every DNS, GeoIP/GeoSite, routing and Block decision for every
+  datagram; LANDING only forwards. This fixes multi-destination UDP (STUN,
+  QUIC, several resolvers) and domain destinations through Handoff when
+  policies use `geoip:`/`geosite:` rules. Path MTU is discovered automatically
+  and larger datagrams are fragmented inside the channel. TCP Handoff is
+  unchanged. LANDING now also listens on UDP at the same port number as TCP
+  (optional `udpPort`/`udpMtu` on both ends); open that UDP port to the LINE
+  addresses. LINE and LANDING must be upgraded together for Handoff UDP.
+
 ## [2.3.0] - 2026-11-01
 
 - Add per-LINE `fingerprint` selection: Chrome 156.0.8078.74 (default) and

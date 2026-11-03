@@ -66,6 +66,10 @@ pub struct HandoffLandingHandler {
     /// Idle bound handed to the resumed Vision relay, so a stalled peer cannot
     /// park a landing session on its descriptors and permits forever.
     io_timeout: Duration,
+    /// Native UDP channel port override (absent: the listener's port).
+    udp_port: Option<u16>,
+    /// Fixed native UDP channel MTU (absent: path MTU discovery).
+    udp_mtu: Option<u16>,
 }
 
 /// A validated outbound the landing dials transferred destinations through.
@@ -134,6 +138,8 @@ impl HandoffLandingHandler {
             io_timeout,
         );
         handler.pre_auth_idle_timeout = Duration::from_millis(timing.pre_auth_idle_timeout_ms);
+        handler.udp_port = settings.udp_port;
+        handler.udp_mtu = settings.udp_mtu;
         handler.governor = governor;
         handler.pressure = pressure;
         handler.generation = generation;
@@ -188,6 +194,26 @@ impl HandoffLandingHandler {
             generation: PreAuthGeneration::default(),
             relay,
             io_timeout,
+            udp_port: None,
+            udp_mtu: None,
+        }
+    }
+
+    /// The native UDP channel port for a listener bound on `listener_port`.
+    #[must_use]
+    pub fn udp_port(&self, listener_port: u16) -> u16 {
+        self.udp_port.unwrap_or(listener_port)
+    }
+
+    /// The policy the native UDP channel applies to new sessions of this
+    /// generation: the same key material and clock window as TCP transfers.
+    #[must_use]
+    pub fn udp_policy(&self) -> super::udp::LandingUdpPolicy {
+        super::udp::LandingUdpPolicy {
+            keys: self.keys.clone(),
+            maximum_time_difference: self.maximum_time_difference,
+            fixed_mtu: self.udp_mtu,
+            direct_egress: self.egress.is_none(),
         }
     }
 
@@ -255,34 +281,11 @@ impl HandoffLandingHandler {
         drop(authentication);
 
         if session_kind == SessionKind::Xudp {
-            // XUDP: no TCP dial / destination side effect. TLS ownership is on
-            // LANDING; UDP sockets open only after transfer+auth succeeded.
-            // Bind UDP to the same local IP the Handoff TCP listener accepted on
-            // so peers observe LANDING (not LINE) on multi-address loopback.
-            let udp_bind_ip = inbound.local_addr().ok().map(|addr| addr.ip());
-            let (reader_half, writer_half) = inbound.into_split();
-            let (client_reader, client_writer) = resume_application_halves(
-                reader_half,
-                pending,
-                writer_half,
-                tls,
-                key_update_response_pending,
-            );
-            let stats = crate::server::vision::run_resumed_xudp_session(
-                client_reader,
-                client_writer,
-                user_id,
-                prefetched,
-                policy,
-                self.io_timeout,
-                udp_bind_ip,
-            )
-            .await
-            .map_err(HandoffLandingError::Session)?;
-            return Ok(RelayStats::new(
-                stats.uplink_bytes(),
-                stats.downlink_bytes(),
-            ));
+            // XUDP never transfers TLS: LINE keeps the session and sends
+            // authorized datagrams over the native UDP channel (ADR 0069). A
+            // continuation claiming XUDP is refused like any invalid state,
+            // with zero bytes and a silent close.
+            return Err(HandoffLandingError::Protocol(HandoffError::State));
         }
 
         // TCP Vision resume (existing path).

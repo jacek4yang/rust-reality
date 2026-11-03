@@ -149,6 +149,50 @@ or unreliable:
 
 Leave them alone unless a measured problem says otherwise.
 
+## UDP (XUDP) over the native channel
+
+TCP connections are transferred as described above. UDP is not: since
+[ADR 0069](../../adr/0069-native-udp-channel-for-handoff-xudp.md), an XUDP
+association whose route is a Handoff outbound stays on the line node. The line
+node keeps decrypting REALITY/Vision/XUDP and makes every DNS, GeoIP/GeoSite,
+routing, and Block decision for every datagram, exactly as for Direct. It sends
+only authorized, resolved datagrams to the landing over a separate encrypted UDP
+channel. The landing only forwards them and returns replies; it evaluates no
+routing rules and needs no assets. Blocked destinations never reach the landing,
+and nothing falls back to Direct.
+
+The channel uses the same `psk` and landing key pair as TCP, with its own
+key schedule. Each association opens one session with a fresh ephemeral key.
+Datagrams are sealed with ChaCha20-Poly1305 and protected against replay. The
+path MTU between the nodes is discovered automatically (padded probes from a
+conservative 1200 bytes, backing off on loss or ICMP, re-probing
+periodically). Datagrams larger than the path allows are fragmented and
+reassembled inside the channel, never IP-fragmented. Clients need no
+configuration.
+
+Optional fields, normally left unset:
+
+| where | field | default | meaning |
+| --- | --- | --- | --- |
+| line node, Handoff outbound | `udpPort` | `port` | landing UDP port of the channel |
+| line node, Handoff outbound | `udpMtu` | automatic | fix the IP MTU toward the landing (576–9000) and disable probing |
+| landing, `landing` block | `udpPort` | each listener's port | UDP port the landing binds |
+| landing, `landing` block | `udpMtu` | automatic | fix the IP MTU toward the line node |
+
+**Firewall.** With the defaults the landing listens on UDP at the same address
+and port number as TCP (`10.0.0.2:7443/udp` in the example above) and logs it as
+listener `landing/udp`. Allow that UDP port from the line nodes' addresses only.
+Allow the landing's outbound UDP to the Internet, and the line node's outbound
+UDP to the landing. Handoff XUDP needs direct egress on the landing. A landing
+whose egress is a SOCKS5 or NXR outbound refuses the channel, and UDP through it
+fails closed.
+
+**Upgrading.** A line node and landing must both run a build with the native
+channel. Against an older landing, Handoff UDP fails closed after
+`connectTimeoutMs`. An older line node's XUDP transfer is rejected by a newer
+landing. TCP Handoff keeps working across both, but upgrade every
+LINE→LANDING pair together.
+
 ## What must agree
 
 | line node | landing node | must |
@@ -156,6 +200,7 @@ Leave them alone unless a measured problem says otherwise.
 | `outbounds.landing-1.psk` | `landing.psk` | be equal |
 | `outbounds.landing-1.landingPublicKey` | public half of `landing.privateKey` | be a pair |
 | `outbounds.landing-1.port` | `listeners[].port` | be equal |
+| `outbounds.landing-1.udpPort` (default `port`) | `landing.udpPort` (default listener port) | be equal |
 
 `check` reads one file and cannot verify a key *pair* across two machines. A
 mismatched pair produces a transfer the landing cannot open, which is a
@@ -167,10 +212,11 @@ The current transfer uses `HND1` framing, protocol version **1**, and
 continuation-state version **3**. The framing version does not imply acceptance
 of older state versions. Version 3 transfers each direction's current traffic
 secret and next record sequence, plus any pending KeyUpdate response, and adds
-an explicit session kind (TCP Vision or XUDP), an inbound tag, and a sealed
-Handoff policy snapshot so LANDING can authorize UDP destinations without
-LINE-side UDP ownership. LANDING can then answer KeyUpdate requests and derive
-later traffic generations.
+an explicit session kind, an inbound tag, and a policy snapshot section.
+LANDING can then answer KeyUpdate requests and derive later traffic
+generations. Only the TCP Vision session kind is accepted. XUDP no longer uses
+the transfer (see the UDP section above), and a landing rejects an XUDP
+continuation.
 
 Older sealed blobs are rejected by this build, not converted:
 

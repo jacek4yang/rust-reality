@@ -46,6 +46,8 @@ pub struct HandoffLine {
     first_byte_timeout: Duration,
     connector: DestinationConnector,
     pool: Option<AdaptiveTcpPool>,
+    udp_port: u16,
+    udp_mtu: Option<u16>,
 }
 
 impl HandoffLine {
@@ -82,6 +84,8 @@ impl HandoffLine {
             first_byte_timeout: Duration::from_millis(settings.first_byte_timeout_ms()),
             connector: connector.with_timeout(Duration::from_millis(settings.connect_timeout_ms())),
             pool: None,
+            udp_port: settings.udp_port(),
+            udp_mtu: settings.udp_mtu,
         })
     }
 
@@ -111,6 +115,28 @@ impl HandoffLine {
 
     pub(crate) const fn warm_pool(&self) -> Option<&AdaptiveTcpPool> {
         self.pool.as_ref()
+    }
+
+    /// Landing host and UDP port of the native XUDP channel.
+    pub(crate) fn udp_endpoint(&self) -> (&str, u16) {
+        (&self.address, self.udp_port)
+    }
+
+    /// Operator-fixed native UDP channel MTU, when configured.
+    pub(crate) const fn udp_mtu(&self) -> Option<u16> {
+        self.udp_mtu
+    }
+
+    /// The pair PSK and landing static public key the native UDP open seals
+    /// against (same key material as the TCP transfer, distinct HKDF label).
+    pub(crate) const fn udp_keys(&self) -> (&HandoffPsk, &[u8; 32]) {
+        (&self.psk, &self.landing_public)
+    }
+
+    /// The dial deadline, reused as the native UDP open acknowledgement
+    /// deadline.
+    pub(crate) const fn connect_timeout(&self) -> Duration {
+        self.connect_timeout
     }
 
     /// Returns the deadline for LANDING's first downlink byte after the

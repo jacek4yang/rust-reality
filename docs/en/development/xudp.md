@@ -17,7 +17,7 @@ See Issue [#254](https://github.com/jacek4yang/rust-reality/issues/254) for pin 
 | --- | --- |
 | Direct | Supported (local Direct UDP sockets) |
 | NXR | **Authorized** as a distinct egress capability ([ADR 0060](../../adr/0060-xudp-over-nxr-and-handoff.md)). Landward carrier: authenticated `FLAG_UDP` open + length-prefixed session-MAC frames over LINE→LANDING TCP (`protocol::nxr_udp`). LANDING owns UDP sockets. Vision→NXR session wiring lands datagrams on LANDING via the framed carrier; Vision fails closed after authorization without opening Direct sockets on LINE. |
-| Handoff | **Authorized** as a distinct egress capability ([ADR 0060](../../adr/0060-xudp-over-nxr-and-handoff.md) Option B). Continuation v3 carries `SessionKind::Xudp` + sealed `HandoffPolicySnapshot` v2 (ordered sealable route rules + default-outbound allow). LINE transfers before any client-visible Vision response; LANDING resumes TLS, owns UDP, frames XUDP, and evaluates Keep rewrites against the snapshot. Geosite/GeoIP/regexp/ext matchers fail closed to initial-only. Same no-silent-Direct rule. |
+| Handoff | **Authorized** as a distinct egress capability. Landward carrier: the native `handoff-udp` channel of [ADR 0069](../../adr/0069-native-udp-channel-for-handoff-xudp.md) (superseding the TLS-transfer design of ADR 0060 Option B). LINE keeps TLS/Vision/XUDP, authorizes and resolves every New/Keep destination with its own routing (DNS, GeoIP/GeoSite, policy), and sends only authorized datagrams over an AEAD UDP session with replay protection, path MTU discovery and in-channel fragmentation. LANDING forwards and returns replies; it evaluates no rules. Block never reaches LANDING. Same no-silent-Direct rule; an unanswered open fails closed. |
 | Block | Rejected by routing / authorization as usual |
 | Other (e.g. SOCKS5) | Fail closed (`Unsupported`) |
 
@@ -67,9 +67,8 @@ tests from earlier PRs:
 | Framing fuzz | `fuzz_decode_xudp_packet` remains in the wire-parser fuzz shard |
 | Route fail-closed | Block/unknown reject at authorize; NXR/Handoff are distinct capabilities and must not silently become Direct |
 | NXR UDP E2E (PR3) | rust↔rust and stock Xray Client → LINE → NXR LANDING → UDP echo; LANDING source `127.0.0.2` proof; multi-dest Keep; Block → zero packets; genuine Quinn+h3 UDP/443 via NXR; `allowUdp443` policy |
-| Handoff XUDP continuation (PR4) | Continuation v3 `SessionKind` + policy snapshot; version mismatch fail-closed; KeyUpdate/seq/prefetch preserved; LANDING owns TLS+UDP; LINE thin splice |
-| Multi-dest sealed policy (PR5) | Handoff policy snapshot v2: ordered sealable rules; Block/other deny before default allow; geosite/geoip fail-closed; NXR Keep re-auth on LINE unchanged |
-| Handoff UDP E2E (PR6) | rust↔rust and stock Xray → LINE → Handoff LANDING → UDP echo; LANDING source `127.0.0.2` proof; multi-dest Keep + Block zero packets; genuine Quinn+h3 UDP/443; Native gates |
+| Handoff native UDP channel (ADR 0069) | Packet codec, OPEN admission/replay/rotation, AEAD tamper and reflection, replay window, fragmentation limits and PMTU state machine (unit); loopback LINE↔LANDING with forged/replayed traffic, NAT rebinding, OPEN loss, open timeout, refused egress, black-hole and shrinking/growing paths (integration); interface MTU drop mid-session in a root network namespace; fuzz target `handoff_udp_packets` |
+| Handoff UDP E2E | rust↔rust and stock Xray → LINE → Handoff LANDING → UDP echo; LANDING source `127.0.0.2` proof; multi-dest Keep + Block zero packets; stock Xray with `geoip:private`/GeoSite rules, DNS, STUN and large datagrams (`stock_xray_handoff_native_udp_user_routing_shape`); genuine Quinn+h3 UDP/443; Native gates |
 
 This is **not** native QUIC transport. QUIC/443 traffic, when permitted, is still
 UDP datagrams inside Vision/XUDP over the existing REALITY LINE.

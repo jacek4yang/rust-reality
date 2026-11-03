@@ -22,6 +22,8 @@ async fn warm_handoff_sends_no_transfer_bytes_before_checkout() {
     let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
     let line = HandoffLine::from_settings_with_warm_pool(
         &HandoffOutboundConfig {
+            udp_port: None,
+            udp_mtu: None,
             address: address.ip().to_string(),
             port: address.port(),
             psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
@@ -97,6 +99,8 @@ async fn stale_warm_handoff_socket_is_discarded_before_cold_fallback() {
     let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
     let line = HandoffLine::from_settings_with_warm_pool(
         &HandoffOutboundConfig {
+            udp_port: None,
+            udp_mtu: None,
             address: address.ip().to_string(),
             port: address.port(),
             psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),

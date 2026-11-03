@@ -2782,3 +2782,23 @@ async fn pending_write_stalls_at_120s() -> io::Result<()> {
         ))),
     }
 }
+
+#[test]
+fn landward_xudp_egress_prefers_ipv4_while_direct_keeps_resolver_order() {
+    use super::xudp_session::preferred_udp_egress_ip;
+    use crate::server::xudp::XudpEgressCapability;
+    use std::net::{IpAddr, Ipv6Addr};
+
+    let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
+    let v4 = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let answer = [v6, v4];
+    assert_eq!(
+        preferred_udp_egress_ip(XudpEgressCapability::Direct, &answer),
+        Some(v6)
+    );
+    for capability in [XudpEgressCapability::Nxr, XudpEgressCapability::Handoff] {
+        assert_eq!(preferred_udp_egress_ip(capability, &answer), Some(v4));
+        assert_eq!(preferred_udp_egress_ip(capability, &[v6]), Some(v6));
+        assert_eq!(preferred_udp_egress_ip(capability, &[]), None);
+    }
+}
