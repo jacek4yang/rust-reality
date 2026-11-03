@@ -800,9 +800,15 @@ mod tests {
             require_nxr_xudp_landward(XudpEgressCapability::Handoff),
             Err(XudpOutboundUnsupported::Handoff)
         );
+        // ADR 0069: Handoff XUDP is served on LINE over the native channel.
+        require_handoff_xudp_landward(XudpEgressCapability::Handoff).unwrap();
         assert_eq!(
-            require_handoff_xudp_landward(XudpEgressCapability::Handoff),
-            Err(XudpOutboundUnsupported::Handoff)
+            require_handoff_xudp_landward(XudpEgressCapability::Direct),
+            Err(XudpOutboundUnsupported::Other)
+        );
+        assert_eq!(
+            require_handoff_xudp_landward(XudpEgressCapability::Nxr),
+            Err(XudpOutboundUnsupported::Nxr)
         );
     }
 
