@@ -411,6 +411,72 @@ fn socks5_udp_round_trip(
     Ok(buf[10..n].to_vec())
 }
 
+/// One SOCKS5 UDP ASSOCIATE that sends several datagrams to a **domain**
+/// destination on the same association (stock Xray XUDP repeats the domain on
+/// every Keep frame).
+fn socks5_udp_domain_round_trips(
+    socks_port: u16,
+    host: &str,
+    port: u16,
+    payloads: &[&[u8]],
+) -> Result<Vec<Vec<u8>>, String> {
+    let mut control =
+        TcpStream::connect((LINE_IP, socks_port)).map_err(|e| format!("socks connect: {e}"))?;
+    control.set_read_timeout(Some(Duration::from_secs(8))).ok();
+    control.set_write_timeout(Some(Duration::from_secs(8))).ok();
+    control
+        .write_all(&[0x05, 0x01, 0x00])
+        .map_err(|e| format!("method: {e}"))?;
+    let mut method = [0_u8; 2];
+    control
+        .read_exact(&mut method)
+        .map_err(|e| format!("method reply: {e}"))?;
+    if method != [0x05, 0x00] {
+        return Err(format!("method reply {method:?}"));
+    }
+    control
+        .write_all(&[0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        .map_err(|e| format!("associate: {e}"))?;
+    let mut reply = [0_u8; 10];
+    control
+        .read_exact(&mut reply)
+        .map_err(|e| format!("associate reply: {e}"))?;
+    if reply[0] != 0x05 || reply[1] != 0x00 || reply[3] != 0x01 {
+        return Err(format!("associate failed: {reply:?}"));
+    }
+    let relay = SocketAddr::from((
+        [reply[4], reply[5], reply[6], reply[7]],
+        u16::from_be_bytes([reply[8], reply[9]]),
+    ));
+    let udp = StdUdpSocket::bind((LINE_IP, 0)).map_err(|e| format!("udp bind: {e}"))?;
+    udp.set_read_timeout(Some(Duration::from_secs(8)))
+        .map_err(|e| format!("udp timeout: {e}"))?;
+    let host_len = u8::try_from(host.len()).map_err(|_| "host too long".to_owned())?;
+    let mut bodies = Vec::with_capacity(payloads.len());
+    for (index, payload) in payloads.iter().enumerate() {
+        let mut datagram = Vec::with_capacity(7 + host.len() + payload.len());
+        datagram.extend_from_slice(&[0, 0, 0, 3, host_len]);
+        datagram.extend_from_slice(host.as_bytes());
+        datagram.extend_from_slice(&port.to_be_bytes());
+        datagram.extend_from_slice(payload);
+        udp.send_to(&datagram, relay)
+            .map_err(|e| format!("udp send #{index}: {e}"))?;
+        let mut buf = [0_u8; 65535];
+        let (n, _) = udp
+            .recv_from(&mut buf)
+            .map_err(|e| format!("udp recv #{index}: {e}"))?;
+        if n < 10 || buf[0] != 0 || buf[1] != 0 || buf[2] != 0 || buf[3] != 1 {
+            return Err(format!(
+                "bad socks udp reply #{index}: {:?}",
+                &buf[..n.min(16)]
+            ));
+        }
+        bodies.push(buf[10..n].to_vec());
+    }
+    drop(control);
+    Ok(bodies)
+}
+
 struct EchoPeer {
     peers: Arc<Mutex<Vec<SocketAddr>>>,
     hits: Arc<AtomicUsize>,
@@ -823,6 +889,32 @@ fn stock_xray_client_handoff_udp_echo_landing_is_sender() {
         );
     });
     assert_eq!(body, MARKER);
+    assert_landing_is_udp_sender(&echo, landing_pid, entry_pid);
+
+    // Regression: a domain destination repeated on Keep frames must reuse the
+    // destination LINE sealed at transfer instead of tearing down the
+    // association on LANDING after the first datagram.
+    let first: &[u8] = b"rr-handoff-xudp-domain-1";
+    let second: &[u8] = b"rr-handoff-xudp-domain-2";
+    let third: &[u8] = b"rr-handoff-xudp-domain-3";
+    let bodies = socks5_udp_domain_round_trips(
+        socks_port,
+        "localhost",
+        echo.port,
+        &[first, second, third],
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "stock Xray → Handoff UDP domain Keep failed: {e}\nxray:\n{}\nentry:\n{}\nlanding:\n{}",
+            fs::read_to_string(root.join("xray-client.log")).unwrap_or_default(),
+            fs::read_to_string(root.join("entry.log")).unwrap_or_default(),
+            fs::read_to_string(root.join("landing.log")).unwrap_or_default()
+        );
+    });
+    assert_eq!(
+        bodies,
+        vec![first.to_vec(), second.to_vec(), third.to_vec()]
+    );
     assert_landing_is_udp_sender(&echo, landing_pid, entry_pid);
     eprintln!("stock_xray_client_handoff_udp_echo_landing_is_sender PASS");
     let _ = (landing, entry);

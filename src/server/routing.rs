@@ -328,6 +328,23 @@ impl RoutingTable {
         None
     }
 
+    /// Resolves a domain destination for UDP egress after routing has already
+    /// decided without DNS (`asIs`, a domain rule matched first, or no IP
+    /// rules). UDP sockets and the NXR / Handoff landward contracts carry
+    /// addresses only, so XUDP must resolve on LINE once the route is known.
+    /// The route decision itself is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounded DNS error when resolution cannot complete safely.
+    pub async fn resolve_udp_egress(
+        &self,
+        destination: &Destination,
+        timeout: Duration,
+    ) -> Result<Vec<IpAddr>, RouteResolutionError> {
+        resolve_domain(&self.dns_governor, destination, timeout).await
+    }
+
     /// Resolves a domain only when required by the configured routing strategy,
     /// then evaluates the same immutable rules against a bounded IP snapshot.
     ///

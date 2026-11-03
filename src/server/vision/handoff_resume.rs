@@ -16,7 +16,8 @@ use crate::protocol::reality::tls13::{
     TlsApplicationIoError, TlsApplicationReader, TlsApplicationWriter,
 };
 use crate::protocol::vless::{
-    UserId, VERSION, VisionCommand, VisionDecoder, VisionEncoder, VisionMode, VisionPayload,
+    Destination, UserId, VERSION, VisionCommand, VisionDecoder, VisionEncoder, VisionMode,
+    VisionPayload,
 };
 use crate::server::handoff::HandoffLineError;
 use crate::server::xudp::{
@@ -104,6 +105,31 @@ pub(crate) async fn run_resumed_session(
     Ok(session_stats(uplink, downlink))
 }
 
+/// Authorizes one XUDP destination field on LANDING after Handoff resume.
+///
+/// `initial_wire_destination` is the destination carried by the first `New`
+/// frame: the exact target LINE routed before transfer and sealed in its
+/// DNS-resolved form as [`HandoffPolicySnapshot::initial_destination`]. Stock
+/// Xray repeats the association destination on every `Keep` frame
+/// (`common/xudp` `PacketWriter`), so a domain target such as
+/// `example.com:443` must map back to the sealed resolved address rather than
+/// be treated as a rewrite (LANDING has no routing DNS and cannot dial a
+/// domain). Every other destination is a Keep rewrite and must pass the sealed
+/// policy snapshot; denials fail closed exactly as before.
+pub(super) fn authorize_landing_xudp_destination(
+    policy: &HandoffPolicySnapshot,
+    initial_wire_destination: Option<&Destination>,
+    destination: &Destination,
+) -> Result<Destination, VisionSessionError> {
+    if initial_wire_destination == Some(destination) {
+        return Ok(policy.initial_destination().clone());
+    }
+    policy
+        .authorize_udp_destination(destination)
+        .map_err(|_| VisionSessionError::Xudp(XudpSessionError::UnauthorizedRewrite))?;
+    Ok(destination.clone())
+}
+
 /// Resumes an XUDP Vision session on LANDING after a Handoff transfer.
 ///
 /// TLS ownership, Vision framing, and UDP sockets live here. Destination
@@ -165,6 +191,8 @@ pub(crate) async fn run_resumed_xudp_session(
 
     let mut packets = drain_xudp_frames(&mut vision_plaintext).map_err(VisionSessionError::Xudp)?;
     let mut association = None::<XudpDirectAssociation<'_>>;
+    // Wire destination of the first New frame (the one LINE routed and sealed).
+    let mut initial_wire_destination = None::<Destination>;
     let globals = process_xudp_global_map();
     let mut uplink_bytes = 0_u64;
     let mut downlink_bytes = 0_u64;
@@ -175,17 +203,19 @@ pub(crate) async fn run_resumed_xudp_session(
             // (DNS-resolved) initial destination. Later Keep rewrites must pass
             // the sealed policy snapshot (ordered rules + default outbound).
             let authorized = if association.is_none() {
-                if packet.destination.is_none() {
+                let Some(dest) = packet.destination.as_ref() else {
                     return Err(VisionSessionError::Xudp(
                         XudpSessionError::MissingNewDestination,
                     ));
-                }
+                };
+                initial_wire_destination = Some(dest.clone());
                 Some(policy.initial_destination().clone())
             } else if let Some(dest) = packet.destination.as_ref() {
-                policy
-                    .authorize_udp_destination(dest)
-                    .map_err(|_| VisionSessionError::Xudp(XudpSessionError::UnauthorizedRewrite))?;
-                Some(dest.clone())
+                Some(authorize_landing_xudp_destination(
+                    &policy,
+                    initial_wire_destination.as_ref(),
+                    dest,
+                )?)
             } else {
                 None
             };
@@ -267,14 +297,11 @@ pub(crate) async fn run_resumed_xudp_session(
                         let now = std::time::Instant::now();
                         for packet in more {
                             let authorized = if let Some(dest) = packet.destination.as_ref() {
-                                policy
-                                    .authorize_udp_destination(dest)
-                                    .map_err(|_| {
-                                        VisionSessionError::Xudp(
-                                            XudpSessionError::UnauthorizedRewrite,
-                                        )
-                                    })?;
-                                Some(dest.clone())
+                                Some(authorize_landing_xudp_destination(
+                                    &policy,
+                                    initial_wire_destination.as_ref(),
+                                    dest,
+                                )?)
                             } else {
                                 None
                             };

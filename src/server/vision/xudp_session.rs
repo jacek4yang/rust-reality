@@ -27,6 +27,26 @@ use super::error::VisionSessionError;
 use super::handoff_resume::XudpLandwardAssociation;
 use super::stats::VisionRelayStats;
 
+/// Picks the address XUDP egress uses for a resolved domain.
+///
+/// Direct egress keeps the resolver order of the LINE host. NXR and Handoff
+/// egress happens on LANDING, whose address families LINE cannot observe, so
+/// an IPv4 address is preferred when one exists (an IPv6-first answer would
+/// otherwise strand IPv4-only LANDING hosts).
+pub(super) fn preferred_udp_egress_ip(
+    capability: XudpEgressCapability,
+    ips: &[IpAddr],
+) -> Option<IpAddr> {
+    match capability {
+        XudpEgressCapability::Direct => ips.first().copied(),
+        XudpEgressCapability::Nxr | XudpEgressCapability::Handoff => ips
+            .iter()
+            .copied()
+            .find(IpAddr::is_ipv4)
+            .or_else(|| ips.first().copied()),
+    }
+}
+
 impl VisionHandler {
     /// Authorize an XUDP New/Keep destination: canonical routing, DNS, egress class.
     ///
@@ -62,7 +82,20 @@ impl VisionHandler {
         let outbound_tag = route.decision().outbound().to_owned();
         let capability = authorize_xudp_egress(self.outbounds.xudp_route_class(&outbound_tag))
             .map_err(|error| VisionSessionError::Xudp(XudpSessionError::Outbound(error)))?;
-        let resolved = if let Some(ip) = route.resolved_ips().first().copied() {
+        let late_resolved;
+        let resolved_ips = if route.resolved_ips().is_empty()
+            && matches!(dest.address(), crate::protocol::vless::Address::Domain(_))
+        {
+            late_resolved = self
+                .routing
+                .resolve_udp_egress(dest, self.dns_timeout)
+                .await
+                .map_err(VisionSessionError::Route)?;
+            late_resolved.as_slice()
+        } else {
+            route.resolved_ips()
+        };
+        let resolved = if let Some(ip) = preferred_udp_egress_ip(capability, resolved_ips) {
             match ip {
                 IpAddr::V4(v4) => crate::protocol::vless::Destination::new(
                     crate::protocol::vless::Address::Ipv4(v4),
