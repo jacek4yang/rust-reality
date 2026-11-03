@@ -624,7 +624,10 @@ fn dynamic_pipe_fds(raw: &Observation, policy: &Policy) -> Result<u64, String> {
 /// Count distinct datagram listeners announced at startup. Their sockets are
 /// bound inventory like TCP listeners but own no accept task or permit.
 fn udp_listener_count(raw: &Observation) -> Result<u64, String> {
-    let log = raw.ownership_log.as_deref().ok_or("missing ownership log")?;
+    let log = raw
+        .ownership_log
+        .as_deref()
+        .ok_or("missing ownership log")?;
     let mut seen = BTreeSet::new();
     for line in log.split_inclusive('\n') {
         if !line.ends_with('\n') {
@@ -634,7 +637,9 @@ fn udp_listener_count(raw: &Observation) -> Result<u64, String> {
             continue;
         };
         if value["event"].as_str() == Some("listener_started")
-            && value["tag"].as_str().is_some_and(|tag| tag.ends_with("/udp"))
+            && value["tag"]
+                .as_str()
+                .is_some_and(|tag| tag.ends_with("/udp"))
         {
             seen.insert((
                 value["tag"].as_str().unwrap_or_default().to_owned(),
