@@ -160,6 +160,16 @@ pub struct HandoffOutboundConfig {
     /// Pre-establish TCP connections to this landing. Absent means enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warm_tcp: Option<bool>,
+    /// UDP port of the landing's native UDP channel, which carries this
+    /// node's XUDP (UDP) traffic routed to this outbound. Absent means the
+    /// same number as `port`, on UDP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udp_port: Option<u16>,
+    /// Fixed IP-layer path MTU for the native UDP channel, 576 to 9000.
+    /// Absent means automatic path MTU discovery, which is the recommended
+    /// setting; set it only on paths that discard both probes and ICMP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udp_mtu: Option<u16>,
 }
 
 /// The default Handoff dial-and-write deadline, in milliseconds.
@@ -182,7 +192,19 @@ impl HandoffOutboundConfig {
         self.first_byte_timeout_ms
             .unwrap_or(DEFAULT_HANDOFF_FIRST_BYTE_TIMEOUT_MS)
     }
+
+    /// The native UDP channel port, applying the same-as-`port` default.
+    #[must_use]
+    pub fn udp_port(&self) -> u16 {
+        self.udp_port.unwrap_or(self.port)
+    }
 }
+
+/// Smallest accepted fixed native UDP channel MTU (IPv4 minimum datagram).
+pub const MIN_HANDOFF_UDP_MTU: u16 = 576;
+
+/// Largest accepted fixed native UDP channel MTU (jumbo frames).
+pub const MAX_HANDOFF_UDP_MTU: u16 = 9000;
 
 #[cfg(test)]
 mod tests {

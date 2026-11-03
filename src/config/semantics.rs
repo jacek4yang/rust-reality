@@ -521,6 +521,29 @@ fn validate_assets(entry: &EntryConfig) -> Result<(), SemanticError> {
 
 // -------------------------------------------------------------- landing role
 
+/// Validates the optional native Handoff UDP channel overrides.
+fn check_handoff_udp(
+    path: &str,
+    udp_port: Option<u16>,
+    udp_mtu: Option<u16>,
+) -> Result<(), SemanticError> {
+    use crate::config::node::outbound::{MAX_HANDOFF_UDP_MTU, MIN_HANDOFF_UDP_MTU};
+    if udp_port == Some(0) {
+        return fail(format!("{path}.udpPort"), "must be between 1 and 65535");
+    }
+    if let Some(mtu) = udp_mtu
+        && !(MIN_HANDOFF_UDP_MTU..=MAX_HANDOFF_UDP_MTU).contains(&mtu)
+    {
+        return fail(
+            format!("{path}.udpMtu"),
+            format!(
+                "must be between {MIN_HANDOFF_UDP_MTU} and {MAX_HANDOFF_UDP_MTU}; omit it for automatic path MTU discovery"
+            ),
+        );
+    }
+    Ok(())
+}
+
 fn validate_landing(landing: &LandingConfig) -> Result<(), SemanticError> {
     validate_listeners(&landing.listeners)?;
     reject_client_only_protocol(&landing.listeners)?;
@@ -562,6 +585,7 @@ fn validate_landing_protocol(protocol: &LandingProtocol) -> Result<(), SemanticE
                 "must cover twice the accepted clock skew plus one second and not exceed 86400 seconds",
             );
         }
+        check_handoff_udp("landing", settings.udp_port, settings.udp_mtu)?;
     }
 
     let timing = protocol.timing();
@@ -784,6 +808,7 @@ fn validate_outbound(path: &str, outbound: &OutboundConfig) -> Result<(), Semant
                     "must exceed connectTimeoutMs: the landing answers only after it has read, authenticated, and dialled",
                 );
             }
+            check_handoff_udp(path, settings.udp_port, settings.udp_mtu)?;
         }
     }
     Ok(())

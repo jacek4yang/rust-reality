@@ -84,6 +84,8 @@ fn test_landing_handler() -> HandoffLandingHandler {
 fn handoff_line(address: std::net::SocketAddr) -> HandoffLine {
     let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
     HandoffLine::from_settings(&HandoffOutboundConfig {
+        udp_port: None,
+        udp_mtu: None,
         address: address.ip().to_string(),
         port: address.port(),
         psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
@@ -229,6 +231,8 @@ fn handoff_vision_handler_with_warm(
         &std::collections::BTreeMap::from([(
             "handoff".to_owned(),
             OutboundConfig::Handoff(HandoffOutboundConfig {
+                udp_port: None,
+                udp_mtu: None,
                 address: landing_address.ip().to_string(),
                 port: landing_address.port(),
                 psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),

@@ -13,6 +13,7 @@
 mod error;
 mod landing;
 mod line;
+pub mod udp;
 
 pub use error::{HandoffLandingConfigError, HandoffLandingError, HandoffLineError};
 pub use landing::HandoffLandingHandler;

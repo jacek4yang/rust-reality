@@ -314,9 +314,20 @@ impl PmtuProber {
     /// Applies kernel feedback: a send of `attempted` bytes failed with
     /// `EMSGSIZE`. `kernel_limit` is the kernel's current path MTU converted
     /// to a channel packet size, when the socket can report it.
+    ///
+    /// The kernel bound only lowers the probe ceiling until the next raise
+    /// timer, because kernel route MTU entries age out as well.
     pub fn on_send_too_big(&mut self, attempted: usize, kernel_limit: Option<usize>) {
+        // Without a kernel-reported limit (unconnected sockets cannot read
+        // `IP_MTU`), fall back to the base, or the floor if the base itself
+        // was refused; discovery climbs back from there.
+        let fallback = if attempted > BASE_PLPMTU {
+            BASE_PLPMTU
+        } else {
+            MIN_PLPMTU
+        };
         let limit = kernel_limit
-            .unwrap_or(attempted.saturating_sub(1))
+            .unwrap_or(fallback)
             .min(attempted.saturating_sub(1))
             .clamp(MIN_PLPMTU, MAX_PLPMTU);
         self.ceiling = self.ceiling.min(limit).max(MIN_PLPMTU);
@@ -331,6 +342,22 @@ impl PmtuProber {
             .is_some_and(|outstanding| outstanding.size > self.ceiling)
         {
             self.outstanding = None;
+        }
+    }
+
+    /// Applies a probe whose send failed locally with `EMSGSIZE`: the probed
+    /// size is above the kernel's route MTU, so it is treated as lost without
+    /// waiting and without touching the validated limit.
+    pub fn on_probe_too_big(&mut self, size: usize) {
+        if self
+            .outstanding
+            .is_some_and(|outstanding| outstanding.size == size)
+        {
+            self.outstanding = None;
+        }
+        self.ceiling = self.ceiling.min(size.saturating_sub(1)).max(self.current);
+        if let Phase::Search { high } = &mut self.phase {
+            *high = (*high).min(self.ceiling);
         }
     }
 

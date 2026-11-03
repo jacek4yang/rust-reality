@@ -168,6 +168,16 @@ pub struct HandoffLandingConfig {
     /// preserves an existing landing's replay policy during binary upgrades.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nonce_retention_seconds: Option<u64>,
+    /// UDP port of the native UDP channel that carries XUDP traffic from
+    /// entry nodes, bound on every listener address. Absent means each
+    /// listener's own port number, on UDP. Restrict it at the firewall to
+    /// the entry nodes exactly like the TCP port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udp_port: Option<u16>,
+    /// Fixed IP-layer path MTU for the native UDP channel toward entry
+    /// nodes, 576 to 9000. Absent means automatic path MTU discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udp_mtu: Option<u16>,
 }
 
 impl HandoffLandingConfig {

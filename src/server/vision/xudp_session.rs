@@ -26,6 +26,7 @@ use super::VisionHandler;
 use super::error::VisionSessionError;
 use super::handoff_resume::XudpLandwardAssociation;
 use super::stats::VisionRelayStats;
+use crate::server::handoff::udp::XudpHandoffUdpAssociation;
 
 /// Picks the address XUDP egress uses for a resolved domain.
 ///
@@ -114,10 +115,11 @@ impl VisionHandler {
 
     /// Serves one REALITY-authenticated Vision **XUDP** (Mux) session.
     ///
-    /// XUDP frames ride inside Vision padding. Routing may authorize Direct or
-    /// NXR (ADR 0060 Option A framed carrier). Handoff transfers TLS ownership
-    /// to LANDING before any client-visible Vision response (ADR 0060 Option B);
-    /// LINE never decrypts that session again after a successful transfer.
+    /// XUDP frames ride inside Vision padding. Routing may authorize Direct,
+    /// NXR (ADR 0060 framed TCP carrier), or Handoff, whose datagrams travel
+    /// over the native LINE→LANDING UDP channel (ADR 0069). LINE keeps TLS,
+    /// Vision, and XUDP ownership for every XUDP session and authorizes each
+    /// destination itself; TCP Handoff transfer is unaffected.
     /// Keep rewrites re-authorize; capability changes and Block fail closed
     /// with zero landward packets (no silent Direct fallback).
     #[allow(
@@ -132,7 +134,6 @@ impl VisionHandler {
         user_id: UserId,
         request_buffer: Vec<u8>,
         prefetched: Range<usize>,
-        client_random: [u8; 32],
     ) -> Result<VisionRelayStats, VisionSessionError> {
         let activity = Arc::new(SessionActivity::default());
         client_writer.set_activity(Arc::clone(&activity));
@@ -140,18 +141,15 @@ impl VisionHandler {
         let mut decoder = VisionDecoder::new(user_id);
         let mut encoder = VisionEncoder::new(user_id).map_err(VisionSessionError::VisionEncode)?;
 
-        // Delay the Vision response until egress is known. For Handoff, LANDING
-        // writes the first client-visible success after accepting the transfer.
+        // Delay the Vision response until egress is authorized and opened, so a
+        // Block or failed open never shows the client a success.
         let response_header = [VERSION, 0];
         let mut response_sent = false;
 
         let mut vision_plaintext = Vec::new();
-        // Vision wire bytes observed on LINE before transfer — LANDING re-decodes.
-        let mut vision_wire_for_transfer = Vec::new();
         if let Some(initial) = request_buffer.get(prefetched)
             && !initial.is_empty()
         {
-            vision_wire_for_transfer.extend_from_slice(initial);
             let mode = decoder
                 .decode_append(initial, &mut vision_plaintext)
                 .map_err(VisionSessionError::VisionDecode)?;
@@ -177,45 +175,14 @@ impl VisionHandler {
                     let (capability, resolved, outbound_tag) = self
                         .authorize_xudp_destination(user_id, inbound_tag, dest)
                         .await?;
-                    Some((capability, resolved, outbound_tag, dest.clone()))
+                    Some((capability, resolved, outbound_tag))
                 } else {
                     None
                 };
                 if association.is_none() {
-                    let (capability, bind_dest, outbound_tag, route_dest) =
-                        authorized.clone().ok_or(VisionSessionError::Xudp(
-                            XudpSessionError::MissingNewDestination,
-                        ))?;
-                    if capability == XudpEgressCapability::Handoff {
-                        // LINE does not open landward UDP; transfer then splice.
-                        // Seal the DNS-resolved destination so LANDING can bind
-                        // UDP without re-resolving (domain addresses fail closed).
-                        let outcome = self
-                            .outbounds
-                            .connect_session_resolved(&outbound_tag, &bind_dest, &[])
-                            .await
-                            .map_err(VisionSessionError::Outbound)?;
-                        let SessionOutboundOutcome::Handoff(line) = outcome else {
-                            return Err(VisionSessionError::Xudp(XudpSessionError::Outbound(
-                                crate::server::xudp::XudpOutboundUnsupported::Handoff,
-                            )));
-                        };
-                        let _ = route_dest;
-                        // No client-visible success before LANDING accepts.
-                        return self
-                            .relay_via_handoff_xudp(
-                                &line,
-                                client_reader,
-                                client_writer,
-                                user_id,
-                                bind_dest,
-                                inbound_tag,
-                                &outbound_tag,
-                                vision_wire_for_transfer,
-                                client_random,
-                            )
-                            .await;
-                    }
+                    let (capability, bind_dest, outbound_tag) = authorized.clone().ok_or(
+                        VisionSessionError::Xudp(XudpSessionError::MissingNewDestination),
+                    )?;
                     if !response_sent {
                         let preamble = encoder
                             .plan(0, VisionCommand::Continue, true)
@@ -281,14 +248,38 @@ impl VisionHandler {
                             )
                         }
                         XudpEgressCapability::Handoff => {
-                            unreachable!("Handoff transfers above before landward open")
+                            require_handoff_xudp_landward(capability).map_err(|error| {
+                                VisionSessionError::Xudp(XudpSessionError::Outbound(error))
+                            })?;
+                            let outcome = self
+                                .outbounds
+                                .connect_session_resolved(&outbound_tag, &bind_dest, &[])
+                                .await
+                                .map_err(VisionSessionError::Outbound)?;
+                            let SessionOutboundOutcome::Handoff(line) = outcome else {
+                                return Err(VisionSessionError::Xudp(XudpSessionError::Outbound(
+                                    crate::server::xudp::XudpOutboundUnsupported::Handoff,
+                                )));
+                            };
+                            XudpLandwardAssociation::Handoff(
+                                XudpHandoffUdpAssociation::open(
+                                    &line,
+                                    &bind_dest,
+                                    *user_id.as_bytes(),
+                                    packet.global_id,
+                                    globals,
+                                    now,
+                                )
+                                .await
+                                .map_err(VisionSessionError::Xudp)?,
+                            )
                         }
                     };
                     association = Some(assoc);
                 }
                 if let Some(assoc) = association.as_mut() {
                     let now = std::time::Instant::now();
-                    let resolved = if let Some((capability, resolved, _, _)) = authorized.as_ref() {
+                    let resolved = if let Some((capability, resolved, _)) = authorized.as_ref() {
                         if *capability != assoc.capability() {
                             return Err(VisionSessionError::Xudp(
                                 XudpSessionError::EgressCapabilityChanged,
@@ -334,7 +325,6 @@ impl VisionHandler {
             if record.is_empty() {
                 continue;
             }
-            vision_wire_for_transfer.extend_from_slice(record.plaintext());
             let (mode, payload) = decoder
                 .decode_borrowed_append(record.plaintext(), &mut vision_plaintext)
                 .map_err(VisionSessionError::VisionDecode)?;

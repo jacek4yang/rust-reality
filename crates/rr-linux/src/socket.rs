@@ -478,3 +478,40 @@ pub(crate) mod tests {
         );
     }
 }
+
+/// Sets the Don't Fragment policy on a UDP socket: `IP_PMTUDISC_DO` (IPv4)
+/// or `IPV6_PMTUDISC_DO` (IPv6).
+///
+/// The kernel then never fragments locally and sets DF on every IPv4
+/// datagram; a send larger than the kernel's route MTU (learned from ICMP
+/// Packet Too Big / Fragmentation Needed or the interface) fails with
+/// `EMSGSIZE`, which the native Handoff UDP channel feeds into its
+/// packetization-layer path MTU discovery.
+///
+/// # Errors
+///
+/// Returns the kernel error from `setsockopt`.
+pub fn set_udp_dont_fragment(fd: impl AsFd, ipv6: bool) -> Result<(), Errno> {
+    let fd = fd.as_fd();
+    if ipv6 {
+        sockopt::set_ipv6_mtu_discover(fd, sockopt::Ipv6PathMtuDiscovery::DO)
+    } else {
+        sockopt::set_ip_mtu_discover(fd, sockopt::Ipv4PathMtuDiscovery::DO)
+    }
+}
+
+/// Returns the kernel's current path MTU (`IP_MTU` / `IPV6_MTU`) of a
+/// connected socket, in IP-layer bytes.
+///
+/// # Errors
+///
+/// Returns the kernel error from `getsockopt`, including `ENOTCONN` for an
+/// unconnected socket.
+pub fn udp_path_mtu(fd: impl AsFd, ipv6: bool) -> Result<u32, Errno> {
+    let fd = fd.as_fd();
+    if ipv6 {
+        sockopt::ipv6_mtu(fd)
+    } else {
+        sockopt::ip_mtu(fd)
+    }
+}

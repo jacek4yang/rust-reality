@@ -59,7 +59,7 @@ mod handoff_relay;
 mod handoff_resume;
 mod xudp_session;
 
-pub(crate) use handoff_resume::{run_resumed_session, run_resumed_xudp_session};
+pub(crate) use handoff_resume::run_resumed_session;
 
 /// Immutable Vision data path with UUID-grouped routing and outbound selection.
 #[derive(Clone)]
@@ -270,7 +270,6 @@ impl VisionHandler {
                     user_id,
                     buffer,
                     prefetched,
-                    client_random,
                 )
                 .await;
         }

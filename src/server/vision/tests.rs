@@ -2784,45 +2784,6 @@ async fn pending_write_stalls_at_120s() -> io::Result<()> {
 }
 
 #[test]
-fn landing_xudp_domain_keep_reuses_sealed_initial_destination() {
-    use super::handoff_resume::authorize_landing_xudp_destination;
-    use crate::protocol::handoff::HandoffPolicySnapshot;
-    use crate::protocol::vless::{Address, Destination};
-
-    // LINE routed `udp.example:443`, resolved it, and sealed the IP form.
-    let wire = Destination::new(Address::Domain("udp.example".to_owned()), 443);
-    let sealed = Destination::new(Address::Ipv4(Ipv4Addr::new(203, 0, 113, 7)), 443);
-    // Rewrite-disabled snapshot (non-sealable geoip/geosite rules on LINE).
-    let policy = HandoffPolicySnapshot::xudp_initial(sealed.clone());
-
-    // Stock Xray repeats the domain on every Keep frame: map back to the
-    // sealed destination instead of failing the association.
-    let keep = authorize_landing_xudp_destination(&policy, Some(&wire), &wire)
-        .expect("repeated initial domain");
-    assert_eq!(keep, sealed);
-    // The sealed IP itself remains authorized.
-    assert_eq!(
-        authorize_landing_xudp_destination(&policy, Some(&wire), &sealed).expect("sealed ip"),
-        sealed
-    );
-    // A different domain or port is still a rewrite and fails closed.
-    for other in [
-        Destination::new(Address::Domain("other.example".to_owned()), 443),
-        Destination::new(Address::Domain("udp.example".to_owned()), 444),
-        Destination::new(Address::Ipv4(Ipv4Addr::new(203, 0, 113, 8)), 443),
-    ] {
-        assert!(matches!(
-            authorize_landing_xudp_destination(&policy, Some(&wire), &other),
-            Err(VisionSessionError::Xudp(
-                crate::server::xudp::XudpSessionError::UnauthorizedRewrite
-            ))
-        ));
-    }
-    // Without a recorded New destination nothing maps implicitly.
-    assert!(authorize_landing_xudp_destination(&policy, None, &wire).is_err());
-}
-
-#[test]
 fn landward_xudp_egress_prefers_ipv4_while_direct_keeps_resolver_order() {
     use super::xudp_session::preferred_udp_egress_ip;
     use crate::server::xudp::XudpEgressCapability;

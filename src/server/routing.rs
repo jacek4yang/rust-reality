@@ -14,13 +14,7 @@ use crate::{
         routing::{DomainStrategy, RouteRule, RoutingConfig},
         user::UserConfig,
     },
-    protocol::{
-        handoff::{
-            HandoffPolicySnapshot, MAX_SEALED_HANDOFF_RULES, SealedDomainMatcher,
-            SealedHandoffRouteRule, SealedIpNetwork, SealedPortRange,
-        },
-        vless::{Address, Destination, UserId},
-    },
+    protocol::vless::{Address, Destination, UserId},
     user_map::AdaptiveUserMap,
 };
 
@@ -224,42 +218,6 @@ impl RoutingTable {
             .ok_or(RouteResolutionError::UnknownUser)?;
         let domain = normalized_domain(context.destination);
         Ok(self.select_for_user(context, domain.as_deref(), user))
-    }
-
-    /// Compile a session-bound Handoff XUDP policy snapshot (ADR 0060 Option B / PR5).
-    ///
-    /// Seals first-match sealable route rules for `user_id` relative to
-    /// `handoff_outbound`. Geosite / GeoIP / regexp / external matchers cannot be
-    /// evaluated on LANDING without assets, so their presence fail-closes to an
-    /// initial-destination-only snapshot (`allow_destination_rewrites = false`).
-    #[must_use]
-    pub fn seal_handoff_xudp_policy(
-        &self,
-        user_id: UserId,
-        handoff_outbound: &str,
-        initial_destination: Destination,
-    ) -> HandoffPolicySnapshot {
-        let Some(user) = self.users.get(&user_id) else {
-            return HandoffPolicySnapshot::xudp_initial(initial_destination);
-        };
-        let mut sealed = Vec::new();
-        for rule in self.global_rules.iter().chain(user.rules.iter()) {
-            match seal_compiled_rule(rule, handoff_outbound) {
-                Ok(None) => {}
-                Ok(Some(sealed_rule)) => {
-                    if sealed.len() >= MAX_SEALED_HANDOFF_RULES {
-                        return HandoffPolicySnapshot::xudp_initial(initial_destination);
-                    }
-                    sealed.push(sealed_rule);
-                }
-                Err(()) => {
-                    // Non-sealable matcher: do not silently widen authority.
-                    return HandoffPolicySnapshot::xudp_initial(initial_destination);
-                }
-            }
-        }
-        let default_allow = user.default_outbound.as_ref() == handoff_outbound;
-        HandoffPolicySnapshot::xudp_with_sealed_rules(initial_destination, sealed, default_allow)
     }
 
     fn select_for_user(
@@ -1258,62 +1216,6 @@ const fn prefix_mask_u128(prefix: u8) -> u128 {
         0
     } else {
         u128::MAX << (128 - prefix)
-    }
-}
-
-/// Attempts to seal one compiled rule for Handoff LANDING evaluation.
-///
-/// Returns `Ok(None)` for rules that are vacuous after filtering (should not happen),
-/// `Ok(Some(rule))` when every matcher is sealable, and `Err(())` when any matcher
-/// requires runtime assets or regexp evaluation.
-fn seal_compiled_rule(
-    rule: &CompiledRule,
-    handoff_outbound: &str,
-) -> Result<Option<SealedHandoffRouteRule>, ()> {
-    let mut domains = Vec::with_capacity(rule.domains.len());
-    for matcher in rule.domains.iter() {
-        domains.push(seal_domain_matcher(matcher)?);
-    }
-    let mut ips = Vec::with_capacity(rule.ips.len());
-    for matcher in rule.ips.iter() {
-        ips.push(seal_ip_matcher(matcher)?);
-    }
-    let ports = rule
-        .ports
-        .iter()
-        .map(|range| SealedPortRange {
-            start: range.start,
-            end: range.end,
-        })
-        .collect();
-    Ok(Some(SealedHandoffRouteRule {
-        allow: rule.outbound.as_ref() == handoff_outbound,
-        domains,
-        ips,
-        ports,
-    }))
-}
-
-fn seal_domain_matcher(matcher: &DomainMatcher) -> Result<SealedDomainMatcher, ()> {
-    match matcher {
-        DomainMatcher::Full(value) => Ok(SealedDomainMatcher::Full(value.to_string())),
-        DomainMatcher::Suffix(value) => Ok(SealedDomainMatcher::Suffix(value.to_string())),
-        DomainMatcher::Keyword(value) => Ok(SealedDomainMatcher::Keyword(value.to_string())),
-        DomainMatcher::Regex(_) | DomainMatcher::Asset { .. } => Err(()),
-    }
-}
-
-fn seal_ip_matcher(matcher: &IpMatcher) -> Result<SealedIpNetwork, ()> {
-    match matcher {
-        IpMatcher::Network(IpNetwork::V4 { network, prefix }) => Ok(SealedIpNetwork::V4 {
-            network: *network,
-            prefix: *prefix,
-        }),
-        IpMatcher::Network(IpNetwork::V6 { network, prefix }) => Ok(SealedIpNetwork::V6 {
-            network: *network,
-            prefix: *prefix,
-        }),
-        IpMatcher::Asset { .. } => Err(()),
     }
 }
 

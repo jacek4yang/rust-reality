@@ -78,6 +78,8 @@ impl LandingV18 {
                 line_group: None,
             }],
             landing: LandingProtocol::Handoff(HandoffLandingConfig {
+                udp_port: None,
+                udp_mtu: None,
                 psk: settings.pre_shared_key,
                 private_key: settings.private_key,
                 previous_psks: settings.previous_pre_shared_keys,

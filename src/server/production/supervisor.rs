@@ -8,7 +8,7 @@
 //! one is in flight is dropped, not queued, because the newest configuration
 //! is the one the operator meant either way.
 
-use std::{future::Future, io, sync::Arc, time::Duration};
+use std::{future::Future, io, net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
     sync::{mpsc, watch},
@@ -20,6 +20,7 @@ use crate::{
     config::node::listener::ListenFamily,
     logging::LogEvent,
     network::{AddressFamily, DialTuning},
+    server::handoff::udp::{LandingUdpStats, bind_landing_udp, run_landing_udp},
     transport::tcp::TcpAcceptor,
 };
 
@@ -31,6 +32,7 @@ use super::{
     monitor::{
         adaptive_controller, run_adaptive_controller, run_network_refresh, run_resource_monitor,
     },
+    snapshot::ConnectionHandler,
 };
 
 /// Binds every listener, spawns every task, and supervises them until the
@@ -131,6 +133,40 @@ where
             Arc::clone(&server.runtime),
             shutdown_receiver.clone(),
         ));
+        if let ConnectionHandler::Handoff(handler) = &state.handler {
+            // ADR 0069: the native UDP channel for XUDP binds beside every
+            // Handoff landing address, on the same port number by default.
+            let udp_address =
+                SocketAddr::new(local_address.ip(), handler.udp_port(local_address.port()));
+            let socket =
+                bind_landing_udp(udp_address).map_err(|source| ProductionServerError::Bind {
+                    address: udp_address,
+                    source,
+                })?;
+            let udp_local = socket.local_addr().unwrap_or(udp_address);
+            emit(
+                &initial.logger,
+                &LogEvent::ListenerStarted {
+                    tag: format!("{}/udp", state.tag),
+                    address: udp_local,
+                },
+            );
+            let runtime = Arc::clone(&server.runtime);
+            let policy = move || {
+                let snapshot = runtime.load();
+                match &snapshot.connections.get(&address)?.handler {
+                    ConnectionHandler::Handoff(handler) => Some(handler.udp_policy()),
+                    _ => None,
+                }
+            };
+            let fd_budget = server.runtime.fd_budget.clone();
+            let stats = Arc::new(LandingUdpStats::default());
+            let shutdown = shutdown_receiver.clone();
+            listener_tasks.spawn(async move {
+                run_landing_udp(socket, policy, fd_budget, stats, shutdown).await;
+                Ok(())
+            });
+        }
     }
     let monitor_task = tokio::spawn(run_resource_monitor(
         Arc::clone(&server.runtime),
