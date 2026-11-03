@@ -11,9 +11,9 @@ use std::{
 use tokio::net::UdpSocket;
 
 use crate::protocol::handoff::udp::{
-    FRAG_HEADER_LEN, HEADER_LEN, PacketType, PmtuProber, PmtuTimers, Reassembler, ReassemblyLimits,
-    TAG_LEN, UdpChannel, UdpPacketError, decode_data, encode_data_plaintext, plpmtu_from_ip_mtu,
-    split_fragments,
+    FRAG_HEADER_LEN, HEADER_LEN, MAX_PLPMTU, PacketType, PmtuProber, PmtuTimers, Reassembler,
+    ReassemblyLimits, TAG_LEN, UdpChannel, UdpPacketError, decode_data, encode_data_plaintext,
+    plpmtu_from_ip_mtu, split_fragments,
 };
 
 /// Attempts to re-packetize one datagram after local `EMSGSIZE` feedback.
@@ -49,9 +49,14 @@ pub(crate) fn prober_for(
 ) -> PmtuProber {
     match fixed_mtu {
         Some(mtu) => PmtuProber::fixed(plpmtu_from_ip_mtu(usize::from(mtu), ipv6), now),
+        // Without a kernel route bound (LANDING's shared, unconnected socket
+        // cannot read `IP_MTU`), discovery may probe up to the protocol
+        // maximum: a probe above the local interface MTU fails with
+        // `EMSGSIZE` at once and lowers the ceiling without waiting.
         None => {
-            let ip_mtu = kernel_mtu.map_or(1500, |mtu| mtu as usize);
-            PmtuProber::discover(plpmtu_from_ip_mtu(ip_mtu, ipv6), timers, now)
+            let ceiling =
+                kernel_mtu.map_or(MAX_PLPMTU, |mtu| plpmtu_from_ip_mtu(mtu as usize, ipv6));
+            PmtuProber::discover(ceiling, timers, now)
         }
     }
 }

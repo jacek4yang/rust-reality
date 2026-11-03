@@ -69,8 +69,11 @@ fn start_landing_on(address: SocketAddr, policy: LandingUdpPolicy) -> Landing {
         move || Some(policy.clone()),
         FdBudget::new(1024),
         Arc::clone(&stats),
-        crate::logging::Logger::new(&crate::config::node::log::LogConfig::default())
-            .expect("logger"),
+        crate::logging::Logger::new(&crate::config::node::log::LogConfig {
+            level: Some(crate::config::node::log::LogLevel::Debug),
+            ..Default::default()
+        })
+        .expect("logger"),
         receiver,
     ));
     Landing {
@@ -198,6 +201,27 @@ async fn multi_destination_and_large_datagrams_round_trip_natively() {
     assert_eq!(
         landing.stats.uplink_datagrams.load(Ordering::Relaxed),
         2 * rounds
+    );
+    // Both directions discover the loopback path: after the searches the
+    // largest datagram travels whole each way (no fragmentation).
+    idle(&mut association, Duration::from_secs(3)).await;
+    assert!(
+        association.plpmtu() > 8_000,
+        "LINE plpmtu {}",
+        association.plpmtu()
+    );
+    let before = association.channel_stats();
+    let sent = payload(0xcc, MAX_UDP_PAYLOAD_LEN);
+    let (_, echoed) = round_trip(&mut association, echo_a, sent.clone()).await;
+    assert_eq!(echoed, sent);
+    let after = association.channel_stats();
+    assert_eq!(
+        after.fragmented_datagrams, before.fragmented_datagrams,
+        "uplink whole"
+    );
+    assert_eq!(
+        after.reassembled_datagrams, before.reassembled_datagrams,
+        "downlink whole"
     );
     association.close(Instant::now()).await;
     wait_for(|| landing.stats.sessions_closed.load(Ordering::Relaxed) == 1).await;
