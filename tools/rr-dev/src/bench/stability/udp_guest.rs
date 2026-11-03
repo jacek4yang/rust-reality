@@ -3,6 +3,19 @@
 //! This is not the TCP stability campaign. It boots the same three-guest
 //! fixture, then checks one datagram's source address and the bypass, block,
 //! and carrier-drop negatives. A host process test cannot satisfy `verdict`.
+//!
+//! The LINE→LANDING carrier differs by topology:
+//!
+//! - NXR carries XUDP inside its TCP carrier to `192.0.2.2:18443/tcp`.
+//! - Handoff carries authorized datagrams over the native `handoff-udp`
+//!   channel ([ADR 0069]) to `192.0.2.2:18443/udp`; no TCP connection to
+//!   LANDING exists for a UDP association.
+//!
+//! LANDING drops every other UDP datagram arriving on `data0`. For Handoff
+//! the single exception is the channel port from LINE's address, which is
+//! exactly the firewall rule the deployment guide asks operators to add.
+//!
+//! [ADR 0069]: ../../../../../docs/adr/0069-native-udp-channel-for-handoff-xudp.md
 
 use std::{
     fs,
@@ -29,6 +42,42 @@ const COVER_PORT: u16 = 18_446;
 const ECHO_PORT: u16 = 9;
 const PAYLOAD: &str = "rr-guest-udp-proof";
 const BLOCK_DEST: &str = "10.1.2.3:9";
+
+/// LINE→LANDING carrier the cell expects for its topology.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Carrier {
+    /// NXR TCP carrier to the LANDING listener.
+    NxrTcp,
+    /// Native Handoff UDP channel to the LANDING UDP listener (ADR 0069).
+    HandoffUdp,
+}
+
+impl Carrier {
+    fn for_topology(topology: &str) -> Self {
+        if topology == "handoff" {
+            Self::HandoffUdp
+        } else {
+            Self::NxrTcp
+        }
+    }
+
+    /// Receipt token, also checked by the four-cell aggregate.
+    #[must_use]
+    pub const fn token(self) -> &'static str {
+        match self {
+            Self::NxrTcp => "nxr-tcp",
+            Self::HandoffUdp => "handoff-udp",
+        }
+    }
+
+    /// `iptables` protocol of the carrier.
+    const fn proto(self) -> &'static str {
+        match self {
+            Self::NxrTcp => "tcp",
+            Self::HandoffUdp => "udp",
+        }
+    }
+}
 
 /// Inputs for one NXR or Handoff guest UDP cell.
 #[derive(Args)]
@@ -78,8 +127,15 @@ pub struct Observation {
     pub success_probe: String,
     /// Echo peer IP after the success probe.
     pub success_peer: String,
-    /// `ss -tn` showed the LINE→LANDING carrier while the probe held the association.
+    /// Carrier the topology requires.
+    pub carrier: Carrier,
+    /// The topology's LINE→LANDING carrier was observed while the probe held
+    /// the association: `ss -tn` on LANDING for NXR, a connected UDP socket
+    /// from LINE to `192.0.2.2:18443` for Handoff.
     pub carrier_established: bool,
+    /// Handoff only: no LINE→LANDING TCP connection existed while the probe
+    /// held the association. Always true for NXR.
+    pub no_tcp_for_udp: bool,
     /// Bypass probe stdout.
     pub bypass_probe: String,
     /// Echo log did not grow during the bypass attempt.
@@ -135,7 +191,13 @@ pub fn verdict(obs: &Observation) -> Result<(), String> {
         return Err(format!("udp peer {}", obs.success_peer));
     }
     if !obs.carrier_established {
-        return Err("LINE to LANDING carrier TCP was not established".to_owned());
+        return Err(format!(
+            "LINE to LANDING {} carrier was not established",
+            obs.carrier.token()
+        ));
+    }
+    if !obs.no_tcp_for_udp {
+        return Err("Handoff UDP association used a LINE to LANDING TCP connection".to_owned());
     }
     if !obs.bypass_probe.starts_with("probe=FAIL") || !obs.bypass_echo_unchanged {
         return Err("bypass was not rejected".to_owned());
@@ -241,12 +303,13 @@ fn prove(
 ) -> Result<Observation, String> {
     machines.prepare_inputs(LINE)?;
     machines.prepare_inputs(LANDING)?;
+    let carrier = Carrier::for_topology(&plan.topology);
     install_iptables(machines)?;
     let private = private_dir()?;
     let configs = configs(plan, &private, secrets)?;
     stage_assets(plan, machines, &private, &configs)?;
     start_origin(machines)?;
-    install_udp_drop(machines)?;
+    install_udp_drop(machines, carrier)?;
     start_cover(machines)?;
     start_product(machines, LANDING, "landing.json", "landing.log")?;
     start_product(machines, LINE, "entry.json", "entry.log")?;
@@ -254,8 +317,8 @@ fn prove(
     let landing_listen = wait_listen(machines, LANDING, &format!("{LANDING_IP}:{LANDING_PORT}"))?;
     let line_entry_listen = wait_listen(machines, LINE, &format!("127.0.0.1:{ENTRY_PORT}"))?;
     let line_socks_listen = wait_listen(machines, LINE, &format!("127.0.0.1:{SOCKS_PORT}"))?;
-    let (success_probe, success_peer, carrier) =
-        held_probe(machines, &format!("{ORIGIN_IP}:{ECHO_PORT}"))?;
+    let (success_probe, success_peer, held) =
+        held_probe(machines, carrier, &format!("{ORIGIN_IP}:{ECHO_PORT}"))?;
     let before_bypass = echo_lines(machines)?;
     let bypass_probe = quick_probe(
         machines,
@@ -275,7 +338,10 @@ fn prove(
     guest(
         machines,
         LANDING,
-        &format!("sudo iptables -I INPUT -i data0 -p tcp --dport {LANDING_PORT} -j DROP"),
+        &format!(
+            "sudo iptables -I INPUT 1 -i data0 -p {} --dport {LANDING_PORT} -j DROP",
+            carrier.proto()
+        ),
         Duration::from_secs(15),
     )?;
     let fault_drop_probe = quick_probe(
@@ -287,11 +353,14 @@ fn prove(
     guest(
         machines,
         LANDING,
-        &format!("sudo iptables -D INPUT -i data0 -p tcp --dport {LANDING_PORT} -j DROP"),
+        &format!(
+            "sudo iptables -D INPUT -i data0 -p {} --dport {LANDING_PORT} -j DROP",
+            carrier.proto()
+        ),
         Duration::from_secs(15),
     )?;
     let (fault_restore_probe, fault_restore_peer, _) =
-        held_probe(machines, &format!("{ORIGIN_IP}:{ECHO_PORT}"))?;
+        held_probe(machines, carrier, &format!("{ORIGIN_IP}:{ECHO_PORT}"))?;
     let line_boot_id = trimmed(machines, LINE, "cat /proc/sys/kernel/random/boot_id")?;
     let landing_boot_id = trimmed(machines, LANDING, "cat /proc/sys/kernel/random/boot_id")?;
     let line_kernel = trimmed(machines, LINE, "uname -r")?;
@@ -304,7 +373,9 @@ fn prove(
         line_socks_listen,
         success_probe,
         success_peer,
-        carrier_established: carrier,
+        carrier,
+        carrier_established: held.established,
+        no_tcp_for_udp: held.no_tcp,
         bypass_probe,
         bypass_echo_unchanged,
         block_probe,
@@ -332,7 +403,7 @@ fn install_iptables(machines: &Machines) -> Result<(), String> {
     Ok(())
 }
 
-fn install_udp_drop(machines: &Machines) -> Result<(), String> {
+fn install_udp_drop(machines: &Machines, carrier: Carrier) -> Result<(), String> {
     guest(
         machines,
         LANDING,
@@ -345,7 +416,24 @@ fn install_udp_drop(machines: &Machines) -> Result<(), String> {
         "sudo iptables -P FORWARD DROP && sudo iptables -I INPUT -i data0 -p udp -j DROP && sudo iptables -I FORWARD -i data0 -p udp -j DROP",
         Duration::from_secs(15),
     )?;
+    if carrier == Carrier::HandoffUdp {
+        // The documented LANDING firewall rule: admit the native channel port
+        // from LINE only. Inserted above the blanket drop, so any other UDP on
+        // data0 (including LINE→origin bypass) is still dropped.
+        guest(
+            machines,
+            LANDING,
+            &udp_channel_accept_rule(),
+            Duration::from_secs(15),
+        )?;
+    }
     Ok(())
+}
+
+fn udp_channel_accept_rule() -> String {
+    format!(
+        "sudo iptables -I INPUT 1 -i data0 -p udp -s {LINE_IP} -d {LANDING_IP} --dport {LANDING_PORT} -j ACCEPT"
+    )
 }
 
 fn start_origin(machines: &Machines) -> Result<(), String> {
@@ -432,7 +520,17 @@ fn start_product(machines: &Machines, role: &str, config: &str, log: &str) -> Re
     Ok(())
 }
 
-fn held_probe(machines: &Machines, dest: &str) -> Result<(String, String, bool), String> {
+/// Carrier facts observed while a held probe kept its association open.
+struct Held {
+    established: bool,
+    no_tcp: bool,
+}
+
+fn held_probe(
+    machines: &Machines,
+    carrier: Carrier,
+    dest: &str,
+) -> Result<(String, String, Held), String> {
     let before = echo_lines(machines)?;
     guest(
         machines,
@@ -452,7 +550,7 @@ fn held_probe(machines: &Machines, dest: &str) -> Result<(String, String, bool),
         );
         return Err(format!("success probe {stdout}; {}", log_tails(machines)));
     }
-    let carrier = carrier_established(machines)?;
+    let held = observe_carrier(machines, carrier)?;
     let peer = wait_new_peer(machines, before)?;
     let _ = guest(
         machines,
@@ -460,7 +558,7 @@ fn held_probe(machines: &Machines, dest: &str) -> Result<(String, String, bool),
         "sudo pkill -x rr-udp-probe || true",
         Duration::from_secs(15),
     );
-    Ok((stdout, peer, carrier))
+    Ok((stdout, peer, held))
 }
 
 fn quick_probe(machines: &Machines, command: &str) -> Result<String, String> {
@@ -506,9 +604,58 @@ fn poll_stdout(
     }
 }
 
-fn carrier_established(machines: &Machines) -> Result<bool, String> {
-    let text = guest(machines, LANDING, "ss -tn", Duration::from_secs(15))?;
-    Ok(text.contains(&format!("{LANDING_IP}:{LANDING_PORT}")) && text.contains(LINE_IP))
+fn observe_carrier(machines: &Machines, carrier: Carrier) -> Result<Held, String> {
+    let landing_tcp = guest(machines, LANDING, "ss -tn", Duration::from_secs(15))?;
+    let tcp = tcp_carrier_seen(&landing_tcp);
+    match carrier {
+        Carrier::NxrTcp => Ok(Held {
+            established: tcp,
+            no_tcp: true,
+        }),
+        Carrier::HandoffUdp => {
+            let line_udp = guest(machines, LINE, "ss -un", Duration::from_secs(15))?;
+            Ok(Held {
+                established: udp_channel_seen(&line_udp),
+                no_tcp: !tcp,
+            })
+        }
+    }
+}
+
+/// `ss -tn` on LANDING shows a LINE connection to the LANDING listener.
+fn tcp_carrier_seen(ss_tn: &str) -> bool {
+    ss_pair_seen(ss_tn, |local, peer| {
+        local == format!("{LANDING_IP}:{LANDING_PORT}") && host(peer) == LINE_IP
+    })
+}
+
+/// `ss -un` on LINE shows a connected socket from LINE to the LANDING UDP
+/// listener: the native channel session of the held association.
+fn udp_channel_seen(ss_un: &str) -> bool {
+    ss_pair_seen(ss_un, |local, peer| {
+        host(local) == LINE_IP && peer == format!("{LANDING_IP}:{LANDING_PORT}")
+    })
+}
+
+/// `ss` omits the State column when the filter selects one state (as
+/// `ss -un` does), so match any adjacent local/peer address pair.
+fn ss_pair_seen(text: &str, matches: impl Fn(&str, &str) -> bool) -> bool {
+    text.lines().any(|line| {
+        let fields: Vec<String> = line.split_whitespace().map(unmap).collect();
+        fields.windows(2).any(|pair| matches(&pair[0], &pair[1]))
+    })
+}
+
+/// Normalize `[::ffff:a.b.c.d]:p` to `a.b.c.d:p`.
+fn unmap(field: &str) -> String {
+    field
+        .strip_prefix("[::ffff:")
+        .and_then(|rest| rest.split_once(']'))
+        .map_or_else(|| field.to_owned(), |(ip, port)| format!("{ip}{port}"))
+}
+
+fn host(address: &str) -> &str {
+    address.rsplit_once(':').map_or(address, |(ip, _)| ip)
 }
 
 fn wait_new_peer(machines: &Machines, before: usize) -> Result<String, String> {
@@ -892,6 +1039,7 @@ fn write_pass(
         &format!("topology={}", plan.topology),
         &format!("profile={profile}"),
         &format!("udp_peer={}", obs.success_peer),
+        &format!("carrier={}", obs.carrier.token()),
         "bypass=rejected",
         "block_dest=rejected",
         "fault_drop=rejected",
@@ -915,7 +1063,9 @@ fn write_pass(
     );
     fs::write(plan.output.join("identity.txt"), identity).map_err(|error| error.to_string())?;
     let proof = serde_json::json!({
-        "ss_established": obs.carrier_established,
+        "carrier": obs.carrier.token(),
+        "carrier_established": obs.carrier_established,
+        "no_tcp_for_udp": obs.no_tcp_for_udp,
         "echo_peer": obs.success_peer,
         "success_probe": obs.success_probe,
         "bypass_probe": obs.bypass_probe,
@@ -963,7 +1113,9 @@ mod tests {
             line_socks_listen: true,
             success_probe: "probe=PASS".to_owned(),
             success_peer: LANDING_IP.to_owned(),
+            carrier: Carrier::NxrTcp,
             carrier_established: true,
+            no_tcp_for_udp: true,
             bypass_probe: "probe=FAIL reason=timeout".to_owned(),
             bypass_echo_unchanged: true,
             block_probe: "probe=FAIL reason=timeout".to_owned(),
@@ -1020,5 +1172,65 @@ mod tests {
     #[test]
     fn observation_complete_guest_proof_is_accepted() {
         assert!(verdict(&complete()).is_ok());
+        let mut obs = complete();
+        obs.carrier = Carrier::HandoffUdp;
+        assert!(verdict(&obs).is_ok());
+    }
+
+    #[test]
+    fn observation_handoff_udp_over_tcp_is_rejected() {
+        let mut obs = complete();
+        obs.carrier = Carrier::HandoffUdp;
+        obs.no_tcp_for_udp = false;
+        assert!(verdict(&obs).is_err());
+    }
+
+    #[test]
+    fn observation_missing_carrier_is_rejected() {
+        for carrier in [Carrier::NxrTcp, Carrier::HandoffUdp] {
+            let mut obs = complete();
+            obs.carrier = carrier;
+            obs.carrier_established = false;
+            assert!(verdict(&obs).is_err());
+        }
+    }
+
+    #[test]
+    fn carrier_follows_topology() {
+        assert_eq!(Carrier::for_topology("nxr"), Carrier::NxrTcp);
+        assert_eq!(Carrier::for_topology("handoff"), Carrier::HandoffUdp);
+        assert_eq!(Carrier::HandoffUdp.proto(), "udp");
+        assert_eq!(Carrier::NxrTcp.proto(), "tcp");
+    }
+
+    #[test]
+    fn handoff_accept_rule_is_scoped_to_line_and_channel_port() {
+        let rule = udp_channel_accept_rule();
+        assert!(rule.contains("-i data0 -p udp -s 192.0.2.1 -d 192.0.2.2 --dport 18443 -j ACCEPT"));
+        assert!(rule.contains("-I INPUT 1 "));
+    }
+
+    #[test]
+    fn ss_parsers_match_only_line_to_landing() {
+        let landing_tcp = "State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n\
+ESTAB 0 0 192.0.2.2:18443 192.0.2.1:40112\n\
+ESTAB 0 0 10.0.2.15:22 10.0.2.2:53234\n";
+        assert!(tcp_carrier_seen(landing_tcp));
+        assert!(!tcp_carrier_seen(
+            "ESTAB 0 0 10.0.2.15:22 10.0.2.2:53234\nESTAB 0 0 192.0.2.6:18443 192.0.2.5:1\n"
+        ));
+        let line_udp = "Recv-Q Send-Q Local Address:Port Peer Address:Port\n\
+0 0 192.0.2.1:51820 192.0.2.2:18443\n";
+        assert!(udp_channel_seen(line_udp));
+        assert!(!udp_channel_seen(
+            "ESTAB 0 0 127.0.0.1:5000 127.0.0.1:18445\n"
+        ));
+        assert!(!udp_channel_seen(
+            "ESTAB 0 0 192.0.2.1:51820 192.0.2.2:18444\n"
+        ));
+        assert!(udp_channel_seen(
+            "0 0 [::ffff:192.0.2.1]:51820 [::ffff:192.0.2.2]:18443\n"
+        ));
+        assert!(!udp_channel_seen("0 0 192.0.2.5:51820 192.0.2.2:18443\n"));
     }
 }
