@@ -94,6 +94,41 @@ fn open_rejects_wrong_psk_wrong_key_replay_time_and_tamper() {
 }
 
 #[test]
+fn forged_open_without_psk_never_burns_replay_capacity() {
+    // A one-slot cache: if a forged OPEN reserved its nonce, the genuine
+    // OPEN below would be refused as capacity-exhausted.
+    let cache = HandoffReplayCache::new(1, Duration::from_secs(61)).expect("cache");
+    let public = StaticX25519Key::new(&SECRET).public_key();
+    let mut forged = Vec::new();
+    for attempt in 0..32_u8 {
+        seal_open(
+            &HandoffPsk::new([attempt; 32]),
+            &public,
+            USER,
+            NOW,
+            &mut forged,
+        )
+        .expect("seal");
+        assert_eq!(
+            accept_open(&forged, &keys(), &cache, NOW, 30).unwrap_err(),
+            UdpPacketError::Authentication
+        );
+    }
+    // Random bytes with a valid header shape are rejected the same way.
+    let mut noise = forged.clone();
+    for (index, byte) in noise.iter_mut().enumerate().skip(HEADER_LEN + 8) {
+        *byte = u8::try_from(index % 251).expect("small");
+    }
+    assert_eq!(
+        accept_open(&noise, &keys(), &cache, NOW, 30).unwrap_err(),
+        UdpPacketError::Authentication
+    );
+    let mut genuine = Vec::new();
+    seal_open(&HandoffPsk::new(PSK), &public, USER, NOW, &mut genuine).expect("seal");
+    accept_open(&genuine, &keys(), &cache, NOW, 30).expect("genuine OPEN keeps its slot");
+}
+
+#[test]
 fn open_accepts_rotation_candidates() {
     let rotated = HandoffLandingKeys::with_previous(
         HandoffPsk::new([0x77; 32]),

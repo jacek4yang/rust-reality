@@ -133,6 +133,7 @@ impl ChannelEndpoint {
         self.pmtu.plpmtu()
     }
 
+    #[cfg(test)]
     pub(crate) const fn stats(&self) -> EndpointStats {
         self.stats
     }

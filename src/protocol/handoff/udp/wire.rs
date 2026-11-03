@@ -35,8 +35,14 @@ const X25519_LEN: usize = 32;
 const USER_ID_LEN: usize = 16;
 const OPEN_CLEAR_LEN: usize = 8 + OPEN_NONCE_LEN + X25519_LEN;
 
+/// Truncated HMAC-SHA256 admission tag closing every OPEN.
+const OPEN_FILTER_LEN: usize = 16;
+
+/// Bytes of an OPEN covered by the admission tag.
+const OPEN_SEALED_LEN: usize = HEADER_LEN + OPEN_CLEAR_LEN + USER_ID_LEN + TAG_LEN;
+
 /// Exact OPEN packet length.
-pub const OPEN_LEN: usize = HEADER_LEN + OPEN_CLEAR_LEN + USER_ID_LEN + TAG_LEN;
+pub const OPEN_LEN: usize = OPEN_SEALED_LEN + OPEN_FILTER_LEN;
 
 /// Largest application datagram the channel carries: the XUDP payload cap,
 /// because every datagram enters or leaves through one XUDP frame on LINE.
@@ -57,6 +63,30 @@ const ADDRESS_IPV6: u8 = 6;
 /// HKDF salt label; distinct from the TCP transfer label
 /// `rust-reality/handoff/v1` so the two key schedules never collide.
 const HKDF_LABEL: &[u8] = b"rust-reality/handoff-udp/v1";
+
+/// HKDF salt of the PSK-only OPEN admission key. UDP sources are spoofable
+/// and need no handshake, so LANDING rejects an OPEN that was not made by a
+/// PSK holder before it burns a replay slot or performs any DH work.
+const OPEN_FILTER_LABEL: &[u8] = b"rust-reality/handoff-udp/v1/open-filter";
+
+type HmacSha256 = hmac::Hmac<Sha256>;
+
+fn open_filter_mac(psk: &HandoffPsk) -> Result<HmacSha256, UdpPacketError> {
+    let mut key = Zeroizing::new([0_u8; 32]);
+    Hkdf::<Sha256>::new(Some(OPEN_FILTER_LABEL), psk.as_bytes())
+        .expand(&[], key.as_mut_slice())
+        .map_err(|_| UdpPacketError::Crypto)?;
+    <HmacSha256 as hmac::KeyInit>::new_from_slice(key.as_slice())
+        .map_err(|_| UdpPacketError::Crypto)
+}
+
+fn open_filter_matches(psk: &HandoffPsk, packet: &[u8]) -> bool {
+    let Ok(mut mac) = open_filter_mac(psk) else {
+        return false;
+    };
+    hmac::Mac::update(&mut mac, &packet[..OPEN_SEALED_LEN]);
+    hmac::Mac::verify_truncated_left(mac, &packet[OPEN_SEALED_LEN..OPEN_LEN]).is_ok()
+}
 
 /// One native channel packet type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -277,15 +307,22 @@ pub fn seal_open(
     output.extend_from_slice(&clear);
     output.extend_from_slice(&body);
     output.extend_from_slice(&tag);
+    let mut mac = open_filter_mac(psk)?;
+    hmac::Mac::update(&mut mac, output);
+    let filter = hmac::Mac::finalize(mac).into_bytes();
+    output.extend_from_slice(&filter[..OPEN_FILTER_LEN]);
     UdpChannel::new(session_id, &keys.line_to_landing, &keys.landing_to_line)
 }
 
 /// Verifies one OPEN (LANDING role) and returns its contents with the
 /// LANDING end of the channel.
 ///
-/// Validation order mirrors the TCP transfer: structure, timestamp window,
-/// one nonce reserve (before any DH work), then per-candidate DH + HKDF +
-/// AEAD trials over the bounded rotation candidate set.
+/// Validation order: structure, timestamp window, the PSK-keyed admission
+/// tag (constant time, per rotation PSK), one nonce reserve, then
+/// per-candidate DH + HKDF + AEAD trials over the bounded rotation candidate
+/// set. Unlike the TCP transfer, the replay reserve sits behind the
+/// admission tag: a spoofed-source flood without the PSK can neither burn
+/// replay capacity nor force DH work.
 ///
 /// # Errors
 ///
@@ -312,6 +349,14 @@ pub fn accept_open(
     if u64::from_be_bytes(timestamp).abs_diff(now) > maximum_time_difference {
         return Err(UdpPacketError::TimeWindow);
     }
+    let admitted: Vec<&HandoffPsk> = keys
+        .candidates()
+        .map(|(psk, _)| psk)
+        .filter(|psk| open_filter_matches(psk, packet))
+        .collect();
+    if admitted.is_empty() {
+        return Err(UdpPacketError::Authentication);
+    }
     let mut open_nonce = [0_u8; OPEN_NONCE_LEN];
     open_nonce.copy_from_slice(&clear[HEADER_LEN + 8..HEADER_LEN + 8 + OPEN_NONCE_LEN]);
     replay
@@ -320,13 +365,16 @@ pub fn accept_open(
     let mut ephemeral = [0_u8; X25519_LEN];
     ephemeral.copy_from_slice(&clear[HEADER_LEN + 8 + OPEN_NONCE_LEN..]);
     let body = &packet[HEADER_LEN + OPEN_CLEAR_LEN..HEADER_LEN + OPEN_CLEAR_LEN + USER_ID_LEN];
-    let tag: [u8; TAG_LEN] = packet[OPEN_LEN - TAG_LEN..]
+    let tag: [u8; TAG_LEN] = packet[OPEN_SEALED_LEN - TAG_LEN..OPEN_SEALED_LEN]
         .try_into()
         .map_err(|_| UdpPacketError::Length)?;
     let tag: Tag<ChaCha20Poly1305> = Array(tag);
     // Every candidate performs its own DH and derivation; nothing is shared
     // across trials (same rule as `open_transfer`).
     for (psk, secret) in keys.candidates() {
+        if !admitted.iter().any(|admitted| std::ptr::eq(*admitted, psk)) {
+            continue;
+        }
         let Some(shared) = secret.agree(&ephemeral) else {
             continue;
         };

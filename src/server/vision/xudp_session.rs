@@ -261,7 +261,7 @@ impl VisionHandler {
                                     crate::server::xudp::XudpOutboundUnsupported::Handoff,
                                 )));
                             };
-                            XudpLandwardAssociation::Handoff(
+                            XudpLandwardAssociation::Handoff(Box::new(
                                 XudpHandoffUdpAssociation::open(
                                     &line,
                                     &bind_dest,
@@ -272,7 +272,7 @@ impl VisionHandler {
                                 )
                                 .await
                                 .map_err(VisionSessionError::Xudp)?,
-                            )
+                            ))
                         }
                     };
                     association = Some(assoc);

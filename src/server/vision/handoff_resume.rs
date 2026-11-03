@@ -105,7 +105,8 @@ pub(crate) async fn run_resumed_session(
 pub(super) enum XudpLandwardAssociation<'a> {
     Direct(XudpDirectAssociation<'a>),
     Nxr(XudpNxrAssociation<'a>),
-    Handoff(XudpHandoffUdpAssociation<'a>),
+    /// Boxed: the channel endpoint (keys, prober, reassembly) is large.
+    Handoff(Box<XudpHandoffUdpAssociation<'a>>),
 }
 
 impl XudpLandwardAssociation<'_> {
@@ -159,7 +160,7 @@ impl XudpLandwardAssociation<'_> {
         match self {
             Self::Direct(assoc) => assoc.close(now),
             Self::Nxr(assoc) => assoc.close(now).await,
-            Self::Handoff(assoc) => assoc.close(now).await,
+            Self::Handoff(assoc) => (*assoc).close(now).await,
         }
     }
 }

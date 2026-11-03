@@ -119,6 +119,8 @@ type Sessions = Arc<StdMutex<HashMap<[u8; SESSION_ID_LEN], Arc<Session>>>>;
 #[derive(Default)]
 pub struct LandingUdpStats {
     pub sessions_opened: AtomicU64,
+    /// Sessions ended by CLOSE or the idle bound.
+    pub sessions_closed: AtomicU64,
     pub uplink_datagrams: AtomicU64,
     pub downlink_datagrams: AtomicU64,
     pub rejected_packets: AtomicU64,
@@ -182,7 +184,7 @@ pub async fn run_landing_udp<P>(
                 ).await;
             }
             _ = sweep.tick() => {
-                sweep_sessions(&socket, &sessions).await;
+                sweep_sessions(&socket, &sessions, &stats).await;
             }
         }
     }
@@ -209,7 +211,7 @@ fn lock(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-async fn sweep_sessions(socket: &Arc<UdpSocket>, sessions: &Sessions) {
+async fn sweep_sessions(socket: &Arc<UdpSocket>, sessions: &Sessions, stats: &LandingUdpStats) {
     let now = Instant::now();
     let snapshot: Vec<_> = lock(sessions)
         .iter()
@@ -217,7 +219,9 @@ async fn sweep_sessions(socket: &Arc<UdpSocket>, sessions: &Sessions) {
         .collect();
     for (id, session) in snapshot {
         if session.idle_for(now) >= LANDING_UDP_SESSION_IDLE {
-            lock(sessions).remove(&id);
+            if lock(sessions).remove(&id).is_some() {
+                stats.sessions_closed.fetch_add(1, Ordering::Relaxed);
+            }
             continue;
         }
         let peer = session.peer();
@@ -319,7 +323,9 @@ async fn handle_packet<P>(
             }
         }
         Received::Close => {
-            lock(sessions).remove(&session_id);
+            if lock(sessions).remove(&session_id).is_some() {
+                stats.sessions_closed.fetch_add(1, Ordering::Relaxed);
+            }
         }
         Received::OpenAck | Received::Handled => {}
     }

@@ -140,6 +140,7 @@ impl<'a> XudpHandoffUdpAssociation<'a> {
     }
 
     /// Fragmentation, reassembly, and kernel-feedback counters.
+    #[cfg(test)]
     pub(crate) fn channel_stats(&self) -> super::endpoint::EndpointStats {
         self.endpoint.stats()
     }
