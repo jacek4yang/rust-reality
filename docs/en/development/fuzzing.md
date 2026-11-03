@@ -20,6 +20,8 @@ sharded smoke passes over all targets on every PR. The current set covers:
   (`vision_decoder`, `vision_transitions`);
 - Handoff header, blob, authenticated transfer open, and round trip
   (`handoff_header`, `handoff_blob`, `handoff_open_transfer`, `handoff_round_trip`);
+- Handoff native UDP channel header/OPEN/DATA/FRAG parsing, seal/open round trip
+  with bitflip and replay rejection, and fragment reassembly (`handoff_udp_packets`);
 - cover ServerHello flight parsing (`cover_flight`);
 - TLS 1.3 record open/seal, post-handshake KeyUpdate reconstruction, and
   transcript-hash differential (`tls13_record`, `key_update`, `transcript_diff`);
