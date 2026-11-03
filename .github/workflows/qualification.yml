@@ -340,9 +340,23 @@ jobs:
             exit 1
           fi
           test "$status" -eq 0
+          # ADR 0069: the reported routing shape (geoip:private / GeoSite
+          # rules, multi-destination, DNS, STUN, large datagrams) over the
+          # native Handoff UDP channel.
+          set +e
+          cargo test --locked --test xudp_handoff_e2e \
+            stock_xray_handoff_native_udp_user_routing_shape \
+            -- --exact --nocapture --ignored 2>&1 | tee -a "$LOG"
+          status=${PIPESTATUS[0]}
+          set -e
+          if ! grep -F 'test stock_xray_handoff_native_udp_user_routing_shape ... ok' "$LOG"; then
+            printf '%s\n' 'FAIL: stock Xray Handoff native UDP routing-shape test did not report ok' >&2
+            exit 1
+          fi
+          test "$status" -eq 0
           {
             printf 'verdict=PASS\n'
-            grep -E 'test result:|landing_udp_sender_proof' "$LOG" | tail -n20
+            grep -E 'test result:|landing_udp_sender_proof|routing_shape PASS' "$LOG" | tail -n20
           } | tee "$Q/stock-xray-handoff-xudp/receipt.txt"
       - name: Mandatory rust-to-rust UDP/443 and genuine HTTP/3 over XUDP
         timeout-minutes: 15
@@ -544,6 +558,45 @@ jobs:
             printf 'verdict=PASS\n'
             grep -E 'test result:|PASS|peers=' "$LOG" | tail -n40
           } | tee "$Q/handoff-udp443-h3/receipt.txt"
+      - name: Mandatory Handoff native UDP path MTU in a network namespace
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          # ADR 0069: interface MTU drop mid-session (EMSGSIZE feedback,
+          # no loss) and genuine HTTP/3 (1200+ byte QUIC Initials) over a
+          # 1280-byte loopback, in throwaway network namespaces.
+          mkdir -p "$Q/handoff-udp-pmtu"
+          LOG="$Q/handoff-udp-pmtu/cargo-test.log"
+          : > "$LOG"
+          LIB=$(cargo test --locked --lib --no-run --message-format=json 2>/dev/null \
+            | python3 -c 'import json,sys
+          for line in sys.stdin:
+              m = json.loads(line)
+              if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["name"] == "rust_reality":
+                  print(m["executable"])' | tail -n1)
+          test -x "$LIB"
+          T=server::handoff::udp::tests::netns_interface_mtu_drop_mid_session_repacketizes_without_loss
+          set +e
+          sudo env RR_NETNS_MTU_TESTS=1 unshare -n "$LIB" --exact "$T" --ignored --nocapture 2>&1 | tee -a "$LOG"
+          status=${PIPESTATUS[0]}
+          set -e
+          grep -F "test $T ... ok" "$LOG"
+          test "$status" -eq 0
+          mapfile -t HBINS < <(find target/debug/deps -maxdepth 1 -type f -name 'quic_h3_udp443_e2e-*' ! -name '*.d' | sort)
+          HBIN="${HBINS[-1]}"
+          for t in genuine_http3_over_handoff_xudp_udp443_no_tcp_fallback stock_xray_client_handoff_genuine_http3_udp443; do
+            set +e
+            sudo env RR_REQUIRE_UDP443=1 XRAY_BIN="$XRAY_BIN" PATH="$PATH" unshare -n \
+              sh -c "ip link set lo up mtu 1280 && ip link show lo && '$HBIN' --exact $t --ignored --nocapture" 2>&1 | tee -a "$LOG"
+            status=${PIPESTATUS[0]}
+            set -e
+            grep -F "test $t ... ok" "$LOG"
+            test "$status" -eq 0
+          done
+          {
+            printf 'verdict=PASS\n'
+            grep -E 'test result:|PASS|mtu 1280' "$LOG" | tail -n20
+          } | tee "$Q/handoff-udp-pmtu/receipt.txt"
       - name: Mandatory adversarial XUDP lifecycle and routing
         timeout-minutes: 10
         run: |
