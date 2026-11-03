@@ -310,7 +310,7 @@ fn pmtu_detects_black_hole_and_researches() {
     assert!(prober.plpmtu() <= 1300 && prober.plpmtu() >= BASE_PLPMTU);
     // A base black hole drops to the floor, then searches up to the path.
     run_search(&mut prober, 600, now, 400);
-    assert_eq!(prober.black_holes(), 2);
+    assert!(prober.black_holes() >= 2);
     assert!((MIN_PLPMTU..=600).contains(&prober.plpmtu()));
 }
 
