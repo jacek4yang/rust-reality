@@ -887,6 +887,7 @@ fn evaluate_owners(
     let dynamic = fd
         .observed_tcp_sockets
         .checked_sub(fd.listener_sockets)
+        .and_then(|sockets| sockets.checked_sub(policy.udp_listener_sockets))
         .and_then(|sockets| sockets.checked_add(fd.observed_pipe_fds));
     let total = fd
         .observed_tcp_sockets
@@ -922,7 +923,8 @@ fn evaluate_owners(
                 .is_some_and(|ceiling| fd.observed_pipe_fds <= ceiling)
             && policy
                 .listener_sockets
-                .checked_add(policy.warm_socket_capacity)
+                .checked_add(policy.udp_listener_sockets)
+                .and_then(|count| count.checked_add(policy.warm_socket_capacity))
                 .and_then(|count| count.checked_add(policy.idle_inbound_capacity))
                 .and_then(|count| count.checked_add(policy.active_socket_capacity))
                 .is_some_and(|ceiling| fd.observed_tcp_sockets <= ceiling),

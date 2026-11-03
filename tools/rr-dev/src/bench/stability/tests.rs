@@ -2446,3 +2446,44 @@ fn ordinary_landing_rss_envelope_scales_with_role_memory_limit() {
     apply_recovered_growth(cell);
     assert_eq!(verdict(&constrained), Verdict::Fail);
 }
+
+#[test]
+fn landing_datagram_listener_is_startup_inventory_not_transient_ownership() {
+    let evidence = schema::parse(&serde_json::to_vec(&fixture()).unwrap()).unwrap();
+    let baseline = &evidence.cells[0].cycles[0].checkpoints[0].samples[0];
+    let policy = &evidence.cells[0].roles[0].policy;
+    let mut value = raw_observation(baseline, policy);
+    // LANDING binds its native Handoff UDP channel beside the TCP listener.
+    let udp = json!("socket:[9001]");
+    let len = value["descriptors"].as_object().unwrap().len();
+    value["descriptors"][len.to_string()] = udp.clone();
+    for read in value["descriptor_reads"].as_array_mut().unwrap() {
+        let len = read["descriptors"].as_object().unwrap().len();
+        read["descriptors"][len.to_string()] = udp.clone();
+    }
+    let started = json!({"timestampUnixMs":1,"level":"info","event":"listener_started","tag":"landing/udp","address":"127.0.0.1:9444"});
+    let log = format!("{started}\n{}", value["ownership_log"].as_str().unwrap());
+    value["ownership_log"] = json!(log);
+    let raw = schema::parse_observation(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let startup = super::observation::startup_policy(&raw, 1).unwrap();
+    assert_eq!(startup.udp_listener_sockets, 1);
+    let sample =
+        super::observation::normalize(&raw, &startup, "native", baseline.observation.clone())
+            .unwrap();
+    let reconciliation = sample.descriptors.reconciliation.as_ref().unwrap();
+    assert_eq!(reconciliation.active_sockets, 0);
+    assert_eq!(
+        evaluate::evaluate_native_resources(&startup, &sample, &sample, true).verdict,
+        Verdict::Pass
+    );
+    // Without the startup datagram listener the same census is a leak.
+    let mut unaware = startup.clone();
+    unaware.udp_listener_sockets = 0;
+    let leaked =
+        super::observation::normalize(&raw, &unaware, "native", baseline.observation.clone())
+            .unwrap();
+    assert_eq!(
+        evaluate::evaluate_native_resources(&unaware, &leaked, &leaked, true).verdict,
+        Verdict::Fail
+    );
+}
