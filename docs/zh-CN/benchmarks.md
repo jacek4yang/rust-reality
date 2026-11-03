@@ -358,6 +358,16 @@ soak 期间的描述符、线程与 RSS 增长均平坦，零传输失败。
 - DNS 各阶段使用 loopback 上游（RTT 约 0 ms）。
 - 这些是本机测量结果，不是普遍性能结论。
 
+## v2.4.0 发布对比证据
+
+v2.4.0 通过原生加密的 LINE→LANDING UDP 通道承载 Handoff XUDP
+（[ADR 0069](../adr/0069-native-udp-channel-for-handoff-xudp.md)），**不提出新的
+已测量性能主张**：下方历史对比表格保留原始产物与硬件归属，
+[性能参考](performance.md)中的 v2.3.0 客户端比较也不会被重新标注。当前 stock Xray
+互操作版本仍记录于 `tools/fixtures/stock-xray.json`。最终发布资格验证将 Native、
+Frozen 和四个原生安装包绑定到真实发布源码与可执行文件；发布不代表生产部署或
+WAN 性能证据。
+
 ## v2.3.0 发布对比证据
 
 v2.3.0 增加原生浏览器 ClientHello 指纹，并在[性能参考](performance.md)中保留

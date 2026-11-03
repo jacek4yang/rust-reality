@@ -463,6 +463,19 @@ that is the consensus rule working, and relaxing it is a separate decision.
 The before/after binaries were built from the same tree with only
 `src/protocol/reality/tls13/cover_profile.rs` differing.
 
+## v2.4.0 release evidence
+
+v2.4.0 replaces the Handoff XUDP TLS transfer with a native, encrypted
+LINE→LANDING UDP channel and automatic path MTU discovery
+([ADR 0069](../adr/0069-native-udp-channel-for-handoff-xudp.md)). This release
+retains no new performance campaign and makes no throughput, latency or CPU
+claim for the channel. The functional evidence is the exact-source Native
+qualification (including real HTTP/3 through stock Xray and Handoff, and a
+1280-byte link-MTU namespace case) and the Frozen package/VM verdict recorded
+in the release notes. The v2.3.0 measurements below remain bound to their own
+sources and executables. Loopback and isolated VM results do not establish
+production-WAN behavior.
+
 ## v2.3.0 release evidence
 
 The retained comparisons keep their exact source, executable, workload and
