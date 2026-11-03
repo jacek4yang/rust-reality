@@ -1480,6 +1480,33 @@ fn stock_xray_handoff_native_udp_user_routing_shape() {
         "geoip:cn destination saw traffic"
     );
 
+    // A Block on a later destination of an already-open association: LINE
+    // fails the association closed and releases its channel session with a
+    // CLOSE; nothing reaches the blocked target.
+    let mixed = SocksUdp::associate(socks_port);
+    assert_eq!(
+        mixed
+            .exchange(&Target::Ip(a), b"before-block", wait)
+            .as_deref(),
+        Some(&b"before-block"[..]),
+        "{}",
+        diagnostics()
+    );
+    let hits_before = echo_a.hits.load(Ordering::SeqCst);
+    assert!(
+        mixed
+            .exchange(
+                &Target::Ip(SocketAddr::from(([10, 1, 2, 3], echo_a.port))),
+                b"mid-association block",
+                Duration::from_secs(2),
+            )
+            .is_none(),
+        "mid-association geoip:private must be blocked on LINE{}",
+        diagnostics()
+    );
+    assert_eq!(echo_a.hits.load(Ordering::SeqCst), hits_before);
+    drop(mixed);
+
     // The service is intact after the blocks.
     let fresh = SocksUdp::associate(socks_port);
     assert_eq!(
@@ -1491,9 +1518,10 @@ fn stock_xray_handoff_native_udp_user_routing_shape() {
         diagnostics()
     );
     drop(fresh);
-    // LANDING saw exactly the two allowed associations as native UDP
-    // channel sessions (LINE closes each one); the blocked associations
-    // never sent it an OPEN.
+    // LANDING saw exactly the three associations that opened with an allowed
+    // destination as native UDP channel sessions, each ended by LINE's CLOSE
+    // (including the one failed closed by a later Block); the associations
+    // blocked at their first destination never sent it an OPEN.
     let deadline = Instant::now() + Duration::from_secs(10);
     let sessions = loop {
         let ended: Vec<String> = read_log(&root, "landing.log")
@@ -1501,14 +1529,14 @@ fn stock_xray_handoff_native_udp_user_routing_shape() {
             .filter(|line| line.contains("\"event\":\"handoff_udp_session_ended\""))
             .map(str::to_owned)
             .collect();
-        if ended.len() >= 2 || Instant::now() >= deadline {
+        if ended.len() >= 3 || Instant::now() >= deadline {
             break ended;
         }
         thread::sleep(Duration::from_millis(100));
     };
     assert_eq!(
         sessions.len(),
-        2,
+        3,
         "native UDP sessions on LANDING: {sessions:#?}{}",
         diagnostics()
     );
