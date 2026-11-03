@@ -152,9 +152,16 @@ short ID 是 2–16 个十六进制字符，个数为偶数。客户端每个连
 | `connectTimeoutMs` | 整数 | 否 | `10000` |
 | `firstByteTimeoutMs` | 整数 | 否 | `15000` |
 | `warmTcp` | 布尔 | 否 | 开启 |
+| `udpPort` | 整数 | 否 | `port` |
+| `udpMtu` | 整数 | 否 | 自动路径 MTU 探测 |
 
 `landingPublicKey` 是公开材料，不是秘密：它是落地节点 `privateKey` 的公钥那半。
 `firstByteTimeoutMs` 是这个节点用来发现"被静默拒绝"的手段。
+
+`udpPort` 和 `udpMtu` 配置承载 Handoff XUDP 的原生 UDP 通道
+（[ADR 0069](../../adr/0069-native-udp-channel-for-handoff-xudp.md)）：
+`udpPort` 取值 1–65535，`udpMtu` 取值 576–9000。参见
+[Handoff](handoff.md#通过原生通道传输-udpxudp)。
 
 ## Routing
 
@@ -245,6 +252,8 @@ short ID 是 2–16 个十六进制字符，个数为偶数。客户端每个连
 | `preAuthIdleTimeoutMs` | 整数 | 否 | `60000` |
 | `maxTimeDifferenceSeconds` | 整数 | 否 | `30` |
 | `nonceRetentionSeconds` | 整数 | 否 | `maxTimeDifferenceSeconds` 的两倍加一秒 |
+| `udpPort` | 整数 | 否 | 各监听器的端口 |
+| `udpMtu` | 整数 | 否 | 自动路径 MTU 探测 |
 
 重放保留时间是冷设置：有效值变化需要重启。它必须覆盖允许时钟偏差的两倍加一秒，且不得超过 86400 秒。重放缓存仍以 65536 条记录为上限。
 

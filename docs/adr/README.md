@@ -101,7 +101,7 @@ of the law is what it is.
 | [0057](0057-tsan-keeps-current-thread-vision-proofs.md) | ThreadSanitizer stays; Vision accumulation uses current_thread | Accepted |
 | [0058](0058-restart-ack-census-uses-clock-guard.md) | Restart ACK/census ordering uses clock_guard across guests | Accepted |
 | [0059](0059-asymmetric-stock-xray-interop.md) | Asymmetric stock Xray interop (Xray client → RR required; RR client → Xray not required) | Accepted |
-| [0060](0060-xudp-over-nxr-and-handoff.md) | XUDP over NXR and Handoff (TCP framed NXR carrier; Handoff policy snapshot) | Accepted |
+| [0060](0060-xudp-over-nxr-and-handoff.md) | XUDP over NXR and Handoff (TCP framed NXR carrier; Handoff policy snapshot) | Accepted; Handoff part superseded by 0069 |
 | [0061](0061-independent-browser-fingerprint-evidence.md) | Independent native-browser fingerprint evidence boundary | Accepted |
 | [0062](0062-p256-for-browser-tls-key-shares.md) | P-256 for browser TLS key shares | Accepted |
 | [0063](0063-stock-xray-benchmark-identity.md) | Stock Xray benchmark identity | Accepted |
@@ -110,3 +110,4 @@ of the law is what it is.
 | [0066](0066-reject-duplicated-upload-storage.md) | Reject duplicated upload storage | Rejected |
 | [0067](0067-xudp-global-id-leases-follow-association-lifetime.md) | XUDP GlobalID leases follow association lifetime | Accepted |
 | [0068](0068-bind-nxr-restart-disconnect-to-local-ack.md) | Bind NXR restart disconnect to the local ACK | Accepted |
+| [0069](0069-native-udp-channel-for-handoff-xudp.md) | Native UDP channel for Handoff XUDP (supersedes ADR 0060 §3) | Accepted |

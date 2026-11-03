@@ -53,6 +53,16 @@ pub const LANDING_UDP_SESSION_IDLE: Duration = Duration::from_secs(120);
 /// OPEN nonce replay capacity per landing address.
 const OPEN_REPLAY_CAPACITY: usize = 65_536;
 
+/// OPEN nonce retention. An OPEN is accepted only while its timestamp is
+/// within [`MAX_OPEN_TIME_DIFFERENCE`] of now, so a nonce retained for twice
+/// that window plus one second can never be replayed while still fresh,
+/// whatever `maxTimeDifferenceSeconds` a reload publishes.
+const OPEN_REPLAY_RETENTION: Duration = Duration::from_secs(2 * MAX_OPEN_TIME_DIFFERENCE + 1);
+
+/// Upper bound on the OPEN timestamp window; the configured
+/// `maxTimeDifferenceSeconds` applies when smaller.
+const MAX_OPEN_TIME_DIFFERENCE: u64 = 60;
+
 const SWEEP_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The current generation's policy for this address, read per OPEN so key
@@ -179,7 +189,7 @@ pub async fn run_landing_udp<P>(
     let bind_ip = socket
         .local_addr()
         .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |address| address.ip());
-    let Ok(replay) = HandoffReplayCache::new(OPEN_REPLAY_CAPACITY, Duration::from_secs(121)) else {
+    let Ok(replay) = HandoffReplayCache::new(OPEN_REPLAY_CAPACITY, OPEN_REPLAY_RETENTION) else {
         return;
     };
     let sessions: Sessions = Arc::new(StdMutex::new(HashMap::new()));
@@ -397,7 +407,7 @@ async fn open_session<P>(
         &policy.keys,
         replay,
         unix_now(),
-        policy.maximum_time_difference,
+        policy.maximum_time_difference.min(MAX_OPEN_TIME_DIFFERENCE),
     ) else {
         stats.rejected_packets.fetch_add(1, Ordering::Relaxed);
         return;

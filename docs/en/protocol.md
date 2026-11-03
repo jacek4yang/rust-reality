@@ -52,7 +52,7 @@ Xray-compatible client
   inbound. UDP destinations are carried through **XUDP** (VLESS Mux
   `0x03` / `v1.mux.cool:666`) over the Vision stream for **Direct**, **NXR**,
   and **Handoff** egress
-  ([ADR 0060](../adr/0060-xudp-over-nxr-and-handoff.md)); see
+  ([ADR 0060](../adr/0060-xudp-over-nxr-and-handoff.md); Handoff carries datagrams over the native UDP channel of [ADR 0069](../adr/0069-native-udp-channel-for-handoff-xudp.md), with every routing decision on LINE); see
   [development/xudp.md](development/xudp.md). NXR and Handoff authorize as
   themselves and must never silently become Direct; Block fails closed.
 

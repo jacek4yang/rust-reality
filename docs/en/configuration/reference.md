@@ -163,10 +163,17 @@ other key in the file.
 | `connectTimeoutMs` | integer | no | `10000` |
 | `firstByteTimeoutMs` | integer | no | `15000` |
 | `warmTcp` | boolean | no | enabled |
+| `udpPort` | integer | no | `port` |
+| `udpMtu` | integer | no | automatic path MTU discovery |
 
 `landingPublicKey` is public material, not a secret: it is the public half of
 the landing's `privateKey`. `firstByteTimeoutMs` is how this node detects a
 silent rejection.
+
+`udpPort` and `udpMtu` configure the native UDP channel that carries Handoff
+XUDP ([ADR 0069](../../adr/0069-native-udp-channel-for-handoff-xudp.md)):
+`udpPort` is 1–65535 and `udpMtu` is 576–9000. See
+[Handoff](handoff.md#udp-xudp-over-the-native-channel).
 
 ## Routing
 
@@ -261,6 +268,8 @@ Hot, including key rotation. Landing nodes only. Tagged by `protocol`.
 | `preAuthIdleTimeoutMs` | integer | no | `60000` |
 | `maxTimeDifferenceSeconds` | integer | no | `30` |
 | `nonceRetentionSeconds` | integer | no | twice `maxTimeDifferenceSeconds` plus one second |
+| `udpPort` | integer | no | each listener's port |
+| `udpMtu` | integer | no | automatic path MTU discovery |
 
 Replay retention is cold: changing its effective value requires a restart. It must cover twice the accepted clock skew plus one second and may not exceed 86400 seconds. The replay cache remains bounded to 65536 entries.
 

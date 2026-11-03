@@ -139,6 +139,42 @@ rust-reality generate x25519    # 落地节点自己的一对
 
 没有实测出来的问题就别动它们。
 
+## 通过原生通道传输 UDP（XUDP）
+
+TCP 连接按上文所述转移。UDP 不再转移：自
+[ADR 0069](../../adr/0069-native-udp-channel-for-handoff-xudp.md) 起，路由到
+Handoff 出站的 XUDP 关联留在线路节点上。线路节点继续解密 REALITY/Vision/XUDP，
+并像 Direct 一样，为每个数据报完成全部 DNS、GeoIP/GeoSite、路由与 Block 判定。
+它只把已授权、已解析的数据报通过一条独立的加密 UDP 通道发给落地节点。落地节点
+只负责转发并回传响应，不评估任何路由规则，也不需要资产文件。被阻止的目标永远
+不会到达落地节点，也不会回退到 Direct。
+
+该通道使用与 TCP 相同的 `psk` 和落地密钥对，但采用独立的密钥派生。每个关联
+用新的临时密钥打开一个会话。数据报使用 ChaCha20-Poly1305 封装并带重放保护。
+节点之间的路径 MTU 自动探测：从保守的 1200 字节开始，用填充探测包向上探测，
+遇到丢包或 ICMP 时回退，并定期重新探测。超过路径上限的数据报在通道内分片和
+重组，绝不依赖 IP 分片。客户端无需任何配置。
+
+可选字段，通常保持不设置：
+
+| 位置 | 字段 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| 线路节点，Handoff 出站 | `udpPort` | `port` | 落地节点上的通道 UDP 端口 |
+| 线路节点，Handoff 出站 | `udpMtu` | 自动 | 固定通往落地节点的 IP MTU（576–9000），并关闭探测 |
+| 落地节点，`landing` 块 | `udpPort` | 各监听器的端口 | 落地节点绑定的 UDP 端口 |
+| 落地节点，`landing` 块 | `udpMtu` | 自动 | 固定通往线路节点的 IP MTU |
+
+**防火墙。** 默认情况下，落地节点在与 TCP 相同的地址和端口号上监听 UDP（上例中为
+`10.0.0.2:7443/udp`），并在日志中记为监听器 `landing/udp`。只允许线路节点的地址
+访问该 UDP 端口；放行落地节点访问互联网的出站 UDP，以及线路节点到落地节点的出站
+UDP。Handoff XUDP 要求落地节点直接出站；出站为 SOCKS5 或 NXR 的落地节点会拒绝
+该通道，经由它的 UDP 会以失败关闭。
+
+**升级。** 线路节点和落地节点都必须运行带原生通道的版本。面对旧版落地节点，
+Handoff UDP 会在 `connectTimeoutMs` 后失败关闭；旧版线路节点的 XUDP 转移会被
+新版落地节点拒绝。TCP Handoff 在两种情况下都继续可用，但请成对升级每一组
+LINE→LANDING。
+
 ## 必须对上的东西
 
 | 线路节点 | 落地节点 | 要求 |
@@ -146,6 +182,7 @@ rust-reality generate x25519    # 落地节点自己的一对
 | `outbounds.landing-1.psk` | `landing.psk` | 相等 |
 | `outbounds.landing-1.landingPublicKey` | `landing.privateKey` 的公钥那半 | 是同一对 |
 | `outbounds.landing-1.port` | `listeners[].port` | 相等 |
+| `outbounds.landing-1.udpPort`（默认 `port`） | `landing.udpPort`（默认监听端口） | 相等 |
 
 `check` 只读一个文件，验不了跨两台机器的密钥**对**。配错的一对会产生一个落地节点
 打不开的转移，表现为认证之后连接才失败——这和 `psk` 写错的表现不一样。
@@ -154,9 +191,9 @@ rust-reality generate x25519    # 落地节点自己的一对
 
 当前转移使用 `HND1` 封装、协议版本 **1** 和续接状态版本 **3**。封装版本不表示
 接受旧状态版本。版本 3 转移每个方向的当前流量秘密、下一条记录序号以及尚未
-发送的 KeyUpdate 响应，并增加显式会话类型（TCP Vision 或 XUDP）、入站标签和
-密封的 Handoff 策略快照，使 LANDING 能在不持有 LINE 侧 UDP 所有权的情况下授权
-UDP 目标。LANDING 随后可完成 KeyUpdate 响应并派生后续密钥代。
+发送的 KeyUpdate 响应，并增加显式会话类型、入站标签和策略快照字段。LANDING
+随后可完成 KeyUpdate 响应并派生后续密钥代。只接受 TCP Vision 会话类型：XUDP
+不再使用转移（见上文 UDP 一节），落地节点会拒绝 XUDP 续接。
 
 本构建拒绝旧密封 blob，不做转换：
 
