@@ -679,6 +679,18 @@ jobs:
                 exit 1
               fi
             done <<< "$required"
+            # ADR 0069: NXR carries XUDP in its TCP carrier; Handoff uses the
+            # native handoff-udp channel and never a TCP connection.
+            case "$slug" in
+              nxr-*) carrier=nxr-tcp ;;
+              handoff-*) carrier=handoff-udp ;;
+              *) printf '%s\n' "FAIL: unknown cell $slug" >&2; exit 1 ;;
+            esac
+            if ! grep -Fxq "carrier=$carrier" "$receipt"; then
+              printf '%s\n' "FAIL: $slug missing carrier=$carrier" >&2
+              cat "$receipt" >&2
+              exit 1
+            fi
             cp "$receipt" "$OUT/$slug-receipt.txt"
             idf="$(dirname "$receipt")/identity.txt"
             if test -f "$idf"; then
