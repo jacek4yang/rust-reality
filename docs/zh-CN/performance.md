@@ -360,6 +360,15 @@ failure。顺序 collector 和会重复排队正在收集 class 的 controller �
 ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 class 优化，
 不是对所有 TLS 行为都完全相同的声明。
 
+## v2.4.0 发布证据
+
+v2.4.0 将 Handoff XUDP 的 TLS 转交替换为原生加密的 LINE→LANDING UDP 通道，并自动
+探测路径 MTU（[ADR 0069](../adr/0069-native-udp-channel-for-handoff-xudp.md)）。本次
+发布不保留新的性能测量，也不对该通道提出吞吐、延迟或 CPU 主张。功能证据为精确源码
+上的 Native 资格验证（包括经 stock Xray 与 Handoff 的真实 HTTP/3，以及 1280 字节链路
+MTU 的网络命名空间用例），以及发布说明中记录的 Frozen 安装包/虚机结论。下方 v2.3.0
+测量仍绑定其各自的源码与可执行文件。回环与隔离虚机结果不代表生产 WAN 行为。
+
 ## v2.3.0 发布证据
 
 保留的比较明确绑定源码、可执行文件、工作负载和统计范围。

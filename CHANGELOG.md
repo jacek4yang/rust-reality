@@ -2,7 +2,7 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [Unreleased]
+## [2.4.0] - 2026-11-03
 
 - Carry Handoff XUDP over a new native, encrypted LINE→LANDING UDP channel
   (ADR 0069) instead of a TLS transfer. LINE keeps REALITY/Vision/XUDP and
@@ -14,6 +14,14 @@ All notable user-facing changes to this project are documented in this file.
   unchanged. LANDING now also listens on UDP at the same port number as TCP
   (optional `udpPort`/`udpMtu` on both ends); open that UDP port to the LINE
   addresses. LINE and LANDING must be upgraded together for Handoff UDP.
+- Remove the previous XUDP-over-Handoff-TLS transfer. A v2.4.0 LANDING rejects
+  an older LINE's XUDP transfer, and a v2.4.0 LINE's Handoff UDP fails closed
+  against an older LANDING; TCP Handoff works across both.
+- Keep Handoff UDP alive for domain destinations after LINE resolution, and
+  resolve domain UDP destinations on demand when a route did not resolve them,
+  for Direct, NXR and Handoff.
+- Restructure NXR, NXR UDP, Handoff and test modules without behavior, wire or
+  configuration changes.
 
 ## [2.3.0] - 2026-11-01
 

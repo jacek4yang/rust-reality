@@ -434,6 +434,19 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
+## v2.4.0 release comparison evidence
+
+v2.4.0 carries Handoff XUDP over a native, encrypted LINE→LANDING UDP channel
+([ADR 0069](../adr/0069-native-udp-channel-for-handoff-xudp.md)). It makes
+**no new measured performance claim**: the historical comparator tables below
+keep their original artifact and hardware attribution, and the v2.3.0 client
+comparisons in the [performance reference](performance.md) are not relabelled.
+The current stock-Xray interoperability pin remains
+`tools/fixtures/stock-xray.json`. Final release qualification binds Native,
+Frozen and all four native packages to the actual release source and
+executables. Publication does not imply production deployment or WAN
+performance evidence.
+
 ## v2.3.0 release comparison evidence
 
 v2.3.0 adds native-browser ClientHello profiles and retains identity-bound
