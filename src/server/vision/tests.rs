@@ -2784,7 +2784,7 @@ async fn pending_write_stalls_at_120s() -> io::Result<()> {
 }
 
 #[test]
-fn landward_xudp_egress_prefers_ipv4_while_direct_keeps_resolver_order() {
+fn landward_xudp_egress_prefers_ipv4_while_direct_keeps_routable_resolver_order() {
     use super::xudp_session::preferred_udp_egress_ip;
     use crate::server::xudp::XudpEgressCapability;
     use std::net::{IpAddr, Ipv6Addr};
@@ -2792,13 +2792,38 @@ fn landward_xudp_egress_prefers_ipv4_while_direct_keeps_resolver_order() {
     let v6 = IpAddr::V6(Ipv6Addr::LOCALHOST);
     let v4 = IpAddr::V4(Ipv4Addr::LOCALHOST);
     let answer = [v6, v4];
+    let dual_stack = |_: IpAddr| true;
+    let ipv4_only = |ip: IpAddr| ip.is_ipv4();
+    // Dual-stack LINE: Direct keeps the resolver order.
     assert_eq!(
-        preferred_udp_egress_ip(XudpEgressCapability::Direct, &answer),
+        preferred_udp_egress_ip(XudpEgressCapability::Direct, &answer, dual_stack),
+        Some(v6)
+    );
+    // Field bug (v2.4.0): an AAAA-first answer on a LINE without an IPv6
+    // route must not select the unroutable family.
+    assert_eq!(
+        preferred_udp_egress_ip(XudpEgressCapability::Direct, &answer, ipv4_only),
+        Some(v4)
+    );
+    // Single-family answers are used as-is (the send drops if unroutable).
+    assert_eq!(
+        preferred_udp_egress_ip(XudpEgressCapability::Direct, &[v6], ipv4_only),
+        Some(v6)
+    );
+    // Nothing routable: keep resolver order rather than invent an address.
+    assert_eq!(
+        preferred_udp_egress_ip(XudpEgressCapability::Direct, &answer, |_| false),
         Some(v6)
     );
     for capability in [XudpEgressCapability::Nxr, XudpEgressCapability::Handoff] {
-        assert_eq!(preferred_udp_egress_ip(capability, &answer), Some(v4));
-        assert_eq!(preferred_udp_egress_ip(capability, &[v6]), Some(v6));
-        assert_eq!(preferred_udp_egress_ip(capability, &[]), None);
+        assert_eq!(
+            preferred_udp_egress_ip(capability, &answer, dual_stack),
+            Some(v4)
+        );
+        assert_eq!(
+            preferred_udp_egress_ip(capability, &[v6], dual_stack),
+            Some(v6)
+        );
+        assert_eq!(preferred_udp_egress_ip(capability, &[], dual_stack), None);
     }
 }

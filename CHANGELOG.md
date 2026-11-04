@@ -2,6 +2,19 @@
 
 All notable user-facing changes to this project are documented in this file.
 
+## [Unreleased]
+
+- Fix Direct XUDP (SOCKS5 UDP through a LINE `direct` route) losing every
+  datagram after the first domain destination on a dual-stack LINE. The
+  system resolver lists AAAA first, while the association socket followed the
+  first destination's address family, so an IPv4-first association could not
+  send to the IPv6 answer and the whole UDP session closed. Direct XUDP now
+  keeps one socket per address family, picks a resolved address this host can
+  route, and drops a datagram it cannot route instead of closing the session.
+- Report XUDP failures on LINE with `failure.stage = "xudp_relay"` and a
+  cause, e.g. `timeout` when LANDING never answers the native Handoff UDP
+  open because its UDP port is unreachable.
+
 ## [2.4.0] - 2026-11-03
 
 - Carry Handoff XUDP over a new native, encrypted LINE→LANDING UDP channel

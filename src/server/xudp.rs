@@ -14,7 +14,7 @@ use std::{
     collections::{HashMap, VecDeque},
     error::Error,
     fmt,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -415,21 +415,105 @@ pub fn process_xudp_global_map() -> &'static XudpGlobalMap {
 }
 
 /// One Direct UDP association for an XUDP Mux session (session id 0).
+///
+/// XUDP Keep frames may name a new destination on every packet, and a
+/// resolved domain may be IPv4 or IPv6 independently of the first
+/// destination. The association therefore owns one ephemeral socket per
+/// address family, created lazily, exactly like the LANDING per-session
+/// egress slots of the native Handoff UDP channel (ADR 0069). A datagram the
+/// host cannot route (no IPv6 route, IPv6 disabled, a family the bind address
+/// cannot reach) is dropped like any lost UDP datagram instead of tearing down
+/// every other flow multiplexed on the same XUDP session.
 pub struct XudpDirectAssociation<'a> {
-    socket: UdpSocket,
+    v4: Option<UdpSocket>,
+    v6: Option<UdpSocket>,
+    bind_ip: Option<IpAddr>,
     destination: SocketAddr,
     global_lease: Option<XudpGlobalLease<'a>>,
     last_activity: Instant,
     uplink_datagrams: u64,
     downlink_datagrams: u64,
+    dropped_datagrams: u64,
+}
+
+/// Wildcard or configured bind address for an egress socket of `family`.
+///
+/// A configured `bind_ip` of the other family cannot source this family's
+/// datagrams, so that family falls back to the wildcard address.
+fn egress_bind_address(bind_ip: Option<IpAddr>, ipv6: bool) -> SocketAddr {
+    match (bind_ip, ipv6) {
+        (Some(ip @ IpAddr::V4(_)), false) | (Some(ip @ IpAddr::V6(_)), true) => {
+            SocketAddr::new(ip, 0)
+        }
+        (_, false) => SocketAddr::from(([0, 0, 0, 0], 0)),
+        (_, true) => SocketAddr::from(([0_u16; 8], 0)),
+    }
+}
+
+/// Whether a UDP send error only means "this datagram cannot be routed from
+/// this host" (UDP loss), rather than a broken association.
+pub(crate) fn is_unroutable_datagram_error(error: &std::io::Error) -> bool {
+    const EAFNOSUPPORT: i32 = 97;
+    const EMSGSIZE: i32 = 90;
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NetworkUnreachable
+            | std::io::ErrorKind::HostUnreachable
+            | std::io::ErrorKind::AddrNotAvailable
+            | std::io::ErrorKind::PermissionDenied
+    ) || matches!(error.raw_os_error(), Some(EAFNOSUPPORT | EMSGSIZE))
+}
+
+/// Whether this host has a route toward `ip` for UDP egress.
+///
+/// `connect(2)` on an unbound UDP socket performs only the kernel route
+/// lookup; no packet is sent. A host without an IPv6 default route (or with
+/// IPv6 disabled) answers `ENETUNREACH` / `EAFNOSUPPORT` here.
+pub fn udp_route_available(ip: IpAddr) -> bool {
+    let bind = egress_bind_address(None, ip.is_ipv6());
+    std::net::UdpSocket::bind(bind)
+        .and_then(|socket| socket.connect(SocketAddr::new(ip, 9)))
+        .is_ok()
+}
+
+async fn bind_egress(bind_ip: Option<IpAddr>, ipv6: bool) -> std::io::Result<UdpSocket> {
+    UdpSocket::bind(egress_bind_address(bind_ip, ipv6)).await
+}
+
+/// Receives the next datagram from whichever family socket has one.
+///
+/// Cancel-safe: `recv_from` and `readable` are cancel-safe, and the
+/// non-blocking read after readiness completes synchronously.
+async fn recv_either(
+    v4: Option<&UdpSocket>,
+    v6: Option<&UdpSocket>,
+    buf: &mut [u8],
+) -> std::io::Result<(usize, SocketAddr)> {
+    match (v4, v6) {
+        (Some(socket), None) | (None, Some(socket)) => socket.recv_from(buf).await,
+        (Some(v4), Some(v6)) => loop {
+            let socket = tokio::select! {
+                ready = v4.readable() => { ready?; v4 }
+                ready = v6.readable() => { ready?; v6 }
+            };
+            match socket.try_recv_from(buf) {
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                received => return received,
+            }
+        },
+        (None, None) => std::future::pending().await,
+    }
 }
 
 impl<'a> XudpDirectAssociation<'a> {
-    /// Bind an ephemeral UDP socket and remember the first destination.
+    /// Bind an ephemeral UDP socket for the first destination's family and
+    /// remember that destination. The other family's socket is created on
+    /// first use.
     ///
-    /// When `bind_ip` is set (Handoff/NXR LANDING), the UDP socket is bound to
-    /// that address so peers observe LANDING's IP on multi-address hosts
-    /// (e.g. LANDING on `127.0.0.2`). Direct egress passes `None` (wildcard).
+    /// When `bind_ip` is set (Handoff/NXR LANDING), sockets of that family are
+    /// bound to that address so peers observe LANDING's IP on multi-address
+    /// hosts (e.g. LANDING on `127.0.0.2`). Direct egress passes `None`
+    /// (wildcard).
     pub async fn open(
         destination: &Destination,
         global_id: Option<XudpGlobalId>,
@@ -442,19 +526,24 @@ impl<'a> XudpDirectAssociation<'a> {
         let global_lease = global_id
             .map(|id| globals.acquire(id, owner, now))
             .transpose()?;
-        let bind = match (bind_ip, addr) {
-            (Some(ip), _) => SocketAddr::new(ip, 0),
-            (None, SocketAddr::V4(_)) => SocketAddr::from(([0, 0, 0, 0], 0)),
-            (None, SocketAddr::V6(_)) => SocketAddr::from(([0u16; 8], 0)),
+        let socket = bind_egress(bind_ip, addr.is_ipv6())
+            .await
+            .map_err(XudpSessionError::Io)?;
+        let (v4, v6) = if addr.is_ipv6() {
+            (None, Some(socket))
+        } else {
+            (Some(socket), None)
         };
-        let socket = UdpSocket::bind(bind).await.map_err(XudpSessionError::Io)?;
         Ok(Self {
-            socket,
+            v4,
+            v6,
+            bind_ip,
             destination: addr,
             global_lease,
             last_activity: now,
             uplink_datagrams: 0,
             downlink_datagrams: 0,
+            dropped_datagrams: 0,
         })
     }
 
@@ -470,8 +559,31 @@ impl<'a> XudpDirectAssociation<'a> {
         self.downlink_datagrams
     }
 
+    /// Uplink datagrams dropped because this host cannot route them.
+    pub fn dropped_datagrams(&self) -> u64 {
+        self.dropped_datagrams
+    }
+
     pub fn destination(&self) -> SocketAddr {
         self.destination
+    }
+
+    /// Returns the egress socket for `destination`'s family, creating it on
+    /// first use. `Ok(None)` means the host cannot open that family.
+    async fn egress_socket(
+        &mut self,
+        destination: SocketAddr,
+    ) -> Result<Option<&UdpSocket>, XudpSessionError> {
+        let ipv6 = destination.is_ipv6();
+        let slot = if ipv6 { &mut self.v6 } else { &mut self.v4 };
+        if slot.is_none() {
+            match bind_egress(self.bind_ip, ipv6).await {
+                Ok(socket) => *slot = Some(socket),
+                Err(error) if is_unroutable_datagram_error(&error) => return Ok(None),
+                Err(error) => return Err(XudpSessionError::Io(error)),
+            }
+        }
+        Ok(slot.as_ref())
     }
 
     /// Apply one decoded uplink XUDP packet: send UDP after an authorized rewrite.
@@ -500,11 +612,20 @@ impl<'a> XudpDirectAssociation<'a> {
             return Err(XudpSessionError::MissingNewDestination);
         }
         if !packet.payload.is_empty() {
-            self.socket
-                .send_to(&packet.payload, self.destination)
-                .await
-                .map_err(XudpSessionError::Io)?;
-            self.uplink_datagrams = self.uplink_datagrams.saturating_add(1);
+            let destination = self.destination;
+            let sent = match self.egress_socket(destination).await? {
+                Some(socket) => match socket.send_to(&packet.payload, destination).await {
+                    Ok(_) => true,
+                    Err(error) if is_unroutable_datagram_error(&error) => false,
+                    Err(error) => return Err(XudpSessionError::Io(error)),
+                },
+                None => false,
+            };
+            if sent {
+                self.uplink_datagrams = self.uplink_datagrams.saturating_add(1);
+            } else {
+                self.dropped_datagrams = self.dropped_datagrams.saturating_add(1);
+            }
         }
         self.last_activity = now;
         Ok(())
@@ -517,9 +638,7 @@ impl<'a> XudpDirectAssociation<'a> {
         output: &mut Vec<u8>,
         now: Instant,
     ) -> Result<usize, XudpSessionError> {
-        let (n, from) = self
-            .socket
-            .recv_from(buf)
+        let (n, from) = recv_either(self.v4.as_ref(), self.v6.as_ref(), buf)
             .await
             .map_err(XudpSessionError::Io)?;
         // Preserve peer address in the Keep frame so multi-address sessions work.
@@ -944,6 +1063,157 @@ mod tests {
         assert_eq!(assoc.uplink_datagrams(), 1);
         assert_eq!(assoc.downlink_datagrams(), 1);
         assoc.close(Instant::now());
+    }
+
+    fn keep_to(dest: &Destination, payload: &[u8]) -> XudpPacket {
+        let mut wire = Vec::new();
+        encode_xudp_packet(dest, payload, false, None, true, &mut wire).unwrap();
+        decode_xudp_packet(&wire).unwrap().0
+    }
+
+    async fn downlink(assoc: &mut XudpDirectAssociation<'_>) -> XudpPacket {
+        let mut out = Vec::new();
+        let mut recv_buf = vec![0_u8; 64 * 1024];
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            assoc.recv_downlink_frame(&mut recv_buf, &mut out, Instant::now()),
+        )
+        .await
+        .expect("downlink datagram")
+        .unwrap();
+        decode_xudp_packet(&out).unwrap().0
+    }
+
+    /// v2.4.0 field bug: the association socket followed the first
+    /// destination's family, so a later Keep rewrite to the other family (a
+    /// domain whose AAAA answer sorts first on a dual-stack LINE) failed with
+    /// `EAFNOSUPPORT` and tore down every flow of the XUDP session.
+    #[tokio::test]
+    async fn keep_rewrite_across_address_families_keeps_the_association() {
+        let Ok(echo6) = UdpSocket::bind(SocketAddr::from(([0_u16, 0, 0, 0, 0, 0, 0, 1], 0))).await
+        else {
+            eprintln!("skipping: no IPv6 loopback on this host");
+            return;
+        };
+        let echo4 = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .unwrap();
+        let dest4 = Destination::from(echo4.local_addr().unwrap());
+        let dest6 = Destination::from(echo6.local_addr().unwrap());
+        let globals = XudpGlobalMap::new();
+        let mut assoc = XudpDirectAssociation::open(
+            &dest4,
+            Some([7; 8]),
+            [7; 16],
+            &globals,
+            Instant::now(),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut buf = [0_u8; 64];
+        for (round, (dest, echo)) in [(&dest4, &echo4), (&dest6, &echo6), (&dest4, &echo4)]
+            .into_iter()
+            .enumerate()
+        {
+            let payload = format!("round-{round}");
+            let packet = keep_to(dest, payload.as_bytes());
+            assoc
+                .handle_uplink_packet(&packet, packet.destination.as_ref(), Instant::now())
+                .await
+                .expect("cross-family Keep rewrite must not fail the association");
+            let (n, from) = echo.recv_from(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], payload.as_bytes());
+            echo.send_to(payload.as_bytes(), from).await.unwrap();
+            let reply = downlink(&mut assoc).await;
+            assert_eq!(reply.payload, payload.as_bytes());
+            assert_eq!(
+                reply.destination.as_ref(),
+                Some(dest),
+                "reply names its real source"
+            );
+        }
+        assert_eq!(assoc.uplink_datagrams(), 3);
+        assert_eq!(assoc.downlink_datagrams(), 3);
+        assert_eq!(assoc.dropped_datagrams(), 0);
+        assoc.close(Instant::now());
+    }
+
+    /// A datagram the host cannot route is UDP loss, not a session failure:
+    /// the next routable datagram on the same association still flows.
+    #[tokio::test]
+    async fn unroutable_datagram_is_dropped_without_closing_the_association() {
+        let echo4 = UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+            .await
+            .unwrap();
+        let dest4 = Destination::from(echo4.local_addr().unwrap());
+        let globals = XudpGlobalMap::new();
+        // LANDING-style IPv4 bind address; 2001:db8::/32 is documentation
+        // space: unroutable on IPv4-only hosts (`ENETUNREACH`) and silently
+        // lost elsewhere. Either way the association must survive.
+        let mut assoc = XudpDirectAssociation::open(
+            &dest4,
+            None,
+            [8; 16],
+            &globals,
+            Instant::now(),
+            Some(IpAddr::from([127, 0, 0, 1])),
+        )
+        .await
+        .unwrap();
+        let doc6 = Destination::new(Address::Ipv6("2001:db8::1".parse().unwrap()), 9);
+        let packet = keep_to(&doc6, b"nowhere");
+        assoc
+            .handle_uplink_packet(&packet, packet.destination.as_ref(), Instant::now())
+            .await
+            .expect("an unroutable datagram must not fail the association");
+        let packet = keep_to(&dest4, b"still-here");
+        assoc
+            .handle_uplink_packet(&packet, packet.destination.as_ref(), Instant::now())
+            .await
+            .unwrap();
+        let mut buf = [0_u8; 64];
+        let (n, from) = echo4.recv_from(&mut buf).await.unwrap();
+        assert_eq!(&buf[..n], b"still-here");
+        echo4.send_to(b"ok", from).await.unwrap();
+        assert_eq!(downlink(&mut assoc).await.payload, b"ok");
+        assert_eq!(
+            assoc.uplink_datagrams() + assoc.dropped_datagrams(),
+            2,
+            "every datagram is either sent or counted as dropped"
+        );
+        assoc.close(Instant::now());
+    }
+
+    #[test]
+    fn unroutable_errors_are_classified_as_datagram_loss() {
+        use std::io::Error;
+        for errno in [97, 90, 101, 113, 99, 1, 13] {
+            assert!(
+                is_unroutable_datagram_error(&Error::from_raw_os_error(errno)),
+                "errno {errno}"
+            );
+        }
+        for errno in [9, 24, 105] {
+            assert!(
+                !is_unroutable_datagram_error(&Error::from_raw_os_error(errno)),
+                "errno {errno}"
+            );
+        }
+    }
+
+    #[test]
+    fn egress_bind_address_falls_back_to_wildcard_for_the_other_family() {
+        let v4: IpAddr = [127, 0, 0, 2].into();
+        assert_eq!(egress_bind_address(Some(v4), false), SocketAddr::new(v4, 0));
+        assert_eq!(
+            egress_bind_address(Some(v4), true),
+            SocketAddr::from(([0_u16; 8], 0))
+        );
+        assert_eq!(
+            egress_bind_address(None, false),
+            SocketAddr::from(([0, 0, 0, 0], 0))
+        );
     }
 
     #[tokio::test]

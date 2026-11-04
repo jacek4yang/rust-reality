@@ -354,9 +354,26 @@ jobs:
             exit 1
           fi
           test "$status" -eq 0
+          # Field bug after v2.4.0: domain UDP after IP literals on one
+          # association, AAAA-first resolution, Direct and Handoff users.
+          set +e
+          cargo test --locked --test xudp_handoff_e2e \
+            stock_xray_dual_stack_domain_udp_after_ip_literals_direct_and_handoff \
+            -- --exact --nocapture --ignored 2>&1 | tee -a "$LOG"
+          status=${PIPESTATUS[0]}
+          set -e
+          if ! grep -F 'test stock_xray_dual_stack_domain_udp_after_ip_literals_direct_and_handoff ... ok' "$LOG"; then
+            printf '%s\n' 'FAIL: stock Xray dual-stack domain UDP test did not report ok' >&2
+            exit 1
+          fi
+          if grep -F 'skip: no IPv6 loopback' "$LOG"; then
+            printf '%s\n' 'FAIL: dual-stack domain UDP test skipped (no IPv6 loopback on runner)' >&2
+            exit 1
+          fi
+          test "$status" -eq 0
           {
             printf 'verdict=PASS\n'
-            grep -E 'test result:|landing_udp_sender_proof|routing_shape PASS' "$LOG" | tail -n20
+            grep -E 'test result:|landing_udp_sender_proof|routing_shape PASS|dual_stack_domain_udp PASS' "$LOG" | tail -n20
           } | tee "$Q/stock-xray-handoff-xudp/receipt.txt"
       - name: Mandatory rust-to-rust UDP/443 and genuine HTTP/3 over XUDP
         timeout-minutes: 15

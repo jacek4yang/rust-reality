@@ -11,6 +11,7 @@ use crate::{
         nxr::NxrLandingError,
         outbound::OutboundConnectError,
         vision::VisionSessionError,
+        xudp::XudpSessionError,
     },
     transport::tcp_relay::is_write_stall_timeout_abort,
 };
@@ -31,6 +32,9 @@ pub(super) fn detail(error: &ConnectionRunError) -> Option<FailureDetail> {
         }
         ConnectionRunError::Vision(VisionSessionError::Outbound(error)) => {
             (Stage::OutboundConnect, outbound(error))
+        }
+        ConnectionRunError::Vision(VisionSessionError::Xudp(error)) => {
+            (Stage::XudpRelay, xudp(error))
         }
         ConnectionRunError::Handoff(HandoffLandingError::Destination(error))
         | ConnectionRunError::Nxr(NxrLandingError::Destination(error)) => {
@@ -158,6 +162,30 @@ fn destination(error: &DestinationConnectError) -> CauseAndErrno {
         DestinationConnectError::Allocation => Cause::Allocation,
         DestinationConnectError::NoAddressesForPolicy
         | DestinationConnectError::TooManyResolvedAddresses => Cause::Policy,
+    };
+    (cause, None)
+}
+
+fn xudp(error: &XudpSessionError) -> CauseAndErrno {
+    let cause = match error {
+        XudpSessionError::Io(error) => return io_cause(error),
+        XudpSessionError::NxrConnect(error) => return outbound(error),
+        // LANDING never answered the native UDP open: the landing UDP port
+        // is unreachable from LINE (firewall / security group / udpPort).
+        XudpSessionError::HandoffUdpOpenTimeout | XudpSessionError::IdleTimeout => Cause::Timeout,
+        XudpSessionError::HandoffUdpClosed => Cause::LandingRejected,
+        XudpSessionError::AssociationLimit => Cause::Admission,
+        XudpSessionError::FdBudgetExhausted => Cause::DescriptorBudget,
+        XudpSessionError::Outbound(_)
+        | XudpSessionError::EgressCapabilityChanged
+        | XudpSessionError::UnauthorizedRewrite
+        | XudpSessionError::ResolveFailed => Cause::Policy,
+        XudpSessionError::Codec(_)
+        | XudpSessionError::NxrCarrier(_)
+        | XudpSessionError::MissingNewDestination
+        | XudpSessionError::AssociationConflict
+        | XudpSessionError::UnexpectedVisionDirect
+        | XudpSessionError::HandoffUdp(_) => Cause::Protocol,
     };
     (cause, None)
 }
