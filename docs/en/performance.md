@@ -463,6 +463,16 @@ that is the consensus rule working, and relaxing it is a separate decision.
 The before/after binaries were built from the same tree with only
 `src/protocol/reality/tls13/cover_profile.rs` differing.
 
+## v2.4.1 release evidence
+
+v2.4.1 fixes Direct XUDP losing every datagram after the first domain
+destination on a dual-stack LINE. This release retains no new performance
+campaign and makes no throughput, latency or CPU claim. The functional evidence
+is the exact-source Native qualification, including the stock-Xray
+`stock_xray_dual_stack_domain_udp_after_ip_literals_direct_and_handoff` case,
+and the Frozen package/VM verdict recorded in the release notes. Loopback and
+isolated VM results do not establish production-WAN behavior.
+
 ## v2.4.0 release evidence
 
 v2.4.0 replaces the Handoff XUDP TLS transfer with a native, encrypted

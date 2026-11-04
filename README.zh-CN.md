@@ -34,7 +34,8 @@
   [有限的落地配置兼容范围](docs/adr/0027-preserve-the-existing-v18-handoff-landing.md)。
 - 公网 VLESS + REALITY + Vision 入站以未经修改的 stock Xray 客户端做端到端门禁；
   当前资格验证版本统一记录于[参考 fixture](tools/fixtures/stock-xray.json)。
-- v2.4.0 通过原生加密的 LINE→LANDING UDP 通道承载 Handoff XUDP，并自动探测路径
+- v2.4.1 修复双栈 LINE 上经 `direct` 路由的 SOCKS5 UDP 在首个域名目标后中断的问题。
+  自 v2.4.0 起，Handoff XUDP 经原生加密的 LINE→LANDING UDP 通道承载，并自动探测路径
   MTU。LINE 做全部路由决策，LANDING 只负责转发。参见
   [Handoff 配置](docs/zh-CN/configuration/handoff.md)与
   [ADR 0069](docs/adr/0069-native-udp-channel-for-handoff-xudp.md)。
@@ -78,7 +79,7 @@
 
 ## 与 Xray-core 的性能对比
 
-v2.4.0 将下表保留为历史对比参考，不把它们表述为新的 v2 测量或生产互联网性能。
+v2.4.1 将下表保留为历史对比参考，不把它们表述为新的 v2 测量或生产互联网性能。
 当前密码学实现选择及证据边界见
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md)。
 

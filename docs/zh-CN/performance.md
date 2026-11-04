@@ -360,6 +360,14 @@ failure。顺序 collector 和会重复排队正在收集 class 的 controller �
 ClientHello class 会有意留在 warm-live 路径。这是保守的已验证 class 优化，
 不是对所有 TLS 行为都完全相同的声明。
 
+## v2.4.1 发布证据
+
+v2.4.1 修复双栈 LINE 上 Direct XUDP 在首个域名目标后丢失全部数据报的问题。本次发布
+不保留新的性能测量，也不提出吞吐、延迟或 CPU 主张。功能证据为精确源码上的 Native
+资格验证（包括 stock Xray 用例
+`stock_xray_dual_stack_domain_udp_after_ip_literals_direct_and_handoff`），以及发布说明
+中记录的 Frozen 安装包/虚机结论。回环与隔离虚机结果不代表生产 WAN 行为。
+
 ## v2.4.0 发布证据
 
 v2.4.0 将 Handoff XUDP 的 TLS 转交替换为原生加密的 LINE→LANDING UDP 通道，并自动
