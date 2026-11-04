@@ -2,7 +2,7 @@
 
 All notable user-facing changes to this project are documented in this file.
 
-## [Unreleased]
+## [2.4.1] - 2026-11-04
 
 - Fix Direct XUDP (SOCKS5 UDP through a LINE `direct` route) losing every
   datagram after the first domain destination on a dual-stack LINE. The
@@ -14,6 +14,8 @@ All notable user-facing changes to this project are documented in this file.
 - Report XUDP failures on LINE with `failure.stage = "xudp_relay"` and a
   cause, e.g. `timeout` when LANDING never answers the native Handoff UDP
   open because its UDP port is unreachable.
+- No wire, crypto, trust or configuration change. A v2.4.1 LINE works with a
+  v2.4.0 LANDING and vice versa; upgrading LINE alone delivers the fix.
 
 ## [2.4.0] - 2026-11-03
 

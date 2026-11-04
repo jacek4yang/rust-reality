@@ -434,6 +434,18 @@ and RSS growth over the soak with zero transfer failures.
 - Results are measurements of this host and are not a universal
   performance claim.
 
+## v2.4.1 release comparison evidence
+
+v2.4.1 is a patch release that fixes Direct XUDP across address families
+(per-family sockets, route-aware address selection, and dropping an unroutable
+datagram instead of closing the session). It makes **no new measured
+performance claim**: the historical comparator tables below keep their original
+artifact and hardware attribution. The current stock-Xray interoperability pin
+remains `tools/fixtures/stock-xray.json`. Final release qualification binds
+Native, Frozen and all four native packages to the actual release source and
+executables. Publication does not imply production deployment or WAN
+performance evidence.
+
 ## v2.4.0 release comparison evidence
 
 v2.4.0 carries Handoff XUDP over a native, encrypted LINE→LANDING UDP channel

@@ -39,8 +39,10 @@ Xray-compatible client
 - Public VLESS + REALITY + Vision ingress is gated end to end with an
   unmodified stock Xray client. Current qualification pins live in
   [the reference fixture](tools/fixtures/stock-xray.json).
-- v2.4.0 carries Handoff XUDP over a native, encrypted LINE→LANDING UDP
-  channel with automatic path MTU discovery. LINE makes every routing decision;
+- v2.4.1 fixes SOCKS5 UDP through a LINE `direct` route stopping after the
+  first domain destination on a dual-stack LINE. Since v2.4.0, Handoff XUDP
+  uses a native, encrypted LINE→LANDING UDP channel with automatic path MTU
+  discovery. LINE makes every routing decision;
   LANDING only forwards. See [Handoff configuration](docs/en/configuration/handoff.md)
   and [ADR 0069](docs/adr/0069-native-udp-channel-for-handoff-xudp.md).
 - Per-LINE Chrome 156.0.8078.74 and Firefox 159.0 ClientHello profiles in the
@@ -93,7 +95,7 @@ Xray-compatible client
 
 ## Performance vs Xray-core
 
-v2.4.0 retains these tables as historical comparison references. They are not
+v2.4.1 retains these tables as historical comparison references. They are not
 new v2 measurements or production Internet performance claims. Current provider
 decisions and their evidence limits are recorded in
 [ADR 0028](docs/adr/0028-finalize-the-v2-crypto-provider-set.md).
