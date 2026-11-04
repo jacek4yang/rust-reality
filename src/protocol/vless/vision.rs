@@ -1,3 +1,11 @@
+//! Xray Vision padding framing for VLESS flows.
+//!
+//! [`VisionEncoder`] plans and assembles padded blocks (a
+//! [`VisionFramePlan`] followed by `assemble`), and [`VisionDecoder`] strips
+//! them, reporting the [`VisionCommand`] that ends padding (`End` or
+//! `Direct`). Frame layout and padding constants must stay byte-compatible
+//! with Xray; this module only frames bytes and performs no cryptography.
+
 use std::{error::Error, fmt};
 
 use super::{UserId, padding::PaddingRng};

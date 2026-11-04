@@ -1,3 +1,13 @@
+//! Outbound TCP dialing for proxied destinations.
+//!
+//! [`DestinationConnector`] turns a VLESS [`Destination`] into a connected
+//! [`TcpStream`]: numeric literals are dialed directly, hostnames are resolved
+//! asynchronously, candidate addresses are ordered by the
+//! [`ConnectionPlanner`] for the current [`NetworkEnvironment`], and each
+//! socket is charged against the outbound [`FdBudget`] so the returned
+//! [`AccountedTcpStream`] releases its permit on drop. Failures are reported
+//! as [`DestinationConnectError`] so callers can classify them.
+
 use std::{
     error::Error,
     fmt, io,

@@ -1,3 +1,12 @@
+//! Geo routing assets (geoip/geosite) used by entry routing rules.
+//!
+//! [`AssetSnapshot`] is an immutable, parsed view of the configured asset
+//! files; [`AssetStore`] holds the current snapshot behind an `ArcSwap` so
+//! readers get lock-free access while [`AssetStore::reload`] swaps in a
+//! freshly loaded generation. Downloading and conditional-update logic
+//! (ETag / Last-Modified) lives here too; the `.dat` wire parsing lives in
+//! the private `dat` submodule.
+
 mod dat;
 
 use std::{
