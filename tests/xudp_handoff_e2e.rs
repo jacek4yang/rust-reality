@@ -1559,3 +1559,289 @@ fn stock_xray_handoff_native_udp_user_routing_shape() {
     );
     let _ = (landing, entry);
 }
+
+impl SocksUdp {
+    /// Like [`SocksUdp::exchange`], but accepts an IPv4 or IPv6 reply source.
+    fn exchange_any_family(
+        &self,
+        target: &Target<'_>,
+        payload: &[u8],
+        wait: Duration,
+    ) -> Option<(IpAddr, Vec<u8>)> {
+        let mut datagram = vec![0, 0, 0];
+        match target {
+            Target::Ip(SocketAddr::V4(address)) => {
+                datagram.push(1);
+                datagram.extend_from_slice(&address.ip().octets());
+                datagram.extend_from_slice(&address.port().to_be_bytes());
+            }
+            Target::Ip(SocketAddr::V6(address)) => {
+                datagram.push(4);
+                datagram.extend_from_slice(&address.ip().octets());
+                datagram.extend_from_slice(&address.port().to_be_bytes());
+            }
+            Target::Domain(host, port) => {
+                datagram.push(3);
+                datagram.push(u8::try_from(host.len()).unwrap());
+                datagram.extend_from_slice(host.as_bytes());
+                datagram.extend_from_slice(&port.to_be_bytes());
+            }
+        }
+        datagram.extend_from_slice(payload);
+        self.udp.send_to(&datagram, self.relay).unwrap();
+        self.udp.set_read_timeout(Some(wait)).unwrap();
+        let mut buffer = vec![0_u8; 65_535];
+        let (length, _) = self.udp.recv_from(&mut buffer).ok()?;
+        match buffer[3] {
+            1 if length >= 10 => {
+                let ip = Ipv4Addr::new(buffer[4], buffer[5], buffer[6], buffer[7]);
+                Some((IpAddr::V4(ip), buffer[10..length].to_vec()))
+            }
+            4 if length >= 22 => {
+                let octets: [u8; 16] = buffer[4..20].try_into().unwrap();
+                Some((
+                    IpAddr::V6(std::net::Ipv6Addr::from(octets)),
+                    buffer[22..length].to_vec(),
+                ))
+            }
+            other => panic!("unexpected SOCKS UDP reply ATYP {other}"),
+        }
+    }
+}
+
+/// v2.4.0 field bug, end to end with stock Xray: the owner's SOCKS5 UDP
+/// script sends IP-literal DNS first and then domain targets (`dns.google`,
+/// STUN servers) on the same association. On a dual-stack LINE the system
+/// resolver lists AAAA first, and the Direct XUDP association's socket
+/// (IPv4, from the first destination) could not send to the IPv6 answer:
+/// the session failed and every later datagram was lost.
+///
+/// `localhost` stands in for a dual-stack name (`::1` and `127.0.0.1` from
+/// `/etc/hosts`; glibc lists `::1` first). The domain echo listens on both
+/// families with one port. Both owner users run the same sequence on one
+/// association each: `line-direct` (`direct-safe`, LINE egress) and
+/// `line-handoff` (`via-landing`, native UDP channel to LANDING).
+#[test]
+#[ignore = "requires pinned stock Xray via XRAY_BIN; Exact-head Native runs with --ignored --exact"]
+fn stock_xray_dual_stack_domain_udp_after_ip_literals_direct_and_handoff() {
+    use std::net::{Ipv6Addr, ToSocketAddrs};
+
+    let xray = require_stock_xray_bin();
+    let localhost: Vec<SocketAddr> = ("localhost", 0).to_socket_addrs().unwrap().collect();
+    let echo6_probe = StdUdpSocket::bind((Ipv6Addr::LOCALHOST, 0));
+    let Ok(echo6_probe) = echo6_probe else {
+        eprintln!("skip: no IPv6 loopback on this host");
+        return;
+    };
+    eprintln!("system resolver order for localhost: {localhost:?}");
+    let root = std::env::temp_dir().join(format!("rr-dual-stack-udp-{}", free_port()));
+    let _guard = DirGuard(root.clone());
+    fs::create_dir_all(root.join("assets")).expect("mkdir");
+    fs::write(root.join("assets/geosite.dat"), geosite_fixture()).unwrap();
+    fs::write(root.join("assets/geoip.dat"), geoip_fixture()).unwrap();
+    let (cover_port, _cover) = start_openssl_cover(&root);
+    let (reality_private, reality_public) = generate_x25519();
+    let (landing_private, landing_public) = generate_x25519();
+    let (direct_id, direct_sid) = (generate("uuid"), generate("short-id"));
+    let (handoff_id, handoff_sid) = (generate("uuid"), generate("short-id"));
+    let psk = generate("psk");
+    let entry_port = free_port();
+    let landing_port = free_port();
+    write(
+        &root.join("landing.json"),
+        &format!(
+            r#"{{
+  "role": "landing",
+  "listeners": [{{ "port": {landing_port}, "ip": "ipv4Only", "ipv4": "{LANDING_IP}" }}],
+  "landing": {{ "protocol": "handoff", "psk": "{psk}", "privateKey": "{landing_private}" }},
+  "log": {{ "level": "debug" }}
+}}
+"#
+        ),
+    );
+    write(
+        &root.join("entry.json"),
+        &format!(
+            r#"{{
+  "role": "entry",
+  "listeners": [{{ "port": {entry_port}, "ip": "ipv4Only", "ipv4": "{LINE_IP}" }}],
+  "reality": {{
+    "cover": "localhost:{cover_port}",
+    "privateKey": "{reality_private}",
+    "serverNames": ["localhost"],
+    "coverOptimization": {{ "enabled": false }}
+  }},
+  "users": [
+    {{ "id": "{direct_id}", "shortIds": ["{direct_sid}"], "label": "line-direct", "policy": "direct-safe" }},
+    {{ "id": "{handoff_id}", "shortIds": ["{handoff_sid}"], "label": "line-handoff", "policy": "via-landing" }}
+  ],
+  "outbounds": {{
+    "landing": {{
+      "type": "handoff", "address": "{LANDING_IP}", "port": {landing_port},
+      "psk": "{psk}", "landingPublicKey": "{landing_public}", "warmTcp": true
+    }}
+  }},
+  "dns": {{ "servers": ["system"], "timeoutMs": 5000 }},
+  "network": {{ "ip": "auto" }},
+  "assets": {{
+    "geoip": "https://127.0.0.1:9/geoip.dat",
+    "geosite": "https://127.0.0.1:9/geosite.dat",
+    "cacheDirectory": "{assets}"
+  }},
+  "routing": {{
+    "default": "direct",
+    "strategy": "resolveOnDemand",
+    "rules": [
+      {{ "name": "block-self-443", "ip": ["{LINE_IP}", "{LANDING_IP}"], "port": ["443"], "outbound": "block" }},
+      {{ "name": "block-private", "ip": ["geoip:private"], "outbound": "block" }}
+    ],
+    "policies": {{
+      "direct-safe": {{
+        "default": "direct",
+        "rules": [
+          {{ "name": "allow-google-services", "domain": ["geosite:google"], "outbound": "direct" }},
+          {{ "name": "block-cn-domains", "domain": ["geosite:cn"], "outbound": "block" }},
+          {{ "name": "block-cn-ip", "ip": ["geoip:cn"], "outbound": "block" }}
+        ]
+      }},
+      "via-landing": {{
+        "default": "landing",
+        "rules": [
+          {{ "name": "allow-google-services", "domain": ["geosite:google"], "outbound": "landing" }},
+          {{ "name": "block-cn-domains", "domain": ["geosite:cn"], "outbound": "block" }},
+          {{ "name": "block-cn-ip", "ip": ["geoip:cn"], "outbound": "block" }}
+        ]
+      }}
+    }}
+  }},
+  "log": {{ "level": "debug" }}
+}}
+"#,
+            assets = root.join("assets").display(),
+        ),
+    );
+    let landing = spawn_logged(
+        "landing",
+        {
+            let mut c = Command::new(bin());
+            c.args(["run", "--config"]).arg(root.join("landing.json"));
+            c
+        },
+        &root.join("landing.log"),
+    );
+    wait_tcp(LANDING_IP, landing_port, Duration::from_secs(20));
+    let entry = spawn_logged(
+        "entry",
+        {
+            let mut c = Command::new(bin());
+            c.args(["run", "--config"]).arg(root.join("entry.json"));
+            c
+        },
+        &root.join("entry.log"),
+    );
+    wait_tcp(LINE_IP, entry_port, Duration::from_secs(30));
+
+    // Echo peers: two IP literals, and one dual-stack port for `localhost`.
+    let echo_a = spawn_udp_echo_on(SocketAddr::from((LINE_IP, 0)));
+    let echo_b = spawn_udp_echo_on(SocketAddr::from((Ipv4Addr::new(127, 0, 0, 3), 0)));
+    let dual_port = echo6_probe.local_addr().unwrap().port();
+    drop(echo6_probe);
+    let echo_d6 = spawn_udp_echo_on(SocketAddr::from((Ipv6Addr::LOCALHOST, dual_port)));
+    let echo_d4 = spawn_udp_echo_on(SocketAddr::from((LINE_IP, dual_port)));
+    let a = SocketAddr::from((LINE_IP, echo_a.port));
+    let b = SocketAddr::from((Ipv4Addr::new(127, 0, 0, 3), echo_b.port));
+    let wait = Duration::from_secs(5);
+
+    for (label, user_id, short_id) in [
+        ("line-direct", &direct_id, &direct_sid),
+        ("line-handoff", &handoff_id, &handoff_sid),
+    ] {
+        let socks_port = free_port();
+        let config = root.join(format!("xray-{label}.json"));
+        write(
+            &config,
+            &format!(
+                r#"{{
+  "log": {{ "loglevel": "warning" }},
+  "inbounds": [{{
+    "listen": "127.0.0.1", "port": {socks_port}, "protocol": "mixed",
+    "settings": {{ "auth": "noauth", "udp": true }},
+    "sniffing": {{ "enabled": true, "destOverride": ["http", "tls", "quic"], "routeOnly": false }}
+  }}],
+  "outbounds": [{{
+    "protocol": "vless",
+    "settings": {{ "vnext": [{{ "address": "127.0.0.1", "port": {entry_port},
+      "users": [{{ "id": "{user_id}", "encryption": "none", "flow": "xtls-rprx-vision-udp443" }}] }}] }},
+    "streamSettings": {{ "network": "tcp", "security": "reality",
+      "realitySettings": {{ "fingerprint": "chrome", "serverName": "localhost",
+        "publicKey": "{reality_public}", "shortId": "{short_id}", "spiderX": "/" }} }}
+  }}]
+}}
+"#
+            ),
+        );
+        let log_name = format!("xray-{label}.log");
+        let xray_client = spawn_logged(
+            label,
+            {
+                let mut c = Command::new(&xray);
+                c.args(["run", "-c"]).arg(&config);
+                c
+            },
+            &root.join(&log_name),
+        );
+        wait_tcp(LINE_IP, socks_port, Duration::from_secs(20));
+        let diagnostics = || {
+            format!(
+                "\nuser={label}\nentry:\n{}\nlanding:\n{}\nxray:\n{}",
+                read_log(&root, "entry.log"),
+                read_log(&root, "landing.log"),
+                read_log(&root, &log_name)
+            )
+        };
+        // The owner's script order on ONE association: IP, IP, then domain
+        // targets, then back to an IP literal.
+        let association = SocksUdp::associate(socks_port);
+        let mut domain_sources = Vec::new();
+        for (step, target) in [
+            ("ip-a", Target::Ip(a)),
+            ("ip-b", Target::Ip(b)),
+            ("domain-1", Target::Domain("localhost", dual_port)),
+            ("domain-2", Target::Domain("localhost", dual_port)),
+            ("ip-a-again", Target::Ip(a)),
+            ("ip-b-again", Target::Ip(b)),
+        ] {
+            let payload = format!("{label}-{step}").into_bytes();
+            let reply = association.exchange_any_family(&target, &payload, wait);
+            let Some((source, body)) = reply else {
+                panic!("{label} {step}: no reply{}", diagnostics());
+            };
+            assert_eq!(body, payload, "{label} {step}{}", diagnostics());
+            if step.starts_with("domain") {
+                domain_sources.push(source);
+            }
+        }
+        drop(association);
+        eprintln!("{label}: domain replies came from {domain_sources:?}");
+        if label == "line-handoff" {
+            // LANDING's IPv4-only reachability is unknown to LINE: Handoff
+            // prefers the A answer.
+            assert!(
+                domain_sources.iter().all(IpAddr::is_ipv4),
+                "handoff domain egress must prefer IPv4: {domain_sources:?}"
+            );
+        }
+        drop(xray_client);
+    }
+    let total = echo_d6.hits.load(Ordering::SeqCst) + echo_d4.hits.load(Ordering::SeqCst);
+    assert_eq!(
+        total, 4,
+        "two domain datagrams per user reached the dual-stack echo"
+    );
+    eprintln!(
+        "stock_xray_dual_stack_domain_udp PASS v6_hits={} v4_hits={}",
+        echo_d6.hits.load(Ordering::SeqCst),
+        echo_d4.hits.load(Ordering::SeqCst)
+    );
+    let _ = (landing, entry);
+}

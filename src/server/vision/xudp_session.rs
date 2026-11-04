@@ -30,16 +30,30 @@ use crate::server::handoff::udp::XudpHandoffUdpAssociation;
 
 /// Picks the address XUDP egress uses for a resolved domain.
 ///
-/// Direct egress keeps the resolver order of the LINE host. NXR and Handoff
-/// egress happens on LANDING, whose address families LINE cannot observe, so
-/// an IPv4 address is preferred when one exists (an IPv6-first answer would
-/// otherwise strand IPv4-only LANDING hosts).
+/// Direct egress keeps the resolver order of the LINE host but skips
+/// addresses this host has no route to: `getaddrinfo` lists AAAA first on a
+/// host with any global IPv6 address even when IPv6 egress is unusable, so
+/// the first answer alone can name a family the host cannot send. NXR and
+/// Handoff egress happens on LANDING, whose address families LINE cannot
+/// observe, so an IPv4 address is preferred when one exists (an IPv6-first
+/// answer would otherwise strand IPv4-only LANDING hosts).
 pub(super) fn preferred_udp_egress_ip(
     capability: XudpEgressCapability,
     ips: &[IpAddr],
+    routable: impl Fn(IpAddr) -> bool,
 ) -> Option<IpAddr> {
     match capability {
-        XudpEgressCapability::Direct => ips.first().copied(),
+        XudpEgressCapability::Direct => {
+            let mixed = ips.iter().any(IpAddr::is_ipv4) && ips.iter().any(IpAddr::is_ipv6);
+            if mixed {
+                ips.iter()
+                    .copied()
+                    .find(|ip| routable(*ip))
+                    .or_else(|| ips.first().copied())
+            } else {
+                ips.first().copied()
+            }
+        }
         XudpEgressCapability::Nxr | XudpEgressCapability::Handoff => ips
             .iter()
             .copied()
@@ -96,7 +110,11 @@ impl VisionHandler {
         } else {
             route.resolved_ips()
         };
-        let resolved = if let Some(ip) = preferred_udp_egress_ip(capability, resolved_ips) {
+        let resolved = if let Some(ip) = preferred_udp_egress_ip(
+            capability,
+            resolved_ips,
+            crate::server::xudp::udp_route_available,
+        ) {
             match ip {
                 IpAddr::V4(v4) => crate::protocol::vless::Destination::new(
                     crate::protocol::vless::Address::Ipv4(v4),

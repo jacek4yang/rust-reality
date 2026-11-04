@@ -69,6 +69,7 @@ tests from earlier PRs:
 | NXR UDP E2E (PR3) | rust↔rust and stock Xray Client → LINE → NXR LANDING → UDP echo; LANDING source `127.0.0.2` proof; multi-dest Keep; Block → zero packets; genuine Quinn+h3 UDP/443 via NXR; `allowUdp443` policy |
 | Handoff native UDP channel (ADR 0069) | Packet codec, OPEN admission/replay/rotation, AEAD tamper and reflection, replay window, fragmentation limits and PMTU state machine (unit); loopback LINE↔LANDING with forged/replayed traffic, NAT rebinding, OPEN loss, open timeout, refused egress, black-hole and shrinking/growing paths (integration); interface MTU drop mid-session in a root network namespace; fuzz target `handoff_udp_packets` |
 | Handoff UDP E2E | rust↔rust and stock Xray → LINE → Handoff LANDING → UDP echo; LANDING source `127.0.0.2` proof; multi-dest Keep + Block zero packets; stock Xray with `geoip:private`/GeoSite rules, DNS, STUN and large datagrams (`stock_xray_handoff_native_udp_user_routing_shape`); genuine Quinn+h3 UDP/443; Native gates |
+| Dual-stack domain UDP | stock Xray, owner's SOCKS5 script order (IP literals, then domains on one association) for a `direct` and a `via-landing` user where the domain resolves AAAA-first (`stock_xray_dual_stack_domain_udp_after_ip_literals_direct_and_handoff`); Direct XUDP keeps one socket per address family and drops unroutable datagrams without closing the session |
 
 This is **not** native QUIC transport. QUIC/443 traffic, when permitted, is still
 UDP datagrams inside Vision/XUDP over the existing REALITY LINE.

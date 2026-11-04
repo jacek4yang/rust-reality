@@ -150,6 +150,32 @@ fn framed_session_errors_keep_typed_causes_without_retained_wire_bytes() {
 }
 
 #[test]
+fn xudp_failures_carry_a_stage_and_cause() {
+    let open_timeout = ConnectionRunError::Vision(VisionSessionError::Xudp(
+        XudpSessionError::HandoffUdpOpenTimeout,
+    ));
+    assert_eq!(
+        detail(&open_timeout),
+        Some(FailureDetail {
+            stage: Stage::XudpRelay,
+            cause: Cause::Timeout,
+            errno: None,
+        })
+    );
+    let io = ConnectionRunError::Vision(VisionSessionError::Xudp(XudpSessionError::Io(
+        io::Error::from_raw_os_error(101),
+    )));
+    assert_eq!(
+        detail(&io),
+        Some(FailureDetail {
+            stage: Stage::XudpRelay,
+            cause: Cause::Unreachable,
+            errno: Some(101),
+        })
+    );
+}
+
+#[test]
 fn landing_errno_and_line_rejection_have_distinct_stages() {
     let error = ConnectionRunError::Handoff(HandoffLandingError::Destination(
         DestinationConnectError::Io(io::Error::from_raw_os_error(111)),

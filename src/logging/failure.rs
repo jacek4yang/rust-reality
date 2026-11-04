@@ -30,6 +30,10 @@ pub enum FailureStage {
     LandingEgress,
     /// An authenticated session relayed application data.
     SessionRelay,
+    /// LINE authorized, opened, or relayed an XUDP (Vision UDP) association:
+    /// Direct UDP egress, the NXR UDP carrier, or the native Handoff UDP
+    /// channel toward LANDING (ADR 0069).
+    XudpRelay,
 }
 
 /// A bounded local cause. Neither OS error messages nor protocol input appear.
