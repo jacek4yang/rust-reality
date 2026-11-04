@@ -54,7 +54,13 @@ const PROVIDERS: &[(&str, &[&str])] = &[
     // The default TLS 1.3 record AEAD, behind the `ring-aead` feature.
     // `ring` is also reached through `ureq -> rustls`, so removing this use
     // would not remove the crate.
-    ("ring", &["src/protocol/reality/tls13/record.rs"]),
+    (
+        "ring",
+        &[
+            "src/protocol/reality/tls13/record.rs",
+            "src/protocol/reality/tls13/record/tests.rs",
+        ],
+    ),
     // The RustCrypto AEADs. `record.rs` is the `--no-default-features`
     // provider and the equivalence oracle; `auth.rs` (AES-256-GCM, REALITY
     // session id) and `handoff/transfer.rs` (ChaCha20-Poly1305) use them
@@ -64,6 +70,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         &[
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/tls13/record.rs",
+            "src/protocol/reality/tls13/record/tests.rs",
         ],
     ),
     (
@@ -74,6 +81,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             // ADR 0069: native Handoff UDP channel packet AEAD.
             "src/protocol/handoff/udp/wire.rs",
             "src/protocol/reality/tls13/record.rs",
+            "src/protocol/reality/tls13/record/tests.rs",
         ],
     ),
     // ChaCha12 backs the Vision padding CSPRNG. Not an AEAD use.
@@ -153,7 +161,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             "src/protocol/reality/auth.rs",
             "src/protocol/reality/client_handshake.rs",
             "src/protocol/reality/client_offer.rs",
-            "src/protocol/reality/tls13/handshake.rs",
+            "src/protocol/reality/tls13/handshake/tests.rs",
         ],
     ),
     // Post-quantum KEM. Deliberately delegated in v2 (issue #225): the
@@ -164,6 +172,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             "src/protocol/reality/client_hello.rs",
             "src/protocol/reality/client_offer.rs",
             "src/protocol/reality/tls13/handshake.rs",
+            "src/protocol/reality/tls13/handshake/tests.rs",
         ],
     ),
     // Constant-time comparison: server ClientFinished and client certificate
