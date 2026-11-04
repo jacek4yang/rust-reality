@@ -18,12 +18,13 @@ use tokio::{
 
 use crate::{
     config::node::listener::ListenFamily,
-    logging::LogEvent,
+    logging::{LogEvent, Logger},
     network::{AddressFamily, DialTuning},
     server::handoff::udp::{LandingUdpStats, bind_landing_udp, run_landing_udp},
     transport::tcp::TcpAcceptor,
 };
 
+use super::bootstrap::ListenerPlan;
 use super::{
     ProductionServer,
     error::ProductionServerError,
@@ -33,6 +34,7 @@ use super::{
         adaptive_controller, run_adaptive_controller, run_network_refresh, run_resource_monitor,
     },
     snapshot::ConnectionHandler,
+    store::RuntimeStore,
 };
 
 /// Binds every listener, spawns every task, and supervises them until the
@@ -51,61 +53,7 @@ where
     F: Future<Output = Result<(), io::Error>> + Send,
 {
     let initial = server.runtime.load();
-    let listener_capacity = server
-        .listeners
-        .iter()
-        .map(|listener| listener.addresses.len())
-        .sum();
-    let mut bound = Vec::with_capacity(listener_capacity);
-    for listener in &server.listeners {
-        let mut active_families = Vec::with_capacity(listener.addresses.len());
-        let mut unavailable_families = Vec::with_capacity(listener.addresses.len());
-        let mut last_degradable = None;
-        for address in &listener.addresses {
-            match TcpAcceptor::bind(*address).await {
-                Ok(acceptor) => {
-                    active_families.push(AddressFamily::of(address.ip()).as_str());
-                    bound.push((acceptor, *address));
-                }
-                Err(source)
-                    if listener.mode == ListenFamily::Auto
-                        && is_degradable_listener_bind_error(*address, &source) =>
-                {
-                    let family = AddressFamily::of(address.ip()).as_str();
-                    unavailable_families.push(family);
-                    emit(
-                        &initial.logger,
-                        &LogEvent::ListenerFamilyUnavailable {
-                            tag: listener.tag.clone(),
-                            family,
-                            address: *address,
-                            errno: source.raw_os_error(),
-                        },
-                    );
-                    last_degradable = Some((*address, source));
-                }
-                Err(source) => {
-                    return Err(ProductionServerError::Bind {
-                        address: *address,
-                        source,
-                    });
-                }
-            }
-        }
-        if active_families.is_empty() {
-            let (address, source) =
-                last_degradable.expect("an empty auto listener must have a degradable bind error");
-            return Err(ProductionServerError::Bind { address, source });
-        }
-        emit(
-            &initial.logger,
-            &LogEvent::ListenerTopologyActive {
-                tag: listener.tag.clone(),
-                active_families,
-                unavailable_families,
-            },
-        );
-    }
+    let bound = bind_listeners(&server.listeners, &initial.logger).await?;
 
     // Listener binding is complete, so this immutable generation may begin
     // speculative cover and fixed-peer dialing without delaying availability.
@@ -138,35 +86,15 @@ where
             // Handoff landing address, on the same port number by default.
             let udp_address =
                 SocketAddr::new(local_address.ip(), handler.udp_port(local_address.port()));
-            let socket =
-                bind_landing_udp(udp_address).map_err(|source| ProductionServerError::Bind {
-                    address: udp_address,
-                    source,
-                })?;
-            let udp_local = socket.local_addr().unwrap_or(udp_address);
-            emit(
+            spawn_landing_udp(
+                &mut listener_tasks,
+                &server.runtime,
                 &initial.logger,
-                &LogEvent::ListenerStarted {
-                    tag: format!("{}/udp", state.tag),
-                    address: udp_local,
-                },
-            );
-            let runtime = Arc::clone(&server.runtime);
-            let policy = move || {
-                let snapshot = runtime.load();
-                match &snapshot.connections.get(&address)?.handler {
-                    ConnectionHandler::Handoff(handler) => Some(handler.udp_policy()),
-                    _ => None,
-                }
-            };
-            let fd_budget = server.runtime.fd_budget.clone();
-            let stats = Arc::new(LandingUdpStats::default());
-            let shutdown = shutdown_receiver.clone();
-            let logger = initial.logger.clone();
-            listener_tasks.spawn(async move {
-                run_landing_udp(socket, policy, fd_budget, stats, logger, shutdown).await;
-                Ok(())
-            });
+                format!("{}/udp", state.tag),
+                address,
+                udp_address,
+                &shutdown_receiver,
+            )?;
         }
     }
     let monitor_task = tokio::spawn(run_resource_monitor(
@@ -259,6 +187,122 @@ where
     }
     network_refresh_task.abort();
     let _ignored = shutdown_sender.send(true);
+    drain_listener_tasks(&mut listener_tasks, result).await
+}
+
+/// Binds every planned listener address before anything is served.
+///
+/// An `auto` listener tolerates a missing address family as long as at least
+/// one family binds; any other bind failure aborts startup.
+async fn bind_listeners(
+    listeners: &[ListenerPlan],
+    logger: &Logger,
+) -> Result<Vec<(TcpAcceptor, SocketAddr)>, ProductionServerError> {
+    let listener_capacity = listeners
+        .iter()
+        .map(|listener| listener.addresses.len())
+        .sum();
+    let mut bound = Vec::with_capacity(listener_capacity);
+    for listener in listeners {
+        let mut active_families = Vec::with_capacity(listener.addresses.len());
+        let mut unavailable_families = Vec::with_capacity(listener.addresses.len());
+        let mut last_degradable = None;
+        for address in &listener.addresses {
+            match TcpAcceptor::bind(*address).await {
+                Ok(acceptor) => {
+                    active_families.push(AddressFamily::of(address.ip()).as_str());
+                    bound.push((acceptor, *address));
+                }
+                Err(source)
+                    if listener.mode == ListenFamily::Auto
+                        && is_degradable_listener_bind_error(*address, &source) =>
+                {
+                    let family = AddressFamily::of(address.ip()).as_str();
+                    unavailable_families.push(family);
+                    emit(
+                        logger,
+                        &LogEvent::ListenerFamilyUnavailable {
+                            tag: listener.tag.clone(),
+                            family,
+                            address: *address,
+                            errno: source.raw_os_error(),
+                        },
+                    );
+                    last_degradable = Some((*address, source));
+                }
+                Err(source) => {
+                    return Err(ProductionServerError::Bind {
+                        address: *address,
+                        source,
+                    });
+                }
+            }
+        }
+        if active_families.is_empty() {
+            let (address, source) =
+                last_degradable.expect("an empty auto listener must have a degradable bind error");
+            return Err(ProductionServerError::Bind { address, source });
+        }
+        emit(
+            logger,
+            &LogEvent::ListenerTopologyActive {
+                tag: listener.tag.clone(),
+                active_families,
+                unavailable_families,
+            },
+        );
+    }
+    Ok(bound)
+}
+
+/// Binds and spawns the ADR 0069 native UDP channel beside one Handoff
+/// landing address.
+fn spawn_landing_udp(
+    listener_tasks: &mut JoinSet<Result<(), io::Error>>,
+    runtime: &Arc<RuntimeStore>,
+    logger: &Logger,
+    udp_tag: String,
+    address: SocketAddr,
+    udp_address: SocketAddr,
+    shutdown: &watch::Receiver<bool>,
+) -> Result<(), ProductionServerError> {
+    let socket = bind_landing_udp(udp_address).map_err(|source| ProductionServerError::Bind {
+        address: udp_address,
+        source,
+    })?;
+    let udp_local = socket.local_addr().unwrap_or(udp_address);
+    emit(
+        logger,
+        &LogEvent::ListenerStarted {
+            tag: udp_tag,
+            address: udp_local,
+        },
+    );
+    let policy_source = Arc::clone(runtime);
+    let policy = move || {
+        let snapshot = policy_source.load();
+        match &snapshot.connections.get(&address)?.handler {
+            ConnectionHandler::Handoff(handler) => Some(handler.udp_policy()),
+            _ => None,
+        }
+    };
+    let fd_budget = runtime.fd_budget.clone();
+    let stats = Arc::new(LandingUdpStats::default());
+    let shutdown = shutdown.clone();
+    let logger = logger.clone();
+    listener_tasks.spawn(async move {
+        run_landing_udp(socket, policy, fd_budget, stats, logger, shutdown).await;
+        Ok(())
+    });
+    Ok(())
+}
+
+/// Waits for every listener task after shutdown was signalled. A listener
+/// failure is reported only when the supervision loop itself ended cleanly.
+async fn drain_listener_tasks(
+    listener_tasks: &mut JoinSet<Result<(), io::Error>>,
+    result: Result<(), ProductionServerError>,
+) -> Result<(), ProductionServerError> {
     while let Some(completed) = listener_tasks.join_next().await {
         match completed {
             Ok(Ok(())) => {}
