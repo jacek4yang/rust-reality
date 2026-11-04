@@ -69,6 +69,8 @@ const PROVIDERS: &[(&str, &[&str])] = &[
         "aes_gcm",
         &[
             "src/protocol/reality/auth.rs",
+            // Unit tests moved out of auth.rs (test-only oracle use).
+            "src/protocol/reality/auth/tests.rs",
             "src/protocol/reality/tls13/record.rs",
             "src/protocol/reality/tls13/record/tests.rs",
         ],
@@ -106,6 +108,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             // ADR 0060 Option A: NXR UDP open/session MAC digests.
             "src/protocol/nxr_udp/keys.rs",
             "src/protocol/reality/auth.rs",
+            "src/protocol/reality/auth/tests.rs",
             "src/protocol/reality/client_hello.rs",
             "src/protocol/reality/client_verify.rs",
             "src/protocol/reality/replay.rs",
@@ -134,6 +137,7 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             // ADR 0069: handoff-udp key schedule and admission subkey.
             "src/protocol/handoff/udp/wire.rs",
             "src/protocol/reality/auth.rs",
+            "src/protocol/reality/auth/tests.rs",
             "src/protocol/reality/tls13/keys.rs",
         ],
     ),
@@ -158,8 +162,8 @@ const PROVIDERS: &[(&str, &[&str])] = &[
             "src/crypto/keygen.rs",
             "src/crypto/x25519.rs",
             "src/protocol/handoff/tests.rs",
-            "src/protocol/reality/auth.rs",
-            "src/protocol/reality/client_handshake.rs",
+            "src/protocol/reality/auth/tests.rs",
+            "src/protocol/reality/client_handshake/tests.rs",
             "src/protocol/reality/client_offer.rs",
             "src/protocol/reality/tls13/handshake/tests.rs",
         ],
