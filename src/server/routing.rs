@@ -1,3 +1,12 @@
+//! Server-side routing: maps an accepted session's destination to an outbound.
+//!
+//! Data flow: `RouteContext` (user, inbound, destination) is evaluated against a
+//! `RoutingTable` compiled once from config. Rules are compiled into
+//! `CompiledRule`s with domain/IP matchers; large rule sets use `RuleIndex` to
+//! narrow candidates while preserving rule order. Domain destinations may be
+//! resolved (bounded by `MAX_RESOLVED_IPS`) when IP rules need them, producing a
+//! `ResolvedRoute`/`RouteDecision` consumed by the outbound layer.
+
 use std::{
     borrow::Cow, collections::HashMap, error::Error, fmt, io, net::IpAddr, sync::Arc,
     time::Duration,

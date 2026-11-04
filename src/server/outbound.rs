@@ -1,3 +1,11 @@
+//! Outbound registry: compiled outbounds (built-in direct/block, SOCKS5, NXR) and
+//! the connect path used after routing selects an outbound tag.
+//!
+//! Data flow: config outbounds are compiled into `OutboundRegistry` at startup
+//! (including optional warm pools). A routed session acquires an
+//! `OutboundPermit`, connects through the selected `CompiledOutbound`, and gets
+//! an `OutboundConnection` or a typed `OutboundConnectError`.
+
 use std::{
     collections::BTreeMap,
     collections::HashMap,

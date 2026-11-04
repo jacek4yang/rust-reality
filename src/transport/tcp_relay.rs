@@ -1,3 +1,11 @@
+//! Bidirectional TCP relay between an inbound and an outbound socket.
+//!
+//! `TcpRelay` picks a backend (splice where supported, otherwise pooled
+//! userspace buffers) per `TcpRelayConfig`, copies each direction with idle and
+//! write-stall timeouts, records bytes in the transfer ledger, and classifies
+//! aborts (peer reset/gone vs. stall). Pipe and buffer pools are reused across
+//! sessions.
+
 use std::{
     error::Error,
     fmt, io,
