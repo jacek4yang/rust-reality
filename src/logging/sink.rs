@@ -1,3 +1,9 @@
+//! Structured log events and their sinks.
+//!
+//! `LogEvent` enumerates every event the server emits. `Logger` filters by
+//! level, serializes a `LogRecord`, and writes to stderr, a
+//! `RotatingFile` (bounded by `MAX_MANAGED_ROTATIONS`), or nowhere.
+
 use std::{
     error::Error,
     ffi::OsString,
