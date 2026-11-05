@@ -1,3 +1,12 @@
+//! Cover-target fallback for failed REALITY handshakes.
+//!
+//! When a public inbound cannot authenticate, [`RealityFallback`] opens (or
+//! checks out) a TCP connection to the configured cover destination and relays
+//! the already-read ClientHello prefix plus the live client stream. Checkout
+//! is bounded by admission, descriptor budget, connect timeout, and session
+//! timeout; optional warm-pool sockets stay protocol-unprivileged until the
+//! fallback path takes ownership as a [`CoverConnection`].
+
 use std::{error::Error, fmt, io, sync::Arc, time::Duration};
 
 use tokio::{

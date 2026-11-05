@@ -1,3 +1,11 @@
+//! Live REALITY cover-target compatibility probes.
+//!
+//! Builds a minimal ClientHello, dials the configured destination, and reports
+//! whether the peer answers with a TLS 1.3 ServerHello that matches the cipher
+//! and key-exchange expectations. Results are machine-readable
+//! [`DestinationProbeReport`] values for `doctor` / ops tooling; this module
+//! never mutates runtime state or opens a production listener.
+
 use std::{error::Error, fmt, io, time::Duration};
 
 use serde::Serialize;
