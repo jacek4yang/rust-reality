@@ -1,3 +1,11 @@
+//! Generation-local cover handshake profile collection and cache.
+//!
+//! [`CoverProfiles`] probes the configured cover target with controlled
+//! ClientHello classes, requires consensus before publishing a
+//! `CoverHandshakePlan`, and expires or cools down unstable results. Published
+//! snapshots are read by the REALITY acceptor when shaping server flights;
+//! collectors never authenticate inbound clients themselves.
+
 use std::{
     collections::VecDeque,
     ops::Range,

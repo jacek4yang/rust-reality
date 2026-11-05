@@ -1,3 +1,11 @@
+//! Authenticated Vision session: request parse, route, outbound, and dual relays.
+//!
+//! [`VisionHandler`] sits after REALITY (or a resumed Handoff) has produced
+//! application I/O. It reads the Vision request, compiles routing against the
+//! inbound's UUID groups, selects an outbound, then runs uplink/downlink
+//! (including XUDP and Handoff splice helpers) under request and I/O timeouts.
+//! Nested-TLS padding decisions stay local to this module tree.
+
 use std::{sync::Arc, time::Duration};
 
 use crate::protocol::vless::VERSION;

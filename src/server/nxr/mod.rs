@@ -1,3 +1,11 @@
+//! NXR landing acceptor: authenticate once, connect once, then raw TCP/UDP relay.
+//!
+//! [`NxrLandingHandler`] covers the LANDING side of the LINE→LANDING hop
+//! (ADR 0060). After replay-checked authentication it either dials a TCP
+//! destination and relays half-close bytes, or hands the association to the
+//! UDP submodule. Pre-auth idle, admission, and connector errors surface as
+//! [`NxrLandingError`] without touching public REALITY listeners.
+
 use std::time::Duration;
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
