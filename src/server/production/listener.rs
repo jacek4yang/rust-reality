@@ -23,7 +23,7 @@ use crate::{
         connection::{ConnectionTaskResult, ConnectionTasks},
     },
     transport::{
-        FdPermit, UNITS_INBOUND_SOCKET,
+        FdBudget, FdPermit, FdPressure, UNITS_INBOUND_SOCKET,
         tcp::{AcceptBackoff, AcceptErrorClass, EmergencyDescriptor, TcpAcceptor},
     },
 };
@@ -36,6 +36,31 @@ use super::{
 
 /// How long a stopping server waits for live relays before aborting them.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Logs a descriptor-pressure transition observed after a permit was granted.
+///
+/// Emits `DescriptorPressureChanged` only when the state differs from the
+/// last one this listener reported, then records the new state. It never
+/// blocks and never touches the permit.
+fn report_descriptor_pressure_change(
+    runtime: &RuntimeStore,
+    fd_budget: &FdBudget,
+    last_pressure: &mut FdPressure,
+) {
+    let pressure = fd_budget.pressure();
+    if pressure != *last_pressure {
+        *last_pressure = pressure;
+        let snapshot = runtime.load();
+        emit(
+            &snapshot.logger,
+            &LogEvent::DescriptorPressureChanged {
+                fd_pressure_state: pressure.as_str(),
+                fd_units_in_use: fd_budget.in_use(),
+                fd_effective_budget: fd_budget.capacity(),
+            },
+        );
+    }
+}
 
 /// Runs one listener until shutdown, surviving every recoverable accept error.
 ///
@@ -102,19 +127,7 @@ pub(super) async fn run_listener(
             }
         };
 
-        let pressure = fd_budget.pressure();
-        if pressure != last_pressure {
-            last_pressure = pressure;
-            let snapshot = runtime.load();
-            emit(
-                &snapshot.logger,
-                &LogEvent::DescriptorPressureChanged {
-                    fd_pressure_state: pressure.as_str(),
-                    fd_units_in_use: fd_budget.in_use(),
-                    fd_effective_budget: fd_budget.capacity(),
-                },
-            );
-        }
+        report_descriptor_pressure_change(&runtime, &fd_budget, &mut last_pressure);
 
         tokio::select! {
             _ = ownership_tick.tick(), if ownership_logging => {
