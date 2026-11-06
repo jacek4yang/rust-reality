@@ -1,3 +1,9 @@
+//! Async stream reader for a complete VLESS request header.
+//!
+//! Buffers up to the version-zero size bound, then hands the contiguous
+//! bytes to [`decode_request`]. Any bytes past the header become the
+//! prefetched payload carried with [`ReadRequest`].
+
 use std::{error::Error, fmt, io};
 
 use tokio::io::{AsyncRead, AsyncReadExt};
