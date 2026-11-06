@@ -1,3 +1,8 @@
+//! Handshake message builders for EncryptedExtensions, Certificate, and Finished.
+//!
+//! Emits Xray-compatible wire bytes for the REALITY server flight, including
+//! the Ed25519 CertificateVerify over the empty Xray certificate template.
+
 use std::{error::Error, fmt};
 
 use ed25519_dalek::{Signer, SigningKey};

@@ -1,3 +1,10 @@
+//! REALITY TLS 1.3 server-flight construction and key agreement.
+//!
+//! Builds [`ServerFlight`] from the authenticated ClientHello, optional cover
+//! record shape, and server identity. Owns X25519 / P-256 / ML-KEM key-share
+//! agreement for the flight; provider ownership stays listed in
+//! `crypto_boundary`.
+
 use std::{error::Error, fmt};
 
 use ml_kem::{EncapsulationKey768, array::Array as MlKemArray};

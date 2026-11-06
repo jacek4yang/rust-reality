@@ -1,3 +1,9 @@
+//! TLS 1.3 record AEAD layer for REALITY application and handshake traffic.
+//!
+//! Seals and opens outer ApplicationData records, tracks sequence limits, and
+//! exposes exported record state for Vision splice handoff. The pure-Rust AEAD
+//! backend is always present as the equivalence oracle.
+
 use std::{error::Error, fmt};
 
 // The pure-Rust backend. It is the `--no-default-features` provider and the

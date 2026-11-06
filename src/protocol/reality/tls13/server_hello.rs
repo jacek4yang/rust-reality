@@ -1,3 +1,9 @@
+//! ServerHello parse and profile-template materialization.
+//!
+//! Distinguishes HelloRetryRequest by the fixed HRR random, extracts key-share
+//! and cipher-suite fields, and builds reusable [`ServerHelloProfileTemplate`]
+//! values for cover-profile replay.
+
 use std::{error::Error, fmt, ops::Range};
 
 use crate::protocol::reality::{ClientHello, P256_GROUP, X25519_GROUP, X25519_MLKEM768_GROUP};
