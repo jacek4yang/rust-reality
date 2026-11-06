@@ -59,51 +59,74 @@ pub(super) async fn run_resource_monitor(
         // Logical expiry was already enforced on admission. Reclaim idle
         // occupancy on the maintenance cadence as well, without shortening any
         // authentication/replay deadline or rebuilding a cache on reload.
-        runtime.replay.purge_expired();
-        for replay in runtime.listener_replays.handoff.values() {
-            replay.purge_expired();
-        }
-        for replay in runtime.listener_replays.nxr.values() {
-            replay.purge_expired();
-        }
+        purge_expired_replays(&runtime);
         emit_ownership(&runtime);
         let Some(watch) = watch.as_ref() else {
             continue;
         };
-        let fd_state = ResourcePressure::from(runtime.fd_budget.pressure());
-        if let Some(reading) = watch.sampler.sample() {
-            // An unreadable sample keeps the previous state: a monitoring gap
-            // must never itself raise or clear an alarm. A sampler that falls
-            // back to a different source reports the source actually used,
-            // so a fallback can never masquerade as the configured source.
-            if Some(reading.source) != last_source {
-                let snapshot = runtime.load();
-                emit(
-                    &snapshot.logger,
-                    &LogEvent::MemorySamplerChanged {
-                        from: last_source.unwrap_or(reading.source).as_str(),
-                        to: reading.source.as_str(),
-                    },
-                );
-                last_source = Some(reading.source);
-            }
-            last_usage = Some(reading.bytes);
-            memory_state = watch.plan.classify(memory_state, reading.bytes);
-        }
-        let effective = fd_state.max(memory_state);
-        if runtime.pressure.set(effective) {
+        sample_and_publish_pressure(
+            &runtime,
+            watch,
+            &mut memory_state,
+            &mut last_usage,
+            &mut last_source,
+        );
+    }
+}
+
+/// Purges expired entries from the process replay cache and every listener cache.
+fn purge_expired_replays(runtime: &RuntimeStore) {
+    runtime.replay.purge_expired();
+    for replay in runtime.listener_replays.handoff.values() {
+        replay.purge_expired();
+    }
+    for replay in runtime.listener_replays.nxr.values() {
+        replay.purge_expired();
+    }
+}
+
+/// Samples memory pressure and publishes FD/memory pressure transitions.
+///
+/// An unreadable sample keeps the previous state: a monitoring gap must never
+/// itself raise or clear an alarm. A sampler that falls back to a different
+/// source reports the source actually used, so a fallback can never masquerade
+/// as the configured source.
+fn sample_and_publish_pressure(
+    runtime: &RuntimeStore,
+    watch: &MemoryWatch,
+    memory_state: &mut ResourcePressure,
+    last_usage: &mut Option<u64>,
+    last_source: &mut Option<crate::runtime::machine::MemorySampleSource>,
+) {
+    let fd_state = ResourcePressure::from(runtime.fd_budget.pressure());
+    if let Some(reading) = watch.sampler.sample() {
+        if Some(reading.source) != *last_source {
             let snapshot = runtime.load();
             emit(
                 &snapshot.logger,
-                &LogEvent::ResourcePressureChanged {
-                    pressure_state: effective.as_str(),
-                    fd_pressure_state: runtime.fd_budget.pressure().as_str(),
-                    memory_bytes_in_use: last_usage,
-                    memory_pressure_enter: watch.plan.pressure_enter(),
-                    memory_critical_enter: watch.plan.critical_enter(),
+                &LogEvent::MemorySamplerChanged {
+                    from: last_source.unwrap_or(reading.source).as_str(),
+                    to: reading.source.as_str(),
                 },
             );
+            *last_source = Some(reading.source);
         }
+        *last_usage = Some(reading.bytes);
+        *memory_state = watch.plan.classify(*memory_state, reading.bytes);
+    }
+    let effective = fd_state.max(*memory_state);
+    if runtime.pressure.set(effective) {
+        let snapshot = runtime.load();
+        emit(
+            &snapshot.logger,
+            &LogEvent::ResourcePressureChanged {
+                pressure_state: effective.as_str(),
+                fd_pressure_state: runtime.fd_budget.pressure().as_str(),
+                memory_bytes_in_use: *last_usage,
+                memory_pressure_enter: watch.plan.pressure_enter(),
+                memory_critical_enter: watch.plan.critical_enter(),
+            },
+        );
     }
 }
 
