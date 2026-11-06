@@ -1,3 +1,9 @@
+//! Bounded reads of a cover target's ServerHello and full server flight.
+//!
+//! Captures the retained cover prefix and record-shape plan used to mirror
+//! the target when building a REALITY flight. Prefix size is hard-capped so
+//! fallback relay storage stays bounded.
+
 use std::{error::Error, fmt, io, time::Duration};
 
 use tokio::{
