@@ -153,27 +153,7 @@ fn emit_ownership(runtime: &RuntimeStore) {
     let (retained_pipe_pairs, retained_pipe_bytes, pipe_pair_capacity) = (None, None, None);
     let governor = &runtime.policy.governor;
     let admission = &runtime.authorities.governor;
-    let mut replay_capacity = u64::from(governor.max_replay_entries);
-    let mut replay_expiry_ms = governor
-        .replay_retention_ms
-        .max(governor.handshake_timeout_ms);
-    for (capacity, retention) in runtime
-        .listener_replays
-        .handoff
-        .values()
-        .map(|cache| cache.retention_policy())
-        .chain(
-            runtime
-                .listener_replays
-                .nxr
-                .values()
-                .map(|cache| cache.retention_policy()),
-        )
-    {
-        replay_capacity = replay_capacity.saturating_add(capacity as u64);
-        replay_expiry_ms =
-            replay_expiry_ms.max(u64::try_from(retention.as_millis()).unwrap_or(u64::MAX));
-    }
+    let replay = replay_ownership_totals(runtime, governor);
     emit(
         &snapshot.logger,
         &LogEvent::ResourceOwnership {
@@ -187,8 +167,8 @@ fn emit_ownership(runtime: &RuntimeStore) {
             fd_capacity: runtime.fd_budget.capacity(),
             pipe_pair_capacity,
             warm_socket_capacity: runtime.authorities.warm_pools.capacity(),
-            replay_capacity,
-            replay_expiry_ms,
+            replay_capacity: replay.capacity,
+            replay_expiry_ms: replay.expiry_ms,
             retirement_deadline_ms: governor
                 .fallback_timeout_ms
                 .max(governor.handshake_timeout_ms)
@@ -201,18 +181,7 @@ fn emit_ownership(runtime: &RuntimeStore) {
             generation: snapshot.generation,
             admitted_connections: admission.in_flight(crate::runtime::AdmissionKind::Connection),
             replay_entries: admission.in_flight(crate::runtime::AdmissionKind::ReplayEntry)
-                + runtime
-                    .listener_replays
-                    .handoff
-                    .values()
-                    .map(|cache| cache.entry_count() as u64)
-                    .sum::<u64>()
-                + runtime
-                    .listener_replays
-                    .nxr
-                    .values()
-                    .map(|cache| cache.entry_count() as u64)
-                    .sum::<u64>(),
+                + replay.entries,
             fd_units_in_use: runtime.fd_budget.in_use(),
             retained_pipe_pairs,
             retained_pipe_bytes,
@@ -220,6 +189,57 @@ fn emit_ownership(runtime: &RuntimeStore) {
             warm_connecting,
         },
     );
+}
+
+/// Aggregated replay capacity, expiry, and live entry counts for ownership logs.
+struct ReplayOwnershipTotals {
+    capacity: u64,
+    expiry_ms: u64,
+    entries: u64,
+}
+
+/// Sums process and per-listener replay capacity, expiry, and live entries.
+fn replay_ownership_totals(
+    runtime: &RuntimeStore,
+    governor: &crate::runtime::policy::ResourceGovernorPolicy,
+) -> ReplayOwnershipTotals {
+    let mut capacity = u64::from(governor.max_replay_entries);
+    let mut expiry_ms = governor
+        .replay_retention_ms
+        .max(governor.handshake_timeout_ms);
+    for (cache_capacity, retention) in runtime
+        .listener_replays
+        .handoff
+        .values()
+        .map(|cache| cache.retention_policy())
+        .chain(
+            runtime
+                .listener_replays
+                .nxr
+                .values()
+                .map(|cache| cache.retention_policy()),
+        )
+    {
+        capacity = capacity.saturating_add(cache_capacity as u64);
+        expiry_ms = expiry_ms.max(u64::try_from(retention.as_millis()).unwrap_or(u64::MAX));
+    }
+    let entries = runtime
+        .listener_replays
+        .handoff
+        .values()
+        .map(|cache| cache.entry_count() as u64)
+        .sum::<u64>()
+        + runtime
+            .listener_replays
+            .nxr
+            .values()
+            .map(|cache| cache.entry_count() as u64)
+            .sum::<u64>();
+    ReplayOwnershipTotals {
+        capacity,
+        expiry_ms,
+        entries,
+    }
 }
 
 /// Builds the adaptive soft-ceiling controller when the tuning mode selects one.
