@@ -182,20 +182,7 @@ impl RuntimeSnapshot {
                 logger: logger.clone(),
             },
         });
-        let mut connections = HashMap::new();
-        let bound: Vec<SocketAddr> = config
-            .listeners()
-            .iter()
-            .flat_map(ListenerConfig::bind_addresses)
-            .collect();
-        connections
-            .try_reserve(bound.len())
-            .map_err(|_| RuntimeUpdateError::Unavailable)?;
-        for address in bound {
-            if connections.insert(address, Arc::clone(&runtime)).is_some() {
-                return Err(RuntimeUpdateError::DuplicateListener(address));
-            }
-        }
+        let connections = bind_connection_map(&config, &runtime)?;
 
         Ok(Self {
             generation,
@@ -345,6 +332,31 @@ pub(super) enum ConnectionHandler {
     },
     Nxr(NxrLandingHandler),
     Handoff(HandoffLandingHandler),
+}
+
+/// Maps every bound listener address of `config` to the shared `runtime`.
+///
+/// Fails with `Unavailable` if the map cannot reserve capacity and with
+/// `DuplicateListener` on the first address bound twice.
+fn bind_connection_map(
+    config: &NodeConfig,
+    runtime: &Arc<ConnectionRuntime>,
+) -> Result<HashMap<SocketAddr, Arc<ConnectionRuntime>>, RuntimeUpdateError> {
+    let mut connections = HashMap::new();
+    let bound: Vec<SocketAddr> = config
+        .listeners()
+        .iter()
+        .flat_map(ListenerConfig::bind_addresses)
+        .collect();
+    connections
+        .try_reserve(bound.len())
+        .map_err(|_| RuntimeUpdateError::Unavailable)?;
+    for address in bound {
+        if connections.insert(address, Arc::clone(runtime)).is_some() {
+            return Err(RuntimeUpdateError::DuplicateListener(address));
+        }
+    }
+    Ok(connections)
 }
 
 pub(super) fn listener_addresses(node: &NodeConfig) -> Vec<SocketAddr> {
