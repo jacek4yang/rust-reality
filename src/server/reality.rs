@@ -1,3 +1,12 @@
+//! Public VLESS + REALITY + Vision acceptor for one inbound listener.
+//!
+//! [`RealityAcceptor`] reads ClientHello, authenticates against the compiled
+//! identity set, optionally shapes the cover server flight from a cover
+//! profile snapshot, and either returns [`RealityAcceptOutcome::Established`]
+//! application I/O or hands the same bytes to [`RealityFallback`]. Replay,
+//! admission, and handshake timeouts are enforced before Vision/session code
+//! sees the stream.
+
 use std::{
     error::Error,
     fmt, io,

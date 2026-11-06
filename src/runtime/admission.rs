@@ -1,3 +1,11 @@
+//! Bounded admission for unauthenticated and setup-path work.
+//!
+//! [`ResourceGovernor`] hands out [`AdmissionPermit`]s per [`AdmissionKind`]
+//! (connection, pre-auth idle, handshake, fallback, crypto, replay, DNS) and a
+//! separate direct-outbound barrier. Denials are immediate [`AdmissionDenied`]
+//! values (never waits), so callers can fail closed under pressure without
+//! stalling the accept loop. Dropping a permit returns capacity.
+
 use std::{
     error::Error,
     fmt,
