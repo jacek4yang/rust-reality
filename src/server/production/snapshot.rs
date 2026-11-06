@@ -63,114 +63,32 @@ impl RuntimeSnapshot {
         // The role also decides what has to be built at all: only an entry
         // node compiles routing, and only routing can need geo assets.
         let (handler, outbounds) = match &config {
-            NodeConfig::Entry(entry) => {
-                let assets = Arc::new(AssetSnapshot::load_generation(entry, generation)?);
-                let vision = VisionHandler::from_config_with_pressure(
-                    entry,
-                    policy,
-                    assets,
-                    tcp_relay.clone(),
-                    pressure,
-                    authorities.direct_barrier.clone(),
-                    authorities.governor.clone(),
-                    authorities.network_environment.clone(),
-                    generation,
-                    authorities.warm_pools.clone(),
-                )?;
-                let outbounds = vision.outbounds().clone();
-                let reality = RealityAcceptor::from_inbound_with_warm_pool(
-                    entry,
-                    authorities.governor.clone(),
-                    &policy.governor,
-                    replay.clone(),
-                    tcp_relay.clone(),
-                    &network,
-                    authorities.network_environment.clone(),
-                    generation,
-                    authorities.warm_pools.clone(),
-                    &policy.warm_connections,
-                )?;
-                (
-                    ConnectionHandler::Public {
-                        reality: Box::new(reality),
-                        vision,
-                    },
-                    outbounds,
-                )
-            }
+            NodeConfig::Entry(entry) => compile_entry_handler(
+                entry,
+                policy,
+                generation,
+                &replay,
+                &tcp_relay,
+                pressure,
+                authorities,
+                &network,
+            )?,
             NodeConfig::Client(_) => {
                 return Err(RuntimeUpdateError::UnsupportedRole("client"));
             }
-            NodeConfig::Landing(landing) => {
-                let outbounds = OutboundRegistry::with_warm_pools(
-                    &landing.outbounds.clone().unwrap_or_default(),
-                    authorities.direct_barrier.clone(),
-                    Duration::from_millis(policy.governor.connect_timeout_ms),
-                    tcp_relay.fd_budget().clone(),
-                    &network,
-                    authorities.network_environment.clone(),
-                    generation,
-                    authorities.warm_pools.clone(),
-                    &policy.warm_connections,
-                );
-                let address = canonical_listener_address(&config);
-                let io_timeout = crate::io_activity::WRITE_STALL_TIMEOUT;
-                let handler = match &landing.landing {
-                    LandingProtocol::Nxr(settings) => {
-                        let replay = listener_replays
-                            .nxr
-                            .get(&address)
-                            .cloned()
-                            .ok_or(RuntimeUpdateError::MissingNxrReplay(address))?;
-                        ConnectionHandler::Nxr(NxrLandingHandler::from_landing_with_replay(
-                            settings,
-                            replay,
-                            tcp_relay.clone(),
-                            io_timeout,
-                            &network,
-                            authorities.network_environment.clone(),
-                            authorities.governor.clone(),
-                            pressure.clone(),
-                            pre_auth_generation.clone(),
-                        )?)
-                    }
-                    LandingProtocol::Handoff(settings) => {
-                        let replay = listener_replays
-                            .handoff
-                            .get(&address)
-                            .cloned()
-                            .ok_or(RuntimeUpdateError::MissingHandoffReplay(address))?;
-                        if settings.rotation_window_is_open() {
-                            // One warning per generation, startup and reload
-                            // alike: an open rotation window voids the
-                            // forward-secrecy bound until the retired keys drop.
-                            emit(
-                                &logger,
-                                &LogEvent::HandoffRotationWindowOpen {
-                                    tag: "landing".to_owned(),
-                                    previous_pre_shared_keys: settings.previous_psks().len(),
-                                    previous_private_keys: settings.previous_private_keys().len(),
-                                },
-                            );
-                        }
-                        ConnectionHandler::Handoff(HandoffLandingHandler::from_landing_with_replay(
-                            settings,
-                            Some(landing.egress())
-                                .filter(|egress| *egress != crate::config::node::BUILTIN_DIRECT),
-                            replay,
-                            tcp_relay.clone(),
-                            io_timeout,
-                            &outbounds,
-                            &network,
-                            authorities.network_environment.clone(),
-                            authorities.governor.clone(),
-                            pressure.clone(),
-                            pre_auth_generation.clone(),
-                        )?)
-                    }
-                };
-                (handler, outbounds)
-            }
+            NodeConfig::Landing(landing) => compile_landing_handler(
+                landing,
+                &config,
+                policy,
+                generation,
+                &logger,
+                listener_replays,
+                &tcp_relay,
+                pressure,
+                authorities,
+                &network,
+                &pre_auth_generation,
+            )?,
         };
 
         let runtime = Arc::new(ConnectionRuntime {
@@ -332,6 +250,144 @@ pub(super) enum ConnectionHandler {
     },
     Nxr(NxrLandingHandler),
     Handoff(HandoffLandingHandler),
+}
+
+/// Builds the public Entry handler and the outbound registry it owns.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors RuntimeSnapshot::compile authority wiring"
+)]
+fn compile_entry_handler(
+    entry: &crate::config::node::EntryConfig,
+    policy: &EffectivePolicy,
+    generation: u64,
+    replay: &ReplayCache,
+    tcp_relay: &TcpRelay,
+    pressure: &PressureGauge,
+    authorities: &ProcessAuthorities,
+    network: &crate::config::node::network::NetworkConfig,
+) -> Result<(ConnectionHandler, OutboundRegistry), RuntimeUpdateError> {
+    let assets = Arc::new(AssetSnapshot::load_generation(entry, generation)?);
+    let vision = VisionHandler::from_config_with_pressure(
+        entry,
+        policy,
+        assets,
+        tcp_relay.clone(),
+        pressure,
+        authorities.direct_barrier.clone(),
+        authorities.governor.clone(),
+        authorities.network_environment.clone(),
+        generation,
+        authorities.warm_pools.clone(),
+    )?;
+    let outbounds = vision.outbounds().clone();
+    let reality = RealityAcceptor::from_inbound_with_warm_pool(
+        entry,
+        authorities.governor.clone(),
+        &policy.governor,
+        replay.clone(),
+        tcp_relay.clone(),
+        network,
+        authorities.network_environment.clone(),
+        generation,
+        authorities.warm_pools.clone(),
+        &policy.warm_connections,
+    )?;
+    Ok((
+        ConnectionHandler::Public {
+            reality: Box::new(reality),
+            vision,
+        },
+        outbounds,
+    ))
+}
+
+/// Builds the Landing handler (NXR or Handoff) and its outbound registry.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors RuntimeSnapshot::compile authority wiring"
+)]
+fn compile_landing_handler(
+    landing: &crate::config::node::LandingConfig,
+    config: &NodeConfig,
+    policy: &EffectivePolicy,
+    generation: u64,
+    logger: &Logger,
+    listener_replays: &ListenerReplays,
+    tcp_relay: &TcpRelay,
+    pressure: &PressureGauge,
+    authorities: &ProcessAuthorities,
+    network: &crate::config::node::network::NetworkConfig,
+    pre_auth_generation: &PreAuthGeneration,
+) -> Result<(ConnectionHandler, OutboundRegistry), RuntimeUpdateError> {
+    let outbounds = OutboundRegistry::with_warm_pools(
+        &landing.outbounds.clone().unwrap_or_default(),
+        authorities.direct_barrier.clone(),
+        Duration::from_millis(policy.governor.connect_timeout_ms),
+        tcp_relay.fd_budget().clone(),
+        network,
+        authorities.network_environment.clone(),
+        generation,
+        authorities.warm_pools.clone(),
+        &policy.warm_connections,
+    );
+    let address = canonical_listener_address(config);
+    let io_timeout = crate::io_activity::WRITE_STALL_TIMEOUT;
+    let handler = match &landing.landing {
+        LandingProtocol::Nxr(settings) => {
+            let replay = listener_replays
+                .nxr
+                .get(&address)
+                .cloned()
+                .ok_or(RuntimeUpdateError::MissingNxrReplay(address))?;
+            ConnectionHandler::Nxr(NxrLandingHandler::from_landing_with_replay(
+                settings,
+                replay,
+                tcp_relay.clone(),
+                io_timeout,
+                network,
+                authorities.network_environment.clone(),
+                authorities.governor.clone(),
+                pressure.clone(),
+                pre_auth_generation.clone(),
+            )?)
+        }
+        LandingProtocol::Handoff(settings) => {
+            let replay = listener_replays
+                .handoff
+                .get(&address)
+                .cloned()
+                .ok_or(RuntimeUpdateError::MissingHandoffReplay(address))?;
+            if settings.rotation_window_is_open() {
+                // One warning per generation, startup and reload
+                // alike: an open rotation window voids the
+                // forward-secrecy bound until the retired keys drop.
+                emit(
+                    logger,
+                    &LogEvent::HandoffRotationWindowOpen {
+                        tag: "landing".to_owned(),
+                        previous_pre_shared_keys: settings.previous_psks().len(),
+                        previous_private_keys: settings.previous_private_keys().len(),
+                    },
+                );
+            }
+            ConnectionHandler::Handoff(HandoffLandingHandler::from_landing_with_replay(
+                settings,
+                Some(landing.egress())
+                    .filter(|egress| *egress != crate::config::node::BUILTIN_DIRECT),
+                replay,
+                tcp_relay.clone(),
+                io_timeout,
+                &outbounds,
+                network,
+                authorities.network_environment.clone(),
+                authorities.governor.clone(),
+                pressure.clone(),
+                pre_auth_generation.clone(),
+            )?)
+        }
+    };
+    Ok((handler, outbounds))
 }
 
 /// Maps every bound listener address of `config` to the shared `runtime`.
