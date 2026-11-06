@@ -1,3 +1,9 @@
+//! Process-scoped REALITY ClientHello replay cache.
+//!
+//! Reservations are taken before ClientFinished and committed only after the
+//! handshake completes. Sharded storage, capacity admission, and expiry purge
+//! keep the cache bounded without shortening any authentication deadline.
+
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
