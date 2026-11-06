@@ -180,49 +180,19 @@ pub(super) async fn run_listener(
                         // created, so holding it would shrink capacity on every
                         // failed accept until the listener starved itself.
                         drop(fd_permit);
-                        let class = AcceptErrorClass::classify(&error);
-                        if class.is_fatal() {
-                            return Err(io::Error::new(
-                                error.kind(),
-                                format!(
-                                    "listener {address} cannot accept: {class} \
-                                     (errno {errno:?}): {error}",
-                                    class = class.as_str(),
-                                    errno = error.raw_os_error(),
-                                ),
-                            ));
-                        }
-                        if class == AcceptErrorClass::DescriptorPressure
-                            && let Some(reserve) = reserve.as_mut()
+                        if handle_accept_error(
+                            &runtime,
+                            &acceptor,
+                            address,
+                            error,
+                            &mut reserve,
+                            &mut backoff,
+                            &mut shutdown,
+                        )
+                        .await?
+                            == AcceptReadiness::Shutdown
                         {
-                            recover_from_descriptor_pressure(&acceptor, reserve).await;
-                        }
-                        let delay = if class.needs_backoff() {
-                            backoff.next_delay()
-                        } else {
-                            Duration::ZERO
-                        };
-                        if class != AcceptErrorClass::WouldBlock {
-                            let snapshot = runtime.load();
-                            emit(
-                                &snapshot.logger,
-                                &LogEvent::AcceptErrorRecovered {
-                                    address,
-                                    accept_error_class: class.as_str(),
-                                    errno: error.raw_os_error(),
-                                    accept_backoff_ms: backoff.current_ms(),
-                                },
-                            );
-                        }
-                        if !delay.is_zero() {
-                            tokio::select! {
-                                changed = shutdown.changed() => {
-                                    if changed.is_err() || *shutdown.borrow() {
-                                        break;
-                                    }
-                                }
-                                () = time::sleep(delay) => {}
-                            }
+                            break;
                         }
                     }
                 }
@@ -241,6 +211,71 @@ pub(super) async fn run_listener(
 enum AcceptReadiness {
     Ready,
     Shutdown,
+}
+
+/// Classifies one accept failure, recovers when possible, and waits out backoff.
+///
+/// The inbound FD permit must already have been dropped by the caller. Fatal
+/// classes become `Err` with the same message `run_listener` previously built
+/// inline. Recoverable classes may drain one backlog entry through the
+/// emergency reserve, emit `AcceptErrorRecovered` (except `WouldBlock`), and
+/// sleep the backoff delay while remaining shutdown-cancellable. Returns
+/// [`AcceptReadiness::Shutdown`] when shutdown wins that wait; otherwise
+/// [`AcceptReadiness::Ready`] so the accept loop continues.
+async fn handle_accept_error(
+    runtime: &RuntimeStore,
+    acceptor: &TcpAcceptor,
+    address: SocketAddr,
+    error: io::Error,
+    reserve: &mut Option<EmergencyDescriptor>,
+    backoff: &mut AcceptBackoff,
+    shutdown: &mut watch::Receiver<bool>,
+) -> io::Result<AcceptReadiness> {
+    let class = AcceptErrorClass::classify(&error);
+    if class.is_fatal() {
+        return Err(io::Error::new(
+            error.kind(),
+            format!(
+                "listener {address} cannot accept: {class} \
+                                     (errno {errno:?}): {error}",
+                class = class.as_str(),
+                errno = error.raw_os_error(),
+            ),
+        ));
+    }
+    if class == AcceptErrorClass::DescriptorPressure
+        && let Some(reserve) = reserve.as_mut()
+    {
+        recover_from_descriptor_pressure(acceptor, reserve).await;
+    }
+    let delay = if class.needs_backoff() {
+        backoff.next_delay()
+    } else {
+        Duration::ZERO
+    };
+    if class != AcceptErrorClass::WouldBlock {
+        let snapshot = runtime.load();
+        emit(
+            &snapshot.logger,
+            &LogEvent::AcceptErrorRecovered {
+                address,
+                accept_error_class: class.as_str(),
+                errno: error.raw_os_error(),
+                accept_backoff_ms: backoff.current_ms(),
+            },
+        );
+    }
+    if !delay.is_zero() {
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return Ok(AcceptReadiness::Shutdown);
+                }
+            }
+            () = time::sleep(delay) => {}
+        }
+    }
+    Ok(AcceptReadiness::Ready)
 }
 
 /// Pauses admission without pausing completed-task reclamation or shutdown.
