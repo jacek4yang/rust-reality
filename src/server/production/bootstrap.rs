@@ -38,7 +38,9 @@ use crate::{
 use super::{
     error::{ProductionServerError, RuntimeUpdateError},
     event::{backend_statuses, emit},
-    resources::{derive_fd_budget, maximum_warm_pool_count, resolve_startup_resource_mode},
+    resources::{
+        ResourceStartup, derive_fd_budget, maximum_warm_pool_count, resolve_startup_resource_mode,
+    },
     snapshot::{RuntimeSnapshot, canonical_listener_address},
     store::{ListenerReplays, ProcessAuthorities, RuntimeStore},
 };
@@ -168,6 +170,46 @@ pub(super) fn build(
             addresses: listener.bind_addresses(),
         })
         .collect();
+    emit_startup_report(
+        &initial,
+        &authorities,
+        &startup,
+        resource_mode,
+        &topology,
+        &tcp_relay,
+    );
+    Ok((
+        listeners,
+        Arc::new(RuntimeStore {
+            current: ArcSwap::from(Arc::new(initial)),
+            policy,
+            replay,
+            listener_replays,
+            tcp_relay,
+            fd_budget: startup.budget,
+            authorities,
+            pressure,
+            memory: startup.memory,
+            generation: AtomicU64::new(0),
+            update: Mutex::new(()),
+        }),
+    ))
+}
+
+/// Writes the startup report for the first published generation.
+///
+/// The events are emitted in a fixed order — server starting, outbound
+/// network, machine report (dedicated mode only), runtime plan, descriptor
+/// budget, relay backends, configuration published — and nothing here can
+/// fail or change state; it only reads what [`build`] already decided.
+fn emit_startup_report(
+    initial: &RuntimeSnapshot,
+    authorities: &ProcessAuthorities,
+    startup: &ResourceStartup,
+    resource_mode: ResourceMode,
+    topology: &plan::RuntimeTopology,
+    tcp_relay: &TcpRelay,
+) {
     emit(&initial.logger, &LogEvent::ServerStarting);
     let network = authorities.network_environment.startup_snapshot();
     emit(
@@ -240,22 +282,6 @@ pub(super) fn build(
             generation: initial.generation,
         },
     );
-    Ok((
-        listeners,
-        Arc::new(RuntimeStore {
-            current: ArcSwap::from(Arc::new(initial)),
-            policy,
-            replay,
-            listener_replays,
-            tcp_relay,
-            fd_budget: startup.budget,
-            authorities,
-            pressure,
-            memory: startup.memory,
-            generation: AtomicU64::new(0),
-            update: Mutex::new(()),
-        }),
-    ))
 }
 
 /// Builds the Handoff replay cache for every address a landing binds.
