@@ -1,3 +1,9 @@
+//! Cardinality-adaptive UUID map for configured users.
+//!
+//! Small maps stay a sorted contiguous table; larger ones switch to a hashed
+//! map at the measured crossover. Production configs already carry unique
+//! UUIDs; the defensive de-duplication only preserves library-caller behavior.
+
 use std::collections::HashMap;
 
 use crate::protocol::vless::UserId;
