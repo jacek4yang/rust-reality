@@ -30,7 +30,7 @@ use crate::{
         DirectBarrier, PressureGauge, ResourceGovernor,
         machine::MachineReport,
         plan,
-        policy::{RelayPolicy, ResourceMode, resolve_resource_mode},
+        policy::{EffectivePolicy, RelayPolicy, ResourceMode, resolve_resource_mode},
     },
     transport::tcp_relay::{TcpRelay, TcpRelayConfig},
 };
@@ -119,18 +119,7 @@ pub(super) fn build(
     // Process-lifetime authorities: reload generations swap routing and
     // protocol snapshots only — admission ceilings and the direct-dial
     // barrier must never multiply while old sessions hold old permits.
-    let authorities = ProcessAuthorities {
-        governor: ResourceGovernor::with_pressure(&policy.governor, pressure.clone()),
-        direct_barrier: DirectBarrier::with_pressure(&policy.direct_barrier, pressure.clone()),
-        warm_pools: WarmPoolAuthority::new(
-            &policy.warm_connections,
-            maximum_warm_pool_count(&node),
-            pressure.clone(),
-        ),
-        network_environment: NetworkEnvironment::from_config(&DialTuning::for_policy(
-            node.network().ip(),
-        )),
-    };
+    let authorities = build_process_authorities(&node, &policy, &pressure);
     // Process-lifetime shared resolver: the configured DNS backend and the
     // admission governor apply to every connector-side lookup. First-wins
     // keeps reload generations on the one installed resolver.
@@ -194,6 +183,30 @@ pub(super) fn build(
             update: Mutex::new(()),
         }),
     ))
+}
+
+/// Builds the process-lifetime authorities shared by every generation.
+///
+/// Reload generations borrow these values; they are never reconstructed, so
+/// admission ceilings and the direct-dial barrier cannot multiply while old
+/// sessions still hold old permits.
+fn build_process_authorities(
+    node: &NodeConfig,
+    policy: &EffectivePolicy,
+    pressure: &PressureGauge,
+) -> ProcessAuthorities {
+    ProcessAuthorities {
+        governor: ResourceGovernor::with_pressure(&policy.governor, pressure.clone()),
+        direct_barrier: DirectBarrier::with_pressure(&policy.direct_barrier, pressure.clone()),
+        warm_pools: WarmPoolAuthority::new(
+            &policy.warm_connections,
+            maximum_warm_pool_count(node),
+            pressure.clone(),
+        ),
+        network_environment: NetworkEnvironment::from_config(&DialTuning::for_policy(
+            node.network().ip(),
+        )),
+    }
 }
 
 /// Writes the startup report for the first published generation.
