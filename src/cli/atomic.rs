@@ -1,5 +1,5 @@
-// Crash-safe output: one complete owner-only file through a same-directory
-// temporary and rename.
+//! Crash-safe output: one complete owner-only file through a same-directory
+//! temporary and rename.
 
 use std::{
     fs::{File, OpenOptions},

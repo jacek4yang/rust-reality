@@ -1,13 +1,13 @@
-// CLI surface model: argument types, the command tree, and the error type.
-//
-// This module owns WHAT the command line looks like; `commands` owns what the
-// commands DO and `atomic` owns the crash-safe output writer.
-//
-// Every top-level command is a job an operator intentionally does. A command
-// does not exist because an internal subsystem can expose one: benchmark
-// suites, profiling, repository checks, and documentation verification live in
-// `cargo dev`, because the deployed daemon is not the project's engineering
-// toolbox.
+//! CLI surface model: argument types, the command tree, and the error type.
+//!
+//! This module owns WHAT the command line looks like; `commands` owns what the
+//! commands DO and `atomic` owns the crash-safe output writer.
+//!
+//! Every top-level command is a job an operator intentionally does. A command
+//! does not exist because an internal subsystem can expose one: benchmark
+//! suites, profiling, repository checks, and documentation verification live in
+//! `cargo dev`, because the deployed daemon is not the project's engineering
+//! toolbox.
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::OnceLock};
 

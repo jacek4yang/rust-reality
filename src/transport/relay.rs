@@ -1,3 +1,6 @@
+//! Transport-neutral relay accounting: the byte counts a completed
+//! bidirectional relay reports to its caller.
+
 /// Byte counts produced by a completed bidirectional relay.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayStats {

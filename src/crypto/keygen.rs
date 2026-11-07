@@ -1,3 +1,10 @@
+//! Operator key-material generation: UUIDs, REALITY short IDs, X25519 key
+//! pairs, and node keys.
+//!
+//! Every value draws from the single process entropy owner in
+//! `crypto::entropy`; secrets are returned through `SecretString` and
+//! intermediate buffers are zeroized.
+
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine as _};
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};

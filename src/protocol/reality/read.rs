@@ -1,3 +1,11 @@
+//! Socket-side ClientHello assembly for the REALITY server.
+//!
+//! Reads TLS handshake records under a deadline and size/record bounds,
+//! reassembles one ClientHello, and keeps the exact consumed wire prefix (plus
+//! any same-record handshake remainder on success) so callers such as the
+//! fallback path can forward the bytes unchanged. Read errors also return the
+//! consumed prefix.
+
 use std::{error::Error, fmt, io, time::Duration};
 
 use tokio::{
