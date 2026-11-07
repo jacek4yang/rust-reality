@@ -1,3 +1,9 @@
+//! TLS 1.3 key schedule, traffic secrets, and transcript hashing.
+//!
+//! Implements the cipher-suite table, HKDF-Expand-Label derivations, and the
+//! Finished verify-data helpers used by the dedicated REALITY state machine.
+//! Secrets are zeroized on drop.
+
 use std::{error::Error, fmt};
 
 use hkdf::Hkdf;
