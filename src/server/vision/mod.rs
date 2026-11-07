@@ -8,6 +8,9 @@
 
 use std::{sync::Arc, time::Duration};
 
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+
+use crate::protocol::reality::tls13::{TlsApplicationReader, TlsApplicationWriter};
 use crate::protocol::vless::VERSION;
 
 use super::{
@@ -257,7 +260,7 @@ impl VisionHandler {
     ) -> Result<VisionRelayStats, VisionSessionError> {
         let client_random = *established.client_random();
         let (application, inbound_tag, authenticated_user_id) = established.into_parts();
-        let (mut client_reader, mut client_writer) = application.into_owned_split();
+        let (mut client_reader, client_writer) = application.into_owned_split();
         let request = read_vision_request(
             &mut client_reader,
             authenticated_user_id,
@@ -281,6 +284,29 @@ impl VisionHandler {
                 )
                 .await;
         }
+        self.handle_tcp_session(
+            client_reader,
+            client_writer,
+            inbound_tag.as_ref(),
+            request,
+            client_random,
+        )
+        .await
+    }
+
+    /// Routes, dials, and relays one authenticated Vision TCP session.
+    ///
+    /// Handoff outbounds transfer before any client-visible response; Direct
+    /// and NXR paths write the fixed VLESS response header and join the two
+    /// relay directions under one session coordinator.
+    async fn handle_tcp_session(
+        &self,
+        client_reader: TlsApplicationReader<OwnedReadHalf>,
+        mut client_writer: TlsApplicationWriter<OwnedWriteHalf>,
+        inbound_tag: &str,
+        request: AcceptedVisionRequest,
+        client_random: [u8; 32],
+    ) -> Result<VisionRelayStats, VisionSessionError> {
         let AcceptedVisionRequest::Tcp {
             user_id,
             destination,
@@ -294,7 +320,7 @@ impl VisionHandler {
             .routing
             .select_with_dns(
                 user_id,
-                inbound_tag.as_ref(),
+                inbound_tag,
                 &destination,
                 self.dns_strategy,
                 self.dns_timeout,
@@ -329,7 +355,7 @@ impl VisionHandler {
                             prefetched,
                         },
                         client_random,
-                        inbound_tag.as_ref(),
+                        inbound_tag,
                     )
                     .await;
             }
