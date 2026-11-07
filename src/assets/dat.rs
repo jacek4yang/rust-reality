@@ -1,6 +1,6 @@
-// GeoIP/GeoSite dat-file domain model: wire-format parsing and the compiled
-// matcher structures. Pure data-in/data-out; I/O, caching, and ownership of
-// published snapshots live in the parent module.
+//! GeoIP/GeoSite dat-file domain model: wire-format parsing and the compiled
+//! matcher structures. Pure data-in/data-out; I/O, caching, and ownership of
+//! published snapshots live in the parent module.
 
 use std::{
     borrow::Cow,

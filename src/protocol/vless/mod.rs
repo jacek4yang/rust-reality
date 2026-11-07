@@ -1,3 +1,10 @@
+//! VLESS protocol codec: request header decode and read, client-side wire
+//! operations, addons, response header encode and write, authenticated Vision
+//! field validation, Vision padding, and XUDP framing.
+//!
+//! This module declares the submodules and re-exports their public surface;
+//! the only items defined here are feature-gated fuzzing entry points.
+
 mod addons;
 mod client;
 mod decode;

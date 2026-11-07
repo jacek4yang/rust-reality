@@ -1,3 +1,11 @@
+//! TLS 1.3 ClientHello parsing for the REALITY server.
+//!
+//! Parses one bounded ClientHello handshake message, exposes the session ID
+//! window that carries REALITY authentication, and decodes the supported key
+//! shares (X25519, P-256, X25519MLKEM768). Also derives the normalized
+//! ClientHello class used for cover-profile matching. Pure parsing; socket
+//! reads live in `read`.
+
 use std::{error::Error, fmt, ops::Range, sync::Arc};
 
 use crate::crypto::{EphemeralP256Key, EphemeralX25519Key};

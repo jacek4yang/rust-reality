@@ -1,4 +1,4 @@
-// Command implementations: the behavior behind each CLI subcommand.
+//! Command implementations: the behavior behind each CLI subcommand.
 
 use std::{
     fmt,
