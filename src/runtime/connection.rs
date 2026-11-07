@@ -1,3 +1,11 @@
+//! Connection-task bookkeeping for the production accept loops.
+//!
+//! [`ConnectionTasks`] owns a `JoinSet` of per-connection futures and turns
+//! each completion into a [`ConnectionTaskResult`] tagged with the peer
+//! address. Listeners reap finished tasks on every accept wake so storage
+//! never accumulates past the active set, and shutdown drains the set before
+//! the accept loop exits.
+
 use std::{future::Future, io, net::SocketAddr};
 
 use tokio::task::{JoinError, JoinSet};

@@ -1,3 +1,10 @@
+//! Native eXpress Relay (NXR) request framing and authentication.
+//!
+//! This module owns the on-wire open request: header layout, AEAD seal/open,
+//! and the authenticated destination decode used by LANDING. TCP and UDP
+//! sessions reuse the same request shape; higher layers in `server::nxr`
+//! decide how the resulting association is served.
+
 mod error;
 mod keys;
 mod layout;
