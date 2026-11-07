@@ -426,73 +426,140 @@ where
         return Err(DestinationConnectError::NoAddressesForPolicy);
     }
     if addresses.len() == 1 {
-        let address = addresses[0];
-        let permit = match fd_budget.as_ref() {
-            Some(budget) => Some(
-                budget
-                    .try_acquire(UNITS_OUTBOUND_SOCKET)
-                    .ok_or(DestinationConnectError::DescriptorBudget)?,
-            ),
-            None => None,
-        };
-        let started = Instant::now();
-        let outcome = time::timeout_at(deadline, connector(address)).await;
-        return match outcome {
-            Ok(Ok(value)) => {
-                planner.record_success(AddressFamily::of(address.ip()), started.elapsed());
-                Ok((value, permit))
-            }
-            Ok(Err(error)) => {
-                planner.environment().record_connect_error(
-                    AddressFamily::of(address.ip()),
-                    &error,
-                    planner.hard_failure_penalty(),
-                );
-                Err(DestinationConnectError::Io(error))
-            }
-            Err(_) => Err(DestinationConnectError::TimedOut { timeout }),
-        };
+        return connect_one_address(
+            planner,
+            addresses[0],
+            deadline,
+            timeout,
+            fd_budget,
+            connector,
+        )
+        .await;
     }
     let first_family = AddressFamily::of(addresses[0].ip());
     if addresses
         .iter()
         .all(|address| AddressFamily::of(address.ip()) == first_family)
     {
-        let mut recycled = None;
-        let mut last_error = None;
-        for address in addresses {
-            let permit = match fd_budget.as_ref() {
-                Some(budget) => Some(
-                    recycled
-                        .take()
-                        .or_else(|| budget.try_acquire(UNITS_OUTBOUND_SOCKET))
-                        .ok_or(DestinationConnectError::DescriptorBudget)?,
-                ),
-                None => None,
-            };
-            let started = Instant::now();
-            match time::timeout_at(deadline, connector.clone()(address)).await {
-                Ok(Ok(value)) => {
-                    planner.record_success(first_family, started.elapsed());
-                    return Ok((value, permit));
-                }
-                Ok(Err(error)) => {
-                    planner.environment().record_connect_error(
-                        first_family,
-                        &error,
-                        planner.hard_failure_penalty(),
-                    );
-                    last_error = Some(error);
-                    recycled = permit;
-                }
-                Err(_) => return Err(DestinationConnectError::TimedOut { timeout }),
-            }
-        }
-        return Err(DestinationConnectError::Io(
-            last_error.expect("a non-empty single-family plan must attempt an address"),
-        ));
+        return connect_single_family(
+            planner,
+            addresses,
+            first_family,
+            deadline,
+            timeout,
+            fd_budget,
+            connector,
+        )
+        .await;
     }
+    race_happy_eyeballs(planner, addresses, deadline, timeout, fd_budget, connector).await
+}
 
+/// Connects to a single planned address under the shared deadline.
+async fn connect_one_address<T, C, F>(
+    planner: ConnectionPlanner,
+    address: SocketAddr,
+    deadline: Instant,
+    timeout: Duration,
+    fd_budget: Option<FdBudget>,
+    connector: C,
+) -> Result<(T, Option<FdPermit>), DestinationConnectError>
+where
+    T: Send + 'static,
+    C: Fn(SocketAddr) -> F + Clone + Send + Sync + 'static,
+    F: std::future::Future<Output = io::Result<T>> + Send + 'static,
+{
+    let permit = match fd_budget.as_ref() {
+        Some(budget) => Some(
+            budget
+                .try_acquire(UNITS_OUTBOUND_SOCKET)
+                .ok_or(DestinationConnectError::DescriptorBudget)?,
+        ),
+        None => None,
+    };
+    let started = Instant::now();
+    let outcome = time::timeout_at(deadline, connector(address)).await;
+    match outcome {
+        Ok(Ok(value)) => {
+            planner.record_success(AddressFamily::of(address.ip()), started.elapsed());
+            Ok((value, permit))
+        }
+        Ok(Err(error)) => {
+            planner.environment().record_connect_error(
+                AddressFamily::of(address.ip()),
+                &error,
+                planner.hard_failure_penalty(),
+            );
+            Err(DestinationConnectError::Io(error))
+        }
+        Err(_) => Err(DestinationConnectError::TimedOut { timeout }),
+    }
+}
+
+/// Tries each address in a same-family plan sequentially, recycling permits.
+async fn connect_single_family<T, C, F>(
+    planner: ConnectionPlanner,
+    addresses: Vec<SocketAddr>,
+    family: AddressFamily,
+    deadline: Instant,
+    timeout: Duration,
+    fd_budget: Option<FdBudget>,
+    connector: C,
+) -> Result<(T, Option<FdPermit>), DestinationConnectError>
+where
+    T: Send + 'static,
+    C: Fn(SocketAddr) -> F + Clone + Send + Sync + 'static,
+    F: std::future::Future<Output = io::Result<T>> + Send + 'static,
+{
+    let mut recycled = None;
+    let mut last_error = None;
+    for address in addresses {
+        let permit = match fd_budget.as_ref() {
+            Some(budget) => Some(
+                recycled
+                    .take()
+                    .or_else(|| budget.try_acquire(UNITS_OUTBOUND_SOCKET))
+                    .ok_or(DestinationConnectError::DescriptorBudget)?,
+            ),
+            None => None,
+        };
+        let started = Instant::now();
+        match time::timeout_at(deadline, connector.clone()(address)).await {
+            Ok(Ok(value)) => {
+                planner.record_success(family, started.elapsed());
+                return Ok((value, permit));
+            }
+            Ok(Err(error)) => {
+                planner.environment().record_connect_error(
+                    family,
+                    &error,
+                    planner.hard_failure_penalty(),
+                );
+                last_error = Some(error);
+                recycled = permit;
+            }
+            Err(_) => return Err(DestinationConnectError::TimedOut { timeout }),
+        }
+    }
+    Err(DestinationConnectError::Io(last_error.expect(
+        "a non-empty single-family plan must attempt an address",
+    )))
+}
+
+/// Races mixed-family addresses with Happy Eyeballs staggered launches.
+async fn race_happy_eyeballs<T, C, F>(
+    planner: ConnectionPlanner,
+    addresses: Vec<SocketAddr>,
+    deadline: Instant,
+    timeout: Duration,
+    fd_budget: Option<FdBudget>,
+    connector: C,
+) -> Result<(T, Option<FdPermit>), DestinationConnectError>
+where
+    T: Send + 'static,
+    C: Fn(SocketAddr) -> F + Clone + Send + Sync + 'static,
+    F: std::future::Future<Output = io::Result<T>> + Send + 'static,
+{
     let mut tasks = JoinSet::new();
     let mut active = Vec::with_capacity(2);
     let mut recycled = Vec::with_capacity(2);
