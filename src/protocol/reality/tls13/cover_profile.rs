@@ -1,3 +1,9 @@
+//! Reusable cover-flight profiles derived from controlled observations.
+//!
+//! Materializes a cached ServerHello and EncryptedExtensions shape so a later
+//! ClientHello in the same class can skip a live cover dial. Profiles that
+//! bind negotiated state the cache cannot reconstruct stay live-only.
+
 use std::{error::Error, fmt};
 
 use crate::protocol::reality::{ClientHello, CoverProbe, NormalizedClientHelloClass};

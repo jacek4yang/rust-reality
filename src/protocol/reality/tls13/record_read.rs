@@ -1,3 +1,8 @@
+//! Exact TLS record framing reads into reusable maximum-sized buffers.
+//!
+//! [`read_tls_record_into`] fills header and body without steady-state
+//! allocation once [`record_storage`] has reserved the wire-capacity buffer.
+
 use std::{collections::TryReserveError, error::Error, fmt, io, time::Duration};
 
 use tokio::io::AsyncRead;

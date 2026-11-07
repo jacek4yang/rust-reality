@@ -1,3 +1,9 @@
+//! Application-data TLS I/O over an established REALITY session.
+//!
+//! [`TlsApplicationIo`] splits into reader/writer halves, handles close_notify
+//! and KeyUpdate, and exposes the byte-oriented API Vision relays consume.
+//! No handshake cryptography lives here; it only drives the record layer.
+
 use std::{
     error::Error,
     fmt, io,

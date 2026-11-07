@@ -1,3 +1,8 @@
+//! ClientFinished read and verify under the handshake traffic keys.
+//!
+//! Consumes optional compatibility ChangeCipherSpec, opens the Finished
+//! record, and returns [`EstablishedTls`] ready for application traffic.
+
 use std::{error::Error, fmt, time::Duration};
 
 use tokio::{io::AsyncRead, time::Instant};
