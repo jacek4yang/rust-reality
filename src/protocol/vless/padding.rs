@@ -1,3 +1,9 @@
+//! Cryptographically secure Vision padding-length generator.
+//!
+//! Expands a `getrandom` seed with ChaCha12 so the downlink hot path does
+//! not pay a syscall per frame, then reseeds on a bounded byte budget.
+//! State is fixed-size and zeroized on drop; lengths stay Xray-compatible.
+
 use chacha20::{
     ChaCha12,
     cipher::{KeyIvInit, StreamCipher},

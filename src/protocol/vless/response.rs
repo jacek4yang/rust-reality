@@ -1,3 +1,9 @@
+//! VLESS response-header encode and async write helpers.
+//!
+//! Builds the version byte, status, and optional Addons blob the server
+//! writes after authentication. Encoding rejects Addons that exceed the
+//! one-byte length prefix; write errors preserve that distinction.
+
 use std::{error::Error, fmt, io};
 
 use tokio::io::{AsyncWrite, AsyncWriteExt};

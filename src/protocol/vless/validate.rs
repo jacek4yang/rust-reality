@@ -1,3 +1,9 @@
+//! Post-decode authorization for authenticated VLESS requests.
+//!
+//! [`UserRegistry`] checks user membership, command, and Addons policy
+//! after wire decoding has already succeeded. Vision TCP authorization
+//! additionally binds the request user id to the REALITY-authenticated id.
+
 use std::{error::Error, fmt};
 
 use super::{Addons, AddonsDecodeError, Command, Destination, RequestHeader, UserId, VISION_FLOW};

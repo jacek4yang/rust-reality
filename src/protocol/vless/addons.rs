@@ -1,3 +1,9 @@
+//! Bounded parse of the VLESS Addons protobuf used by Xray-core.
+//!
+//! Field 1 is the flow string (Vision expects [`VISION_FLOW`]); field 2 is
+//! an opaque seed. Unknown fields are skipped for forward compatibility.
+//! This module only parses bytes and performs no cryptography.
+
 use std::{error::Error, fmt, str};
 
 /// The only VLESS flow accepted by the production inbound.
