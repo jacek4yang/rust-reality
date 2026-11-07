@@ -1,3 +1,8 @@
+//! Core VLESS wire types shared by encode and decode paths.
+//!
+//! Defines the protocol version, redacted [`UserId`], command codes, and
+//! destination/address representations used across client and server.
+
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// VLESS protocol version implemented by current Xray-core releases.

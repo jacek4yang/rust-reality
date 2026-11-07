@@ -1,3 +1,9 @@
+//! Strict VLESS request-header decode.
+//!
+//! Parses version, user id, command, and destination from a contiguous byte
+//! slice and returns the trailing payload. Rejects truncated or unknown
+//! address types without consuming further input.
+
 use std::{
     error::Error,
     fmt,

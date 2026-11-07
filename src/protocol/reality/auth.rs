@@ -1,3 +1,10 @@
+//! REALITY session authentication: short-IDs, AEAD seal, and user binding.
+//!
+//! Derives the session key material from the authenticated ClientHello, seals
+//! and opens the 16-byte session plaintext, and maps short IDs to configured
+//! users. Crypto provider ownership stays with this module and is enforced by
+//! `crypto_boundary`.
+
 use std::{collections::HashMap, error::Error, fmt};
 
 use aes_gcm::{
