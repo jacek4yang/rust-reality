@@ -108,29 +108,6 @@ pub(super) fn unused_loopback_port() -> ReservedLoopbackPort {
     }
 }
 
-#[cfg(test)]
-mod reservation_tests {
-    use super::unused_loopback_port;
-
-    #[test]
-    fn holding_a_reserved_port_prevents_an_ephemeral_bind_from_taking_it() {
-        let reserved = unused_loopback_port();
-        assert!(
-            std::net::TcpListener::bind(("127.0.0.1", reserved.port())).is_err(),
-            "the reserved port must stay exclusive while held"
-        );
-        let other = std::net::TcpListener::bind("127.0.0.1:0").expect("another ephemeral port");
-        assert_ne!(
-            other.local_addr().expect("other address").port(),
-            reserved.port(),
-            "bind(0) must not take a held reservation"
-        );
-        let port = reserved.release();
-        std::net::TcpListener::bind(("127.0.0.1", port))
-            .expect("the released port must be bindable again");
-    }
-}
-
 /// Returns the single listener runtime of a snapshot.
 pub(super) fn only_listener(snapshot: &RuntimeSnapshot) -> Arc<ConnectionRuntime> {
     let mut listeners = snapshot.connections.values();
@@ -158,5 +135,28 @@ pub(super) fn outbounds_of(
         ConnectionHandler::Nxr(_) | ConnectionHandler::Handoff(_) => {
             panic!("the fixture listener must be a public VLESS listener")
         }
+    }
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::unused_loopback_port;
+
+    #[test]
+    fn holding_a_reserved_port_prevents_an_ephemeral_bind_from_taking_it() {
+        let reserved = unused_loopback_port();
+        assert!(
+            std::net::TcpListener::bind(("127.0.0.1", reserved.port())).is_err(),
+            "the reserved port must stay exclusive while held"
+        );
+        let other = std::net::TcpListener::bind("127.0.0.1:0").expect("another ephemeral port");
+        assert_ne!(
+            other.local_addr().expect("other address").port(),
+            reserved.port(),
+            "bind(0) must not take a held reservation"
+        );
+        let port = reserved.release();
+        std::net::TcpListener::bind(("127.0.0.1", port))
+            .expect("the released port must be bindable again");
     }
 }
