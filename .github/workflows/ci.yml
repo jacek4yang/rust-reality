@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# PR-scoped only: a later pull_request event cancels the superseded PR run.
+# push to main and any non-PR event use github.run_id and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   NEXTEST_PROFILE: ci
@@ -27,6 +33,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Check exact-head run selector
+        run: python3 .github/scripts/select_exact_head_run.py --self-test
 
       - name: Install Rust toolchain
         run: rustup toolchain install
