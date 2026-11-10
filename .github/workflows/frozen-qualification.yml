@@ -155,13 +155,31 @@ jobs:
           for entry in 'ci.yml exact-head-ci' 'security.yml exact-head-security'; do
             read -r workflow check <<< "$entry"
             gh run list --repo "$GITHUB_REPOSITORY" --commit "$HEAD_SHA" --workflow "$workflow" \
-              --limit 1 --json headSha,status,conclusion,databaseId > "$RUNNER_TEMP/selected-run.json"
+              --limit 20 --json headSha,status,conclusion,databaseId > "$RUNNER_TEMP/selected-run.json"
             run_id=$(python3 - <<'PY'
           import json, os, pathlib
-          runs=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'selected-run.json').read_text())
-          if len(runs)!=1 or runs[0]['headSha']!=os.environ['HEAD_SHA'] or runs[0]['status']!='completed' or runs[0]['conclusion']!='success':
-              raise SystemExit('Latest exact-head required workflow is missing or unsuccessful')
-          print(runs[0]['databaseId'])
+          def select_run(runs, head_sha):
+              if not head_sha:
+                  raise SystemExit('exact-head SHA is missing')
+              eligible = [
+                  run for run in runs
+                  if run.get('headSha') == head_sha
+                  and run.get('status') == 'completed'
+                  and run.get('conclusion') != 'cancelled'
+              ]
+              if not eligible:
+                  raise SystemExit('Exact-head required workflow is missing or only cancelled')
+              latest = eligible[0]
+              if latest.get('conclusion') != 'success':
+                  raise SystemExit('Latest exact-head required workflow is %s' % latest.get('conclusion'))
+              run_id = latest.get('databaseId')
+              if not isinstance(run_id, int):
+                  raise SystemExit('Latest exact-head required workflow has no databaseId')
+              return run_id
+          runs = json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'selected-run.json').read_text())
+          if not isinstance(runs, list):
+              raise SystemExit('runs JSON must be a list')
+          print(select_run(runs, os.environ['HEAD_SHA']))
           PY
             )
             "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check \
