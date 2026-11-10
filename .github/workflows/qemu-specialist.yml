@@ -317,6 +317,12 @@ jobs:
                                       print(path.read_text(errors='replace')[-4000:], file=sys.stderr)
                                   except Exception as error:
                                       print('(unreadable: %s)' % error, file=sys.stderr)
+                          (root/'ssh-ready-failure.json').write_text(json.dumps({
+                              'role': role,
+                              'elapsed_s': round(elapsed, 1),
+                              'last': last,
+                              'sshPort': spec['sshPort'],
+                          }) + '\n')
                           raise RuntimeError('guest provisioning boot failed: '+role)
                       try:
                           result = subprocess.run(ssh+['true'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=6)
@@ -406,6 +412,13 @@ jobs:
             ${{ runner.temp }}/rr-cloud-cell/**/*terminal*.json
             ${{ runner.temp }}/rr-cloud-cell/**/cell-diagnosis.json
             ${{ runner.temp }}/rr-cloud-cell/cells-summary.json
+            ${{ runner.temp }}/rr-cloud-fixture/ssh-ready-failure.json
+            ${{ runner.temp }}/rr-cloud-fixture/landing/serial.log
+            ${{ runner.temp }}/rr-cloud-fixture/landing/provision.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-a/serial.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-a/provision.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-b/serial.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-b/provision.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -552,6 +565,12 @@ jobs:
                                       print(path.read_text(errors='replace')[-4000:], file=sys.stderr)
                                   except Exception as error:
                                       print('(unreadable: %s)' % error, file=sys.stderr)
+                          (root/'ssh-ready-failure.json').write_text(json.dumps({
+                              'role': role,
+                              'elapsed_s': round(elapsed, 1),
+                              'last': last,
+                              'sshPort': spec['sshPort'],
+                          }) + '\n')
                           raise RuntimeError('guest provisioning boot failed: '+role)
                       try:
                           result = subprocess.run(ssh+['true'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=6)
@@ -622,7 +641,15 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: hosted-qemu-udp-guest-diagnostics-${{ env.HEAD_SHA }}-${{ matrix.slug }}
-          path: ${{ runner.temp }}/rr-cloud-udp-guest/
+          path: |
+            ${{ runner.temp }}/rr-cloud-udp-guest/
+            ${{ runner.temp }}/rr-cloud-fixture/ssh-ready-failure.json
+            ${{ runner.temp }}/rr-cloud-fixture/landing/serial.log
+            ${{ runner.temp }}/rr-cloud-fixture/landing/provision.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-a/serial.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-a/provision.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-b/serial.log
+            ${{ runner.temp }}/rr-cloud-fixture/line-b/provision.log
           if-no-files-found: warn
           retention-days: 7
 
