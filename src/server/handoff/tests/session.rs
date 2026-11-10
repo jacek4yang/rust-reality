@@ -740,3 +740,157 @@ async fn first_downlink_byte_classification() {
         "the deadline must bound the wait, not the idle timeout"
     );
 }
+
+/// #253 P2 — listen-only LANDING outage on the real Handoff LINE→LANDING path.
+///
+/// Dropping only the landing listener after the transfer is accepted refuses
+/// new [`HandoffLine::transfer`] dials with ECONNREFUSED while the established
+/// Vision session still splices uplink and receives downlink. This does not
+/// claim field RCA for #253 and does not change the QEMU campaign contract.
+#[tokio::test(flavor = "current_thread")]
+async fn listen_only_handoff_landing_outage_refuses_new_dials_established_session_survives() {
+    let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("destination must bind");
+    let destination_address = destination_listener
+        .local_addr()
+        .expect("destination address must exist");
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    let landing_handler = test_landing_handler();
+    let line_handler = handoff_vision_handler(landing_address);
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    let request = vision_request(destination_address.port(), b"ping");
+
+    let exchange = async {
+        let line = line_handler.handle(established);
+        let landing = async {
+            let (stream, _) = landing_listener.accept().await?;
+            drop(landing_listener);
+            landing_handler
+                .handle(stream)
+                .await
+                .map_err(io::Error::other)
+        };
+        let client_io = async {
+            let mut record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, &request, 0, &mut record)
+                .map_err(io::Error::other)?;
+            client.write_all(&record).await?;
+
+            let mut first = read_tls_record(&mut client, TEST_TIMEOUT)
+                .await
+                .map_err(io::Error::other)?
+                .into_wire();
+            let opened = client_read_records
+                .open_in_place(&mut first)
+                .map_err(io::Error::other)?;
+            let mut decoder = VisionDecoder::new(USER);
+            let mut decoded = Vec::new();
+            let mut response = Vec::new();
+            {
+                let plaintext = opened.plaintext();
+                if opened.content_type() != ContentType::ApplicationData
+                    || plaintext.get(..2) != Some([VERSION, 0].as_slice())
+                {
+                    return Err(io::Error::other("missing resumed response header"));
+                }
+                let _ = decoder
+                    .decode(&plaintext[2..], &mut decoded)
+                    .map_err(io::Error::other)?;
+                response.extend_from_slice(&decoded);
+            }
+
+            let refused = match handoff_line(landing_address)
+                .transfer(
+                    &FdBudget::new(4_096),
+                    &test_state(Destination::new(
+                        Address::Ipv4(Ipv4Addr::LOCALHOST),
+                        destination_address.port(),
+                    )),
+                    [0x46; 32],
+                )
+                .await
+            {
+                Err(error) => error,
+                Ok(_) => panic!("new handoff transfers must be refused after listen-only outage"),
+            };
+            match refused {
+                HandoffLineError::Connect(source) => {
+                    assert_eq!(source.kind(), io::ErrorKind::ConnectionRefused);
+                    assert_eq!(
+                        source.raw_os_error(),
+                        Some(111),
+                        "Linux ECONNREFUSED errno must be 111"
+                    );
+                }
+                other => panic!("expected HandoffLineError::Connect ECONNREFUSED, got {other}"),
+            }
+
+            let mut more = Vec::new();
+            client_write_records
+                .seal_into(ContentType::ApplicationData, b"-more", 0, &mut more)
+                .map_err(io::Error::other)?;
+            client.write_all(&more).await?;
+            let mut close_record = Vec::new();
+            client_write_records
+                .seal_into(ContentType::Alert, &[1, 0], 0, &mut close_record)
+                .map_err(io::Error::other)?;
+            client.write_all(&close_record).await?;
+
+            loop {
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read_records
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                match opened.content_type() {
+                    ContentType::ApplicationData => {
+                        let _ = decoder
+                            .decode(opened.plaintext(), &mut decoded)
+                            .map_err(io::Error::other)?;
+                        response.extend_from_slice(&decoded);
+                    }
+                    ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                    _ => return Err(io::Error::other("unexpected outer TLS content")),
+                }
+            }
+            client.shutdown().await?;
+            Ok::<_, io::Error>(response)
+        };
+        let destination_io = async {
+            let (mut destination, _) = destination_listener.accept().await?;
+            let mut received = Vec::new();
+            destination.read_to_end(&mut received).await?;
+            destination.write_all(b"pong").await?;
+            destination.shutdown().await?;
+            Ok::<_, io::Error>(received)
+        };
+        tokio::join!(line, landing, client_io, destination_io)
+    };
+    let (line, landing, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("listen-only Handoff exchange must not time out");
+    let line_stats = line.expect("established LINE session must survive listen drop");
+    landing.expect("established LANDING handler must survive listen drop");
+
+    assert_eq!(
+        destination_result.expect("destination I/O must succeed"),
+        b"ping-more"
+    );
+    assert_eq!(client_result.expect("client I/O must succeed"), b"pong");
+    assert!(
+        line_stats.uplink_bytes() > 0,
+        "post-outage records must still move through the raw splice"
+    );
+}
