@@ -111,3 +111,4 @@ of the law is what it is.
 | [0067](0067-xudp-global-id-leases-follow-association-lifetime.md) | XUDP GlobalID leases follow association lifetime | Accepted |
 | [0068](0068-bind-nxr-restart-disconnect-to-local-ack.md) | Bind NXR restart disconnect to the local ACK | Accepted |
 | [0069](0069-native-udp-channel-for-handoff-xudp.md) | Native UDP channel for Handoff XUDP (supersedes ADR 0060 §3) | Accepted |
+| [0070](0070-short-fault-admission-drain.md) | Short-fault admission drain before restore | Accepted |
