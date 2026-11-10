@@ -614,6 +614,17 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
             scope,
             &outside_interval_reason(scope, fault, &outside),
         );
+        let admission_deadline =
+            contract.fault_admission_deadline_ms(&fault.name, fault.restored_ms);
+        report.require(
+            fault
+                .during_transfers
+                .iter()
+                .all(|transfer| transfer.started_ms <= admission_deadline),
+            Verdict::Invalid,
+            scope,
+            "during-fault receipt started after the admission deadline",
+        );
         evaluate_fault_workload(report, contract, cell, fault);
     }
     report.require(

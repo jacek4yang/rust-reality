@@ -2272,7 +2272,7 @@ fn rtt_contract_keeps_workload_timing_and_drain_coherent() {
     );
     assert_eq!(
         contract.fault_admission_deadline_ms("reload", restored),
-        restored
+        restored - contract.fault_admission_drain_ms
     );
     // Capacity check from measured 954 evidence under 1% loss (~3 completions
     // /4s /LINE at concurrency 2). Scaled to concurrency 4 over the admit
@@ -2374,6 +2374,103 @@ fn short_fault_coverage_shortfall_stays_invalid_and_names_the_line_counts() {
         }),
         "{reasons:?}"
     );
+}
+
+#[test]
+fn short_fault_contract_reserves_admission_drain_before_restore() {
+    // #464 Frozen 42340270160, handoff/constrained cold: eight 1 MiB during
+    // receipts started 56–240 ms before restore and completed 7–147 ms after
+    // (observed durations 203–306 ms). A 500 ms drain is bounded above that
+    // in-flight completion and uses the same pre-restore semantics as
+    // rtt_admission_drain_ms. The 10 s window and evaluate.rs interval /
+    // coverage predicates stay unchanged. This does not fix the 86/83 LINE
+    // coverage shortfall on that receipt.
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    assert_eq!(contract.fault_duration_ms, 10_000);
+    assert_eq!(contract.fault_admission_drain_ms, 500);
+    assert!(contract.fault_admission_drain_ms < contract.fault_duration_ms);
+    assert!(contract.fault_admission_drain_ms > 306);
+    let restored = 1_000_000 + contract.fault_duration_ms;
+    for name in [
+        "reload",
+        "warm",
+        "stale",
+        "cold",
+        "landing-restart",
+        "line-a-partition",
+    ] {
+        assert_eq!(
+            contract.fault_admission_deadline_ms(name, restored),
+            restored - contract.fault_admission_drain_ms,
+            "{name}: short faults share the non-RTT drain"
+        );
+    }
+    assert_eq!(
+        contract.fault_admission_deadline_ms("rtt-200", restored),
+        restored - contract.rtt_admission_drain_ms
+    );
+}
+
+#[test]
+fn short_fault_receipt_started_in_window_and_completed_inside_drain_stays_valid() {
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let mut changed = fixture();
+    let fault = &mut changed["cells"][0]["faults"][3]; // cold
+    let restored = fault["restored_ms"].as_u64().unwrap();
+    let deadline = contract.fault_admission_deadline_ms("cold", restored);
+    let transfer = &mut fault["during_transfers"].as_array_mut().unwrap()[0];
+    transfer["started_ms"] = json!(deadline);
+    transfer["completed_ms"] = json!(restored);
+    assert_eq!(verdict(&changed), Verdict::Pass);
+}
+
+#[test]
+fn short_fault_receipt_started_after_admission_deadline_stays_invalid() {
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let mut changed = fixture();
+    let fault = &mut changed["cells"][0]["faults"][3]; // cold
+    let restored = fault["restored_ms"].as_u64().unwrap();
+    let deadline = contract.fault_admission_deadline_ms("cold", restored);
+    let transfer = &mut fault["during_transfers"].as_array_mut().unwrap()[0];
+    transfer["started_ms"] = json!(deadline + 1);
+    transfer["completed_ms"] = json!(restored);
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+}
+
+#[test]
+fn short_fault_receipt_completing_after_restore_stays_invalid() {
+    let contract: schema::Contract = serde_json::from_str(schema::CONTRACT).unwrap();
+    let mut changed = fixture();
+    let fault = &mut changed["cells"][0]["faults"][3]; // cold
+    let restored = fault["restored_ms"].as_u64().unwrap();
+    let deadline = contract.fault_admission_deadline_ms("cold", restored);
+    let transfer = &mut fault["during_transfers"].as_array_mut().unwrap()[0];
+    transfer["started_ms"] = json!(deadline);
+    transfer["completed_ms"] = json!(restored + 1);
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+}
+
+#[test]
+fn short_fault_line_coverage_shortfall_stays_invalid() {
+    // Same shape as #464 Frozen 42340270160 handoff/constrained cold LINE-A
+    // (86 during receipts, peak still 4). Drain does not relax 698.
+    let mut changed = fixture();
+    let fault = &mut changed["cells"][0]["faults"][3]; // cold
+    let during = fault["during_transfers"].as_array_mut().unwrap();
+    let mut kept = 0;
+    during.retain(|transfer| {
+        if transfer["line"] == "line-a" {
+            if kept < 86 {
+                kept += 1;
+                true
+            } else {
+                false
+            }
+        } else {
+            true
+        }
+    });
+    assert_eq!(verdict(&changed), Verdict::Invalid);
 }
 
 #[test]
