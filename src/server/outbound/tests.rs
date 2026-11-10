@@ -1625,3 +1625,226 @@ async fn nxr_dials_never_consume_direct_barrier_permits() {
         "an NXR route must connect"
     );
 }
+
+fn nxr_landing_handler(key_bytes: [u8; 32]) -> crate::server::nxr::NxrLandingHandler {
+    use crate::{
+        protocol::nxr::NxrKey,
+        server::nxr::{NxrAuthenticator, NxrLandingHandler, NxrReplayCache},
+        transport::tcp_relay::{TcpRelay, TcpRelayConfig},
+    };
+    let cache = NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
+    NxrLandingHandler::new(
+        NxrAuthenticator::new(NxrKey::new(key_bytes), cache, 5),
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        TcpRelay::new(TcpRelayConfig::for_test(), FdBudget::new(4_096))
+            .expect("relay policy must compile"),
+        Duration::from_secs(1),
+    )
+}
+
+fn assert_nxr_connect_refused(error: OutboundConnectError) {
+    match error {
+        OutboundConnectError::NxrConnect(source) => {
+            assert_eq!(source.kind(), io::ErrorKind::ConnectionRefused);
+            assert_eq!(
+                source.raw_os_error(),
+                Some(111),
+                "Linux ECONNREFUSED errno must be 111"
+            );
+        }
+        other => panic!("expected NxrConnect ECONNREFUSED, got {other}"),
+    }
+}
+
+/// #253 P2 — listen-only LANDING outage on the real NXR LINE→LANDING path.
+///
+/// Closing only the landing listener (the landing handler and accepted
+/// session stay alive) refuses new [`OutboundRegistry`] dials with
+/// ECONNREFUSED while an already-authenticated session still relays. This
+/// does not claim field RCA for #253 and does not change the QEMU campaign
+/// contract. A listen-fd close inside `ProductionServer::run_until` is not
+/// used here because that supervisor treats listener-task exit as a full
+/// shutdown and drains established connections.
+#[tokio::test(flavor = "current_thread")]
+async fn listen_only_nxr_landing_outage_refuses_new_dials_established_session_survives() {
+    const REQUEST: &[u8] = b"ping";
+    const RESPONSE: &[u8] = b"pong";
+
+    let target_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("target must bind");
+    let target_address = target_listener.local_addr().expect("target address");
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener.local_addr().expect("landing address");
+    let key_bytes = [0x53; 32];
+    let handler = nxr_landing_handler(key_bytes);
+    let registry = OutboundRegistry::new(
+        &named(
+            "nxr",
+            OutboundConfig::Nxr(NxrOutboundConfig {
+                address: landing_address.ip().to_string(),
+                port: landing_address.port(),
+                psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                warm_tcp: Some(false),
+            }),
+        ),
+        &DirectBarrierPolicy::default(),
+        Duration::from_secs(2),
+        FdBudget::new(4_096),
+    );
+    let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_address.port());
+
+    let (accepted, connected) = tokio::join!(
+        landing_listener.accept(),
+        registry.connect("nxr", &destination)
+    );
+    let (inbound, _) = accepted.expect("landing must accept the established dial");
+    let OutboundConnectOutcome::Connected(connection) =
+        connected.expect("LINE must connect to the live landing listener")
+    else {
+        panic!("NXR cannot blackhole");
+    };
+    drop(landing_listener);
+
+    let landing = handler.handle(inbound);
+    let line = async {
+        let (mut stream, permit) = connection.into_parts();
+        stream.write_all(REQUEST).await?;
+        let mut response = [0_u8; 4];
+        stream.read_exact(&mut response).await?;
+        assert_eq!(
+            &response, RESPONSE,
+            "established NXR session must still relay"
+        );
+
+        assert_nxr_connect_refused(
+            registry
+                .connect("nxr", &destination)
+                .await
+                .expect_err("new dials must be refused after listen-only outage"),
+        );
+
+        stream.shutdown().await?;
+        drop(permit);
+        Ok::<_, io::Error>(())
+    };
+    let target = async {
+        let (mut stream, _) = target_listener.accept().await?;
+        let mut request = [0_u8; 4];
+        stream.read_exact(&mut request).await?;
+        assert_eq!(&request, REQUEST);
+        stream.write_all(RESPONSE).await?;
+        stream.shutdown().await?;
+        Ok::<_, io::Error>(())
+    };
+
+    let (landing, line, target) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(landing, line, target)
+    })
+    .await
+    .expect("listen-only NXR exchange must not stall");
+    landing.expect("established landing handler must survive listen drop");
+    line.expect("established LINE session must still relay");
+    target.expect("target I/O must succeed");
+}
+
+/// Listen-only outage leaves an already-accepted idle warm NXR socket usable
+/// (not a stale-discard). A later cold dial is ECONNREFUSED. Contrasts with
+/// [`stale_warm_nxr_socket_is_discarded_before_cold_fallback`].
+#[tokio::test(flavor = "current_thread")]
+async fn listen_only_nxr_landing_outage_keeps_idle_warm_socket_usable() {
+    const REQUEST: &[u8] = b"ping";
+    const RESPONSE: &[u8] = b"pong";
+
+    let target_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("target must bind");
+    let target_address = target_listener.local_addr().expect("target address");
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener.local_addr().expect("landing address");
+    let key_bytes = [0x63; 32];
+    let handler = nxr_landing_handler(key_bytes);
+    let policy = warm_policy();
+    let registry = OutboundRegistry::with_warm_pools(
+        &named(
+            "nxr",
+            OutboundConfig::Nxr(NxrOutboundConfig {
+                address: landing_address.ip().to_string(),
+                port: landing_address.port(),
+                psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                warm_tcp: Some(true),
+            }),
+        ),
+        DirectBarrier::new(&DirectBarrierPolicy::default()),
+        Duration::from_secs(2),
+        FdBudget::new(4_096),
+        &NetworkConfig::default(),
+        NetworkEnvironment::detect(),
+        8,
+        WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+        &policy,
+    );
+    registry.activate_warm_pools();
+    let (warm_inbound, _) = landing_listener
+        .accept()
+        .await
+        .expect("warm peer must connect");
+    wait_for_one_ready(&registry).await;
+    drop(landing_listener);
+
+    let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_address.port());
+    let landing = handler.handle(warm_inbound);
+    let line = async {
+        let OutboundConnectOutcome::Connected(connection) = registry
+            .connect("nxr", &destination)
+            .await
+            .expect("idle warm NXR socket must still authenticate after listen drop")
+        else {
+            panic!("NXR cannot blackhole");
+        };
+        let (mut stream, permit) = connection.into_parts();
+        stream.write_all(REQUEST).await?;
+        let mut response = [0_u8; 4];
+        stream.read_exact(&mut response).await?;
+        assert_eq!(&response, RESPONSE);
+
+        let snapshot = registry.warm_pool_snapshots().remove(0).pool;
+        assert_eq!(snapshot.checkout_hit, 1);
+        assert_eq!(snapshot.stale_discard, 0);
+
+        assert_nxr_connect_refused(
+            registry
+                .connect("nxr", &destination)
+                .await
+                .expect_err("cold dials must be refused after listen-only outage"),
+        );
+
+        stream.shutdown().await?;
+        drop(permit);
+        Ok::<_, io::Error>(())
+    };
+    let target = async {
+        let (mut stream, _) = target_listener.accept().await?;
+        let mut request = [0_u8; 4];
+        stream.read_exact(&mut request).await?;
+        assert_eq!(&request, REQUEST);
+        stream.write_all(RESPONSE).await?;
+        stream.shutdown().await?;
+        Ok::<_, io::Error>(())
+    };
+
+    let (landing, line, target) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(landing, line, target)
+    })
+    .await
+    .expect("listen-only NXR warm exchange must not stall");
+    landing.expect("landing handler must serve the warm checkout");
+    line.expect("warm checkout must relay after listen drop");
+    target.expect("target I/O must succeed");
+    registry.deactivate_warm_pools();
+}

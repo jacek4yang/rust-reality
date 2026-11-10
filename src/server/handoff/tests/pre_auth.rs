@@ -382,3 +382,107 @@ async fn unused_handoff_socket_expires_at_pre_auth_idle_deadline() {
         Err(HandoffLandingError::Timeout)
     ));
 }
+
+/// Listen-only outage leaves an already-accepted idle warm Handoff socket
+/// usable (checkout hit, no stale-discard). A later cold transfer is
+/// ECONNREFUSED. Contrasts with
+/// [`stale_warm_handoff_socket_is_discarded_before_cold_fallback`]. This
+/// does not claim field RCA for #253.
+#[tokio::test(flavor = "current_thread")]
+async fn listen_only_handoff_landing_outage_keeps_idle_warm_socket_usable() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let address = listener.local_addr().expect("landing address");
+    let policy = WarmConnectionPolicy {
+        min_ready: 1,
+        max_ready: 1,
+        max_connecting: 1,
+        refill_batch: 1,
+        idle_timeout_ms: 30_000,
+        max_lifetime_ms: 60_000,
+        shrink_delay_ms: 30_000,
+    };
+    let fd_budget = FdBudget::new(4_096);
+    let landing_public = StaticX25519Key::new(&LANDING_SECRET).public_key();
+    let line = HandoffLine::from_settings_with_warm_pool(
+        &HandoffOutboundConfig {
+            udp_port: None,
+            udp_mtu: None,
+            address: address.ip().to_string(),
+            port: address.port(),
+            psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(PSK)),
+            landing_public_key: BASE64_URL_SAFE_NO_PAD.encode(landing_public),
+            connect_timeout_ms: Some(2_000),
+            first_byte_timeout_ms: Some(2_000),
+            warm_tcp: Some(true),
+        },
+        DestinationConnector::new(Duration::from_secs(2)),
+        &fd_budget,
+        Some((
+            13,
+            WarmPoolAuthority::new(&policy, 1, PressureGauge::new()),
+            &policy,
+        )),
+    )
+    .expect("line settings must compile");
+    let pool = line.warm_pool().expect("warm pool must exist").clone();
+    assert!(pool.activate());
+    let (warm_peer, _) = listener.accept().await.expect("warm peer must connect");
+    timeout(Duration::from_secs(2), async {
+        while pool.snapshot().ready != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pool must become ready");
+    drop(listener);
+
+    let landing = tokio::spawn(async move {
+        let mut stream = warm_peer;
+        let mut header = [0_u8; HEADER_LEN];
+        stream.read_exact(&mut header).await?;
+        let total = message_len_from_header(&header).map_err(io::Error::other)?;
+        let mut remainder = vec![0_u8; total - HEADER_LEN];
+        stream.read_exact(&mut remainder).await?;
+        Ok::<_, io::Error>(())
+    });
+    let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443));
+    let (stream, permit) = line
+        .transfer(&fd_budget, &state, [0x47; 32])
+        .await
+        .expect("idle warm Handoff socket must still carry a transfer after listen drop");
+    drop(stream);
+    drop(permit);
+    landing
+        .await
+        .expect("landing must join")
+        .expect("landing result");
+    let snapshot = pool.snapshot();
+    assert_eq!(snapshot.checkout_hit, 1);
+    assert_eq!(snapshot.stale_discard, 0);
+
+    let refused = match line
+        .transfer(
+            &fd_budget,
+            &test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 443)),
+            [0x48; 32],
+        )
+        .await
+    {
+        Err(error) => error,
+        Ok(_) => panic!("cold handoff transfers must be refused after listen-only outage"),
+    };
+    match refused {
+        HandoffLineError::Connect(source) => {
+            assert_eq!(source.kind(), io::ErrorKind::ConnectionRefused);
+            assert_eq!(
+                source.raw_os_error(),
+                Some(111),
+                "Linux ECONNREFUSED errno must be 111"
+            );
+        }
+        other => panic!("expected HandoffLineError::Connect ECONNREFUSED, got {other}"),
+    }
+    pool.deactivate();
+}
