@@ -16,7 +16,79 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Fail fast when this SHA has no Native run at all. Frozen is often started
+  # while exact-head Native is still queued or in progress and binds that
+  # success later; those in-flight runs must pass this preflight. The later
+  # "Bind Exact-head Native XUDP six-cell" step is unchanged and still
+  # requires a completed success plus six-cell receipts. Cancelled, failed,
+  # and skipped runs are not success and are not in flight.
+  native-preflight:
+    name: Exact-head Native preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        # Bash-native Actions shell (ADR 0044): no Python, no KeyboardInterrupt stacks.
+        # Typed local twin: `cargo-dev ci gha-shell`. No github.* context in this field.
+        shell: bash --noprofile --norc -e -o pipefail {0}
+    steps:
+      - name: Fail fast if this SHA has no Native run and none is in flight
+        run: |
+          set -euo pipefail
+          test -n "$HEAD_SHA"
+          gh run list --repo "$GITHUB_REPOSITORY" --commit "$HEAD_SHA" \
+            --workflow qualification.yml --limit 20 \
+            --json headSha,status,conclusion,databaseId > "$RUNNER_TEMP/native-preflight.json"
+          python3 - <<'PY'
+          import json, os, pathlib, sys
+          head = os.environ.get('HEAD_SHA') or ''
+          if not head:
+              raise SystemExit('exact-head SHA is missing')
+          raw = (pathlib.Path(os.environ['RUNNER_TEMP']) / 'native-preflight.json').read_text()
+          runs = json.loads(raw)
+          if not isinstance(runs, list):
+              raise SystemExit('Native run list is not a JSON array')
+          matched = [run for run in runs if run.get('headSha') == head]
+          in_flight_status = {'queued', 'in_progress', 'waiting', 'requested', 'pending'}
+          success = [
+              run for run in matched
+              if run.get('status') == 'completed' and run.get('conclusion') == 'success'
+          ]
+          in_flight = [run for run in matched if run.get('status') in in_flight_status]
+          if success:
+              print('preflight: exact-head Native success already present run=%s' % success[0].get('databaseId'))
+              sys.exit(0)
+          if in_flight:
+              run = in_flight[0]
+              print(
+                  'preflight: exact-head Native is in flight status=%s run=%s (later bind still requires success)'
+                  % (run.get('status'), run.get('databaseId'))
+              )
+              sys.exit(0)
+          seen = ', '.join(
+              'id=%s status=%s conclusion=%s' % (run.get('databaseId'), run.get('status'), run.get('conclusion'))
+              for run in matched
+          ) or 'no qualification.yml runs for this SHA'
+          repo = os.environ.get('GITHUB_REPOSITORY') or 'OWNER/REPO'
+          message = (
+              'FAIL: exact-head SHA %s has no Native qualification run '
+              '(no successful run, and none queued or in progress; observed: %s). '
+              'Frozen binds Native later and fail-closes without a completed success. '
+              'Dispatch Native first on a branch or tag that is currently this SHA '
+              '(gh workflow run --ref cannot be a raw SHA): '
+              'gh workflow run qualification.yml --repo %s --ref <branch-or-tag>. '
+              'Cancelled, failed, and skipped runs are not success.'
+          ) % (head, seen, repo)
+          print(message, file=sys.stderr)
+          print('::error::%s' % message)
+          raise SystemExit(1)
+          PY
+
   packages:
+    needs: native-preflight
     uses: ./.github/workflows/candidate-packages.yml
     with:
       candidate_sha: ${{ github.event.pull_request.head.sha || github.sha }}
