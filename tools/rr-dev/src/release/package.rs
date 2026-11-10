@@ -427,7 +427,7 @@ pub fn tempdir(prefix: &str) -> Result<TempDir, String> {
         let path = base.join(&unique);
         match std::fs::create_dir(&path) {
             Ok(()) => return Ok(TempDir { path }),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(format!("could not create temp dir: {error}")),
         }
     }
