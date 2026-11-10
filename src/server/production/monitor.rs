@@ -370,7 +370,8 @@ mod tests {
         use std::sync::Arc;
         use tokio::sync::watch;
         for memory_enabled in [false, true] {
-            let config = crate::server::production::fixture::entry_config(unused_loopback_port());
+            let reserved = unused_loopback_port();
+            let config = crate::server::production::fixture::entry_config(reserved.port());
             let mut server = ProductionServer::from_config(config).unwrap();
             let handoff = HandoffReplayCache::new(8, Duration::from_nanos(1)).unwrap();
             let nxr = NxrReplayCache::new(8, Duration::from_nanos(1)).unwrap();
@@ -446,7 +447,8 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn adaptive_mode_publishes_a_status_file_and_shuts_down_cleanly() {
-        let port = unused_loopback_port();
+        let reserved = unused_loopback_port();
+        let port = reserved.port();
         let directory = std::env::temp_dir().join(format!(
             "rust-reality-adaptive-server-{}-{:x}",
             std::process::id(),
@@ -464,6 +466,7 @@ mod tests {
             status_path.display()
         )));
         let server = ProductionServer::from_config(config).expect("server must compile");
+        let _ = reserved.release();
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         let server_task = tokio::spawn(server.run_until(async move {
             shutdown_receiver

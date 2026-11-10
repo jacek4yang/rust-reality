@@ -73,12 +73,14 @@ async fn exchange(left: &mut TcpStream, right: &mut TcpStream, salt: u8) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn live_nxr_stream_survives_key_reload_and_new_connections_use_new_key() {
     tokio::time::timeout(Duration::from_secs(15), async {
-        let port = unused_loopback_port();
+        let reserved = unused_loopback_port();
+        let port = reserved.port();
         let server = ProductionServer::from_config(configuration(port, 0x51)).expect("compile");
         let runtime = Arc::clone(&server.runtime);
         let target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("bind origin");
+        let _ = reserved.release();
         let destination = Destination::new(
             Address::Ipv4(Ipv4Addr::LOCALHOST),
             target.local_addr().unwrap().port(),
