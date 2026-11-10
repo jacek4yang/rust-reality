@@ -1,7 +1,10 @@
 //! Offline acceptance decisions. No subprocesses, timers, or sampling windows.
 #![allow(missing_docs)]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write,
+};
 
 use serde::Serialize;
 
@@ -598,14 +601,18 @@ fn evaluate_cell(report: &mut Report, evidence: &Evidence, contract: &Contract, 
                 "LINE-B made no progress or partition duration changed",
             );
         }
+        let outside: Vec<_> = fault
+            .during_transfers
+            .iter()
+            .filter(|transfer| {
+                transfer.started_ms < fault.started_ms || transfer.completed_ms > fault.restored_ms
+            })
+            .collect();
         report.require(
-            fault.during_transfers.iter().all(|transfer| {
-                transfer.started_ms >= fault.started_ms
-                    && transfer.completed_ms <= fault.restored_ms
-            }),
+            outside.is_empty(),
             Verdict::Invalid,
             scope,
-            "during-fault receipt lies outside its fixed interval",
+            &outside_interval_reason(scope, fault, &outside),
         );
         evaluate_fault_workload(report, contract, cell, fault);
     }
@@ -685,17 +692,33 @@ fn evaluate_fault_workload(
             .collect();
         let impaired = fault.name != "landing-restart"
             && (fault.name != "line-a-partition" || line == "line-b");
+        let expected_count = usize::try_from(contract.transfers_per_line).unwrap_or(usize::MAX);
+        let expected_peak = contract.fault_concurrency(&fault.name);
+        let peak = peak_concurrency(during.iter().copied());
+        let coverage_ok = if impaired {
+            during.len() >= expected_count && peak == Some(expected_peak)
+        } else {
+            during.is_empty()
+        };
+        let peak_text = match peak {
+            Some(value) => value.to_string(),
+            None => "none".to_owned(),
+        };
+        let expectation = if impaired {
+            format!("need during>={expected_count} peak={expected_peak}")
+        } else {
+            "need during=0".to_owned()
+        };
         report.require(
-            if impaired {
-                during.len() >= usize::try_from(contract.transfers_per_line).unwrap_or(usize::MAX)
-                    && peak_concurrency(during.into_iter())
-                        == Some(contract.fault_concurrency(&fault.name))
-            } else {
-                during.is_empty()
-            },
+            coverage_ok,
             Verdict::Invalid,
             &cell.name,
-            "during-fault LINE coverage or concurrency was substituted",
+            &format!(
+                "during-fault LINE coverage or concurrency was substituted: cell={} fault={} line={line} impaired={impaired} during={} peak={peak_text} ({expectation})",
+                cell.name,
+                fault.name,
+                during.len(),
+            ),
         );
         report.require(
             recovery.len() >= usize::try_from(contract.transfers_per_line).unwrap_or(usize::MAX)
@@ -765,6 +788,66 @@ fn evaluate_integrity_checkpoints(
             }
         }
     }
+}
+
+fn outside_interval_reason(cell: &str, fault: &schema::Fault, outside: &[&Transfer]) -> String {
+    let mut reason = format!(
+        "during-fault receipt lies outside its fixed interval: cell={cell} fault={} window=[{},{}]",
+        fault.name, fault.started_ms, fault.restored_ms
+    );
+    if outside.is_empty() {
+        return reason;
+    }
+    let mut by_line = BTreeMap::<&str, Vec<&Transfer>>::new();
+    for transfer in outside {
+        by_line
+            .entry(transfer.line.as_str())
+            .or_default()
+            .push(*transfer);
+    }
+    for (line, transfers) in by_line {
+        let _ = write!(reason, " {line}");
+        let start_before: Vec<_> = transfers
+            .iter()
+            .copied()
+            .filter(|transfer| transfer.started_ms < fault.started_ms)
+            .collect();
+        let complete_after: Vec<_> = transfers
+            .iter()
+            .copied()
+            .filter(|transfer| transfer.completed_ms > fault.restored_ms)
+            .collect();
+        if !start_before.is_empty() {
+            let example = start_before
+                .iter()
+                .max_by_key(|transfer| fault.started_ms - transfer.started_ms)
+                .expect("non-empty");
+            let _ = write!(
+                reason,
+                " start_before={} max=+{}ms example_started={} example_completed={}",
+                start_before.len(),
+                fault.started_ms - example.started_ms,
+                example.started_ms,
+                example.completed_ms
+            );
+        }
+        if !complete_after.is_empty() {
+            let example = complete_after
+                .iter()
+                .max_by_key(|transfer| transfer.completed_ms - fault.restored_ms)
+                .expect("non-empty");
+            let _ = write!(
+                reason,
+                " complete_after={} max=+{}ms example_started={} example_completed={}",
+                complete_after.len(),
+                example.completed_ms - fault.restored_ms,
+                example.started_ms,
+                example.completed_ms
+            );
+        }
+        reason.push(';');
+    }
+    reason
 }
 
 fn peak_concurrency<'a>(transfers: impl Iterator<Item = &'a Transfer>) -> Option<u64> {

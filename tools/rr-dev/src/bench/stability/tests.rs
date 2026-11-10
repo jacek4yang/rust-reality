@@ -186,8 +186,20 @@ pub(super) fn fixture() -> Value {
 }
 
 fn verdict(value: &Value) -> Verdict {
+    report(value).verdict
+}
+
+fn report(value: &Value) -> evaluate::Report {
     let evidence = schema::parse(&serde_json::to_vec(value).unwrap()).unwrap();
-    evaluate::evaluate(&evidence, &hash::sha256_hex(schema::CONTRACT.as_bytes())).verdict
+    evaluate::evaluate(&evidence, &hash::sha256_hex(schema::CONTRACT.as_bytes()))
+}
+
+fn finding_reasons(value: &Value) -> Vec<String> {
+    report(value)
+        .findings
+        .into_iter()
+        .map(|finding| format!("{}: {}", finding.scope, finding.reason))
+        .collect()
 }
 
 #[test]
@@ -2286,6 +2298,82 @@ fn rtt_during_transfer_past_restore_stays_invalid_after_coherent_schedule() {
     transfer["started_ms"] = json!(restored - 1);
     transfer["completed_ms"] = json!(restored + 1);
     assert_eq!(verdict(&changed), Verdict::Invalid);
+    let reasons = finding_reasons(&changed);
+    assert!(
+        reasons.iter().any(|reason| {
+            reason.contains("during-fault receipt lies outside its fixed interval")
+                && reason.contains("fault=rtt-200")
+                && reason.contains("complete_after=1")
+                && reason.contains("max=+1ms")
+                && reason.contains(&format!("example_completed={}", restored + 1))
+        }),
+        "{reasons:?}"
+    );
+}
+
+#[test]
+fn late_short_fault_receipt_stays_invalid_and_names_cell_fault_line_and_delta() {
+    let mut changed = fixture();
+    let cell = changed["cells"][0]["name"].as_str().unwrap().to_owned();
+    let fault = &mut changed["cells"][0]["faults"][3]; // cold
+    assert_eq!(fault["name"], "cold");
+    let restored = fault["restored_ms"].as_u64().unwrap();
+    let transfer = fault["during_transfers"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|transfer| transfer["line"] == "line-a")
+        .unwrap();
+    transfer["started_ms"] = json!(restored - 56);
+    transfer["completed_ms"] = json!(restored + 147);
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+    let reasons = finding_reasons(&changed);
+    assert!(
+        reasons.iter().any(|reason| {
+            reason.starts_with(&format!(
+                "{cell}: during-fault receipt lies outside its fixed interval"
+            )) && reason.contains("fault=cold")
+                && reason.contains(&format!("cell={cell}"))
+                && reason.contains("line-a complete_after=1 max=+147ms")
+                && reason.contains(&format!("example_started={}", restored - 56))
+                && reason.contains(&format!("example_completed={}", restored + 147))
+        }),
+        "{reasons:?}"
+    );
+}
+
+#[test]
+fn short_fault_coverage_shortfall_stays_invalid_and_names_the_line_counts() {
+    let mut changed = fixture();
+    let cell = changed["cells"][0]["name"].as_str().unwrap().to_owned();
+    let fault = &mut changed["cells"][0]["faults"][3]; // cold
+    assert_eq!(fault["name"], "cold");
+    let during = fault["during_transfers"].as_array_mut().unwrap();
+    let mut kept = 0_usize;
+    during.retain(|transfer| {
+        if transfer["line"] != "line-a" {
+            return true;
+        }
+        if kept < 86 {
+            kept += 1;
+            true
+        } else {
+            false
+        }
+    });
+    assert_eq!(verdict(&changed), Verdict::Invalid);
+    let reasons = finding_reasons(&changed);
+    assert!(
+        reasons.iter().any(|reason| {
+            reason.contains("during-fault LINE coverage or concurrency was substituted")
+                && reason.contains(&format!("cell={cell}"))
+                && reason.contains("fault=cold")
+                && reason.contains("line=line-a")
+                && reason.contains("impaired=true")
+                && reason.contains("need during>=100 peak=4")
+        }),
+        "{reasons:?}"
+    );
 }
 
 #[test]
