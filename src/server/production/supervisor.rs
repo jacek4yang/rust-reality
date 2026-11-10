@@ -382,8 +382,10 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn binds_all_listeners_and_stops_on_injected_shutdown() {
-        let config = entry_config(unused_loopback_port());
+        let reserved = unused_loopback_port();
+        let config = entry_config(reserved.port());
         let server = ProductionServer::from_config(config.clone()).expect("server must compile");
+        let _ = reserved.release();
 
         server
             .run_until(async { Ok(()) })
@@ -396,7 +398,8 @@ mod tests {
         // Entry and landing are separate nodes now, so this drives a landing
         // the way a line node would: one authenticated NXR connection from an
         // outbound registry to a landing server.
-        let landing_port = unused_loopback_port();
+        let reserved = unused_loopback_port();
+        let landing_port = reserved.port();
         let key_bytes = [0x5a; 32];
         let encoded_key = BASE64_URL_SAFE_NO_PAD.encode(key_bytes);
         let config = fixture::validated(&format!(
@@ -411,6 +414,7 @@ mod tests {
         let target = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("target must bind");
+        let _ = reserved.release();
         let destination = Destination::new(
             Address::Ipv4(Ipv4Addr::LOCALHOST),
             target
@@ -477,5 +481,64 @@ mod tests {
         drop(accepted);
         let _ = shutdown_sender.send(());
         let _ = server_task.await;
+    }
+
+    /// Distinguishing experiment for packages 42340268763 attempt 1, which
+    /// failed `assert_eq!(&received, b"ping")` with left `[78, 88, 82, 1]`
+    /// (`NXR\x01`) and right `ping`.
+    ///
+    /// If the port reserved for the landing listener is dropped and then
+    /// bound by a raw TCP target, the NXR client sends its handshake to that
+    /// target. No landing server is started, so handshake bytes on the raw
+    /// socket cannot be a product forward of an authenticated session. A
+    /// later fixture fix must keep this signature detectable and must not
+    /// appear on a target whose port was bound while the landing reservation
+    /// was still held.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stolen_landing_port_delivers_nxr_magic_to_the_raw_target() {
+        let reserved = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve a loopback port");
+        let landing_port = reserved
+            .local_addr()
+            .expect("reserved address must exist")
+            .port();
+        drop(reserved);
+        let target = TcpListener::bind((Ipv4Addr::LOCALHOST, landing_port))
+            .await
+            .expect("the just-freed landing port must be stealable");
+
+        let key_bytes = [0x5a; 32];
+        let encoded_key = BASE64_URL_SAFE_NO_PAD.encode(key_bytes);
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9);
+        let registry = OutboundRegistry::new(
+            &BTreeMap::from([(
+                "landing".to_owned(),
+                OutboundConfig::Nxr(NxrOutboundConfig {
+                    address: Ipv4Addr::LOCALHOST.to_string(),
+                    port: landing_port,
+                    psk: SecretString::new(encoded_key),
+                    warm_tcp: Some(false),
+                }),
+            )]),
+            &DirectBarrierPolicy::default(),
+            Duration::from_secs(1),
+            FdBudget::new(4_096),
+        );
+
+        let connect = tokio::spawn(async move { registry.connect("landing", &destination).await });
+        let (mut accepted, _) = tokio::time::timeout(Duration::from_secs(5), target.accept())
+            .await
+            .expect("the NXR client must dial the stolen port")
+            .expect("the stolen port must accept");
+        let mut received = [0_u8; 4];
+        accepted
+            .read_exact(&mut received)
+            .await
+            .expect("the raw target must observe the NXR handshake prefix");
+        assert_eq!(
+            &received, b"NXR\x01",
+            "stolen landing port must reproduce the #464 signature"
+        );
+        drop(accepted);
+        let _ = connect.await;
     }
 }

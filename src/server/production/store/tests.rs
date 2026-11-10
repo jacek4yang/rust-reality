@@ -33,7 +33,8 @@ fn atomically_publishes_hot_runtime_generation() {
 
 #[test]
 fn a_rejected_publication_must_not_advance_the_generation_counter() {
-    let config = entry_config(unused_loopback_port());
+    let reserved = unused_loopback_port();
+    let config = entry_config(reserved.port());
     let server = ProductionServer::from_config(config.clone()).expect("server must compile");
     let before = server.runtime.generation.load(Ordering::Acquire);
 
@@ -58,7 +59,8 @@ fn a_rejected_publication_must_not_advance_the_generation_counter() {
 
 #[test]
 fn generations_increment_by_exactly_one_and_never_repeat() {
-    let config = entry_config(unused_loopback_port());
+    let reserved = unused_loopback_port();
+    let config = entry_config(reserved.port());
     let server = ProductionServer::from_config(config.clone()).expect("server must compile");
     let mut seen = vec![server.runtime.load().generation];
 
@@ -93,7 +95,8 @@ fn generations_increment_by_exactly_one_and_never_repeat() {
 
 #[test]
 fn outbound_tables_are_replaced_wholesale_across_a_publication() {
-    let config = entry_config(unused_loopback_port());
+    let reserved = unused_loopback_port();
+    let config = entry_config(reserved.port());
     let server = ProductionServer::from_config(config.clone()).expect("server must compile");
     let before = only_listener(&server.runtime.load());
     assert!(outbounds_of(&before).contains("direct"));
@@ -127,7 +130,8 @@ fn outbound_tables_are_replaced_wholesale_across_a_publication() {
 
 #[test]
 fn an_in_flight_connection_keeps_its_own_generation_outbound_table() {
-    let config = entry_config(unused_loopback_port());
+    let reserved = unused_loopback_port();
+    let config = entry_config(reserved.port());
     let server = ProductionServer::from_config(config.clone()).expect("server must compile");
 
     // A live connection holds exactly this: an Arc taken at accept time.
@@ -158,7 +162,8 @@ fn an_in_flight_connection_keeps_its_own_generation_outbound_table() {
 
 #[test]
 fn retired_connection_runtime_is_released_after_its_last_connection() {
-    let config = entry_config(unused_loopback_port());
+    let reserved = unused_loopback_port();
+    let config = entry_config(reserved.port());
     let server = ProductionServer::from_config(config.clone()).expect("server must compile");
     let snapshot = server.runtime.load();
     let old_snapshot = Arc::downgrade(&snapshot);
@@ -181,7 +186,8 @@ fn retired_connection_runtime_is_released_after_its_last_connection() {
 
 #[test]
 fn retiring_a_generation_deactivates_only_its_own_pre_auth_pool() {
-    let config = entry_config(unused_loopback_port());
+    let reserved = unused_loopback_port();
+    let config = entry_config(reserved.port());
     let server = ProductionServer::from_config(config.clone()).expect("server must compile");
     let retired = server.runtime.load();
 
@@ -211,7 +217,8 @@ fn retiring_a_generation_deactivates_only_its_own_pre_auth_pool() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn reload_cannot_multiply_the_connection_ceiling() {
-    let server = ProductionServer::from_config(tiny_ceiling_config()).expect("must compile");
+    let (_reserved, config) = tiny_ceiling_config();
+    let server = ProductionServer::from_config(config).expect("must compile");
     let governor = server.runtime.authorities.governor.clone();
     let permit_a = governor
         .try_acquire(AdmissionKind::Connection)
@@ -255,7 +262,8 @@ async fn reload_cannot_multiply_the_connection_ceiling() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn reload_cannot_reset_the_direct_dial_rate_gate() {
-    let server = ProductionServer::from_config(tiny_ceiling_config()).expect("must compile");
+    let (_reserved, config) = tiny_ceiling_config();
+    let server = ProductionServer::from_config(config).expect("must compile");
     // The barrier is derived, so its width is whatever the machine
     // supports; exhaust exactly that many permits rather than assuming one.
     let width = server.runtime.policy.direct_barrier.max_concurrent;

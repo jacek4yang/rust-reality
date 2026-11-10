@@ -33,13 +33,8 @@ fn rejected_hot_update_keeps_last_good_runtime() {
 
 #[test]
 fn replay_retention_changes_keep_the_previous_generation_and_require_restart() {
-    let base = rotation_config(
-        unused_loopback_port(),
-        ROTATION_PSK_A,
-        ROTATION_SECRET_A,
-        &[],
-        &[],
-    );
+    let reserved = unused_loopback_port();
+    let base = rotation_config(reserved.port(), ROTATION_PSK_A, ROTATION_SECRET_A, &[], &[]);
     let server = ProductionServer::from_config(base.clone()).expect("landing must compile");
     let previous = server.runtime.load();
     server
@@ -257,7 +252,8 @@ async fn handoff_reload_rotates_keys_without_dropping_in_window_transfers() {
     use crate::protocol::handoff::HandoffError;
     use crate::server::handoff::HandoffLandingError;
 
-    let port = unused_loopback_port();
+    let reserved = unused_loopback_port();
+    let port = reserved.port();
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let base = rotation_config(port, ROTATION_PSK_A, ROTATION_SECRET_A, &[], &[]);
     let server = ProductionServer::from_config(base.clone()).expect("generation 0 must compile");

@@ -58,20 +58,54 @@ pub(super) fn cold_variant(port: u16) -> NodeConfig {
 ///
 /// Only the two ceilings an operator can pin are stated; the rest derive,
 /// which is the point of the reload tests that use this.
-pub(super) fn tiny_ceiling_config() -> ValidatedConfig {
-    fixture::validated(&fixture::entry_without_routing(&format!(
+pub(super) fn tiny_ceiling_config() -> (ReservedLoopbackPort, ValidatedConfig) {
+    let reserved = unused_loopback_port();
+    let config = fixture::validated(&fixture::entry_without_routing(&format!(
         r#""listeners": [{{ "port": {}, "ip": "ipv4Only", "ipv4": "127.0.0.1" }}],
   "routing": {{ "default": "direct" }},
   "runtime": {{ "limits": {{ "maxConnections": 2, "maxHandshakes": 2 }} }}"#,
-        unused_loopback_port()
-    )))
+        reserved.port()
+    )));
+    (reserved, config)
 }
 
-pub(super) fn unused_loopback_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .map(|address| address.port())
-        .unwrap_or_else(|error: io::Error| panic!("reserve loopback port: {error}"))
+/// A loopback TCP port that stays reserved until the holder is released.
+///
+/// The previous helper bound `127.0.0.1:0` and immediately dropped the
+/// listener, so a later `bind(0)` — including the same test's target
+/// socket — could take that port. Packages 42340268763 attempt 1 then
+/// failed with `NXR\x01` on the raw target versus `ping`. Keep this
+/// reservation alive until every other ephemeral bind in the test has
+/// finished, and release it only immediately before the server listens.
+#[must_use = "dropping the reservation frees the port; keep it until the server binds"]
+pub(super) struct ReservedLoopbackPort {
+    listener: Option<std::net::TcpListener>,
+    port: u16,
+}
+
+impl ReservedLoopbackPort {
+    pub(super) fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Drop the OS bind so this process can listen on the port.
+    pub(super) fn release(mut self) -> u16 {
+        let _ = self.listener.take();
+        self.port
+    }
+}
+
+pub(super) fn unused_loopback_port() -> ReservedLoopbackPort {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap_or_else(|error: io::Error| panic!("reserve loopback port: {error}"));
+    let port = listener
+        .local_addr()
+        .unwrap_or_else(|error: io::Error| panic!("reserved loopback address: {error}"))
+        .port();
+    ReservedLoopbackPort {
+        listener: Some(listener),
+        port,
+    }
 }
 
 /// Returns the single listener runtime of a snapshot.
@@ -101,5 +135,28 @@ pub(super) fn outbounds_of(
         ConnectionHandler::Nxr(_) | ConnectionHandler::Handoff(_) => {
             panic!("the fixture listener must be a public VLESS listener")
         }
+    }
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::unused_loopback_port;
+
+    #[test]
+    fn holding_a_reserved_port_prevents_an_ephemeral_bind_from_taking_it() {
+        let reserved = unused_loopback_port();
+        assert!(
+            std::net::TcpListener::bind(("127.0.0.1", reserved.port())).is_err(),
+            "the reserved port must stay exclusive while held"
+        );
+        let other = std::net::TcpListener::bind("127.0.0.1:0").expect("another ephemeral port");
+        assert_ne!(
+            other.local_addr().expect("other address").port(),
+            reserved.port(),
+            "bind(0) must not take a held reservation"
+        );
+        let port = reserved.release();
+        std::net::TcpListener::bind(("127.0.0.1", port))
+            .expect("the released port must be bindable again");
     }
 }
