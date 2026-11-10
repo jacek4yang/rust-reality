@@ -35,7 +35,74 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Check exact-head run selector
-        run: python3 .github/scripts/select_exact_head_run.py --self-test
+        # Inline: AGENTS.md §22 / ADR 0044 forbid active repo-owned shell/Python files.
+        # Keep this block aligned with the Frozen CI/Security bind selector.
+        run: |
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          def select_run(runs, head_sha):
+              if not head_sha:
+                  raise SystemExit('exact-head SHA is missing')
+              eligible = [
+                  run for run in runs
+                  if run.get('headSha') == head_sha
+                  and run.get('status') == 'completed'
+                  and run.get('conclusion') != 'cancelled'
+              ]
+              if not eligible:
+                  raise SystemExit('Exact-head required workflow is missing or only cancelled')
+              latest = eligible[0]
+              if latest.get('conclusion') != 'success':
+                  raise SystemExit('Latest exact-head required workflow is %s' % latest.get('conclusion'))
+              run_id = latest.get('databaseId')
+              if not isinstance(run_id, int):
+                  raise SystemExit('Latest exact-head required workflow has no databaseId')
+              return run_id
+
+
+          def _self_test():
+              sha = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+              other = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+
+              def run(**kwargs):
+                  row = {
+                      'headSha': sha,
+                      'status': 'completed',
+                      'conclusion': 'success',
+                      'databaseId': 1,
+                  }
+                  row.update(kwargs)
+                  return row
+
+              assert select_run([run(databaseId=20), run(databaseId=10)], sha) == 20
+              assert select_run([run(databaseId=22, conclusion='cancelled'), run(databaseId=21)], sha) == 21
+              try:
+                  select_run([run(databaseId=32, conclusion='failure'), run(databaseId=31)], sha)
+              except SystemExit as error:
+                  assert 'failure' in str(error)
+              else:
+                  raise SystemExit('expected later failure to be rejected')
+              for runs in (
+                  [run(conclusion='cancelled')],
+                  [],
+                  [run(headSha=other)],
+                  [run(status='in_progress', conclusion=None)],
+              ):
+                  try:
+                      select_run(runs, sha)
+                  except SystemExit:
+                      pass
+                  else:
+                      raise SystemExit('expected rejection for %r' % (runs,))
+              assert select_run(
+                  [run(databaseId=41, status='in_progress', conclusion=None), run(databaseId=40)],
+                  sha,
+              ) == 40
+              print('select_exact_head_run self-test: ok')
+
+          _self_test()
+          PY
 
       - name: Install Rust toolchain
         run: rustup toolchain install

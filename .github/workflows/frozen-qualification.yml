@@ -156,8 +156,32 @@ jobs:
             read -r workflow check <<< "$entry"
             gh run list --repo "$GITHUB_REPOSITORY" --commit "$HEAD_SHA" --workflow "$workflow" \
               --limit 20 --json headSha,status,conclusion,databaseId > "$RUNNER_TEMP/selected-run.json"
-            run_id=$(python3 .github/scripts/select_exact_head_run.py \
-              --head-sha "$HEAD_SHA" --runs-json "$RUNNER_TEMP/selected-run.json")
+            run_id=$(python3 - <<'PY'
+          import json, os, pathlib
+          def select_run(runs, head_sha):
+              if not head_sha:
+                  raise SystemExit('exact-head SHA is missing')
+              eligible = [
+                  run for run in runs
+                  if run.get('headSha') == head_sha
+                  and run.get('status') == 'completed'
+                  and run.get('conclusion') != 'cancelled'
+              ]
+              if not eligible:
+                  raise SystemExit('Exact-head required workflow is missing or only cancelled')
+              latest = eligible[0]
+              if latest.get('conclusion') != 'success':
+                  raise SystemExit('Latest exact-head required workflow is %s' % latest.get('conclusion'))
+              run_id = latest.get('databaseId')
+              if not isinstance(run_id, int):
+                  raise SystemExit('Latest exact-head required workflow has no databaseId')
+              return run_id
+          runs = json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'selected-run.json').read_text())
+          if not isinstance(runs, list):
+              raise SystemExit('runs JSON must be a list')
+          print(select_run(runs, os.environ['HEAD_SHA']))
+          PY
+            )
             "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check \
               --evidence "$BUNDLE/evidence.json" --case "$check" --run-id "$run_id"
           done
