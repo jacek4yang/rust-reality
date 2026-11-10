@@ -6,10 +6,14 @@
 
 use std::{
     fs,
-    io::{Read, Write},
+    io::{self, Read, Write},
     net::{SocketAddr, TcpStream, UdpSocket},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -128,25 +132,81 @@ fn which(name: &str) -> Option<PathBuf> {
     })
 }
 
-fn spawn_udp_echo() -> (UdpSocket, u16, thread::JoinHandle<()>) {
+/// Loopback UDP echo that stays bound until `stop` (or Drop).
+///
+/// The 10s read timeout is only a backstop so a forgotten stop cannot hang
+/// the process; a timeout does not take the listener down. Callers must start
+/// this after the stack is up so setup cannot outlive an idle echo.
+struct UdpEcho {
+    sock: UdpSocket,
+    port: u16,
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl UdpEcho {
+    fn port(&self) -> u16 {
+        self.port
+    }
+
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Wake a blocked recv without waiting out the 10s backstop timeout.
+        // A fresh socket is used because shutdown is not reliable for UDP.
+        if let Ok(addr) = self.sock.local_addr()
+            && let Ok(wake) = UdpSocket::bind("127.0.0.1:0")
+        {
+            let _ = wake.send_to(&[], addr);
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for UdpEcho {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn spawn_udp_echo() -> UdpEcho {
     let sock = UdpSocket::bind("127.0.0.1:0").expect("echo bind");
     sock.set_read_timeout(Some(Duration::from_secs(10)))
         .expect("echo timeout");
     let port = sock.local_addr().expect("addr").port();
     let echo = sock.try_clone().expect("clone");
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = Arc::clone(&stop);
     let handle = thread::spawn(move || {
         let mut buf = [0_u8; 65535];
-        // Serve a handful of datagrams then exit with the socket.
-        for _ in 0..8 {
+        loop {
+            if stop_thread.load(Ordering::SeqCst) {
+                break;
+            }
             match echo.recv_from(&mut buf) {
                 Ok((n, from)) => {
+                    if stop_thread.load(Ordering::SeqCst) {
+                        break;
+                    }
                     let _ = echo.send_to(&buf[..n], from);
+                }
+                Err(err)
+                    if err.kind() == io::ErrorKind::WouldBlock
+                        || err.kind() == io::ErrorKind::TimedOut =>
+                {
+                    continue;
                 }
                 Err(_) => break,
             }
         }
     });
-    (sock, port, handle)
+    UdpEcho {
+        sock,
+        port,
+        stop,
+        handle: Some(handle),
+    }
 }
 
 /// Minimal SOCKS5 no-auth UDP ASSOCIATE + one datagram round-trip.
@@ -385,15 +445,15 @@ fn firefox_socks5_udp_associate_echo_through_xudp() {
 }
 
 fn browser_udp_echo(fingerprint: &str) {
-    let (_echo_keep, echo_port, echo_thread) = spawn_udp_echo();
     let (_guard, socks_port, _entry_port, _cover, _entry, _client) =
         start_stack(false, fingerprint);
+    let mut echo = spawn_udp_echo();
 
-    let body = socks5_udp_round_trip(socks_port, echo_port, MARKER).unwrap_or_else(|e| {
+    let body = socks5_udp_round_trip(socks_port, echo.port(), MARKER).unwrap_or_else(|e| {
         panic!("udp associate round-trip failed: {e}");
     });
     assert_eq!(body, MARKER, "echo payload mismatch");
-    let _ = echo_thread.join();
+    echo.stop();
 }
 
 #[test]
@@ -405,4 +465,28 @@ fn socks5_udp_443_requires_allow_udp_443_policy() {
         err.contains("udp recv") || err.contains("associate") || err.contains("udp send"),
         "unexpected error shape: {err}"
     );
+}
+
+#[test]
+fn udp_echo_stop_wakes_an_idle_listener_without_waiting_out_the_read_timeout() {
+    let start = Instant::now();
+    let mut echo = spawn_udp_echo();
+    thread::sleep(Duration::from_millis(50));
+    echo.stop();
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "stop should not wait out the 10s read timeout, elapsed={elapsed:?}"
+    );
+}
+
+#[test]
+fn socks5_udp_associate_fails_closed_when_the_echo_never_replies() {
+    let (_guard, socks_port, _entry_port, _cover, _entry, _client) = start_stack(false, "chrome");
+    // A bound port that never reads: the associate must fail closed on recv.
+    let silent = UdpSocket::bind("127.0.0.1:0").expect("silent bind");
+    let silent_port = silent.local_addr().expect("addr").port();
+    let err = socks5_udp_round_trip(socks_port, silent_port, MARKER)
+        .expect_err("must fail when no echo reply arrives");
+    assert!(err.contains("udp recv"), "unexpected error shape: {err}");
 }
