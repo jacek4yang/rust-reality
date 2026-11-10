@@ -10,7 +10,12 @@
 //! External mechanism stays external: `git` for commit identity, `rustc` for the
 //! compiler string, `tar`/`gzip` for the archive, `sha256sum` for the digest.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+static TEMPDIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
 use crate::{
     perf::json_out::Json,
@@ -406,17 +411,27 @@ impl Drop for TempDir {
 /// Creates a uniquely-named temporary directory under the system temp root.
 pub fn tempdir(prefix: &str) -> Result<TempDir, String> {
     let base = std::env::temp_dir();
-    let unique = format!(
-        "{prefix}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_nanos())
-    );
-    let path = base.join(unique);
-    std::fs::create_dir_all(&path)
-        .map_err(|error| format!("could not create temp dir: {error}"))?;
-    Ok(TempDir { path })
+    // Sequence the name so parallel tests in one process cannot share a
+    // pid+nanos directory; create_dir (not create_dir_all) refuses a collision
+    // and the loop picks a new name.
+    for attempt in 0..16 {
+        let unique = format!(
+            "{prefix}-{}-{}-{}",
+            std::process::id(),
+            TEMPDIR_SEQ.fetch_add(1, Ordering::Relaxed),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_nanos())
+                .saturating_add(attempt)
+        );
+        let path = base.join(&unique);
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(TempDir { path }),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("could not create temp dir: {error}")),
+        }
+    }
+    Err("could not create a unique temp dir".to_owned())
 }
 
 #[cfg(test)]
