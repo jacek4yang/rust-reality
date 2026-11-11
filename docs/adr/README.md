@@ -112,3 +112,4 @@ of the law is what it is.
 | [0068](0068-bind-nxr-restart-disconnect-to-local-ack.md) | Bind NXR restart disconnect to the local ACK | Accepted |
 | [0069](0069-native-udp-channel-for-handoff-xudp.md) | Native UDP channel for Handoff XUDP (supersedes ADR 0060 §3) | Accepted |
 | [0070](0070-short-fault-admission-drain.md) | Short-fault admission drain before restore | Accepted |
+| [0071](0071-stock-xray-vision-client-write-half-close.md) | Stock Xray Vision client write half-close is not signaled on the REALITY tunnel | Accepted |
