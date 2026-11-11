@@ -1,10 +1,6 @@
 # ADR 0071: Stock Xray Vision client write half-close is not signaled on the REALITY tunnel
 
-Status: Proposed
-
-This ADR is a proposal only. It does not authorize an implementation or
-protocol change. It must not be treated as Accepted, and it must not be merged
-as anything other than Proposed, without Lumi approval.
+Status: Accepted
 
 ## Context
 
@@ -244,7 +240,9 @@ follow-up that implements a real upstream signal (Option B).
 
 ## Decision
 
-Pending Lumi. This document proposes Status: Proposed only. It does not
-accept a product change. After approval, the ADR may be merged as Proposed
-(documentation). Promoting it to Accepted, or starting Option B work, needs a
-separate Lumi decision.
+Lumi accepted **Option A** on 2026-11-11 08:01 AM PT (America/Los_Angeles).
+This ADR is Accepted as documentation of a stock Xray Vision client interop
+residual. Exact-head Native length-framed stock Xray TCP Vision receipts from
+#479 stay as they are. rust-reality protocol and implementation behavior are
+unchanged. Option B (adopting a future upstream half-close signal) and any
+implementation work remain out of scope until a separate Lumi decision.
