@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     io,
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -1847,4 +1847,106 @@ async fn listen_only_nxr_landing_outage_keeps_idle_warm_socket_usable() {
     line.expect("warm checkout must relay after listen drop");
     target.expect("target I/O must succeed");
     registry.deactivate_warm_pools();
+}
+
+async fn bind_loopback_again(address: SocketAddr) -> TcpListener {
+    let mut last = None;
+    for _ in 0..50 {
+        match TcpListener::bind(address).await {
+            Ok(listener) => return listener,
+            Err(error) => {
+                last = Some(error);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    }
+    panic!("could not re-bind landing {address}: {last:?}");
+}
+
+/// After a listen-only NXR outage, the same [`OutboundRegistry`] must be
+/// able to dial again once a listener returns on that landing address.
+/// Complements the #474 refuse-new-dials tests. Does not claim field RCA
+/// for #253 and does not change production or campaign contracts.
+#[tokio::test(flavor = "current_thread")]
+async fn listen_only_nxr_landing_outage_recovers_when_listener_returns() {
+    const REQUEST: &[u8] = b"ping";
+    const RESPONSE: &[u8] = b"pong";
+
+    let target_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("target must bind");
+    let target_address = target_listener.local_addr().expect("target address");
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener.local_addr().expect("landing address");
+    let key_bytes = [0x71; 32];
+    let handler = nxr_landing_handler(key_bytes);
+    let registry = OutboundRegistry::new(
+        &named(
+            "nxr",
+            OutboundConfig::Nxr(NxrOutboundConfig {
+                address: landing_address.ip().to_string(),
+                port: landing_address.port(),
+                psk: SecretString::new(BASE64_URL_SAFE_NO_PAD.encode(key_bytes)),
+                warm_tcp: Some(false),
+            }),
+        ),
+        &DirectBarrierPolicy::default(),
+        Duration::from_secs(2),
+        FdBudget::new(4_096),
+    );
+    let destination = Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), target_address.port());
+
+    drop(landing_listener);
+    assert_nxr_connect_refused(
+        registry
+            .connect("nxr", &destination)
+            .await
+            .expect_err("new dials must be refused while the landing listener is down"),
+    );
+
+    let landing_listener = bind_loopback_again(landing_address).await;
+    let recovered = async {
+        let (inbound, _) = landing_listener
+            .accept()
+            .await
+            .expect("recovered landing must accept the new dial");
+        handler.handle(inbound).await
+    };
+    let line = async {
+        let OutboundConnectOutcome::Connected(connection) = registry
+            .connect("nxr", &destination)
+            .await
+            .expect("the same registry must connect after the landing listener returns")
+        else {
+            panic!("NXR cannot blackhole");
+        };
+        let (mut stream, permit) = connection.into_parts();
+        stream.write_all(REQUEST).await?;
+        let mut response = [0_u8; 4];
+        stream.read_exact(&mut response).await?;
+        assert_eq!(&response, RESPONSE, "recovered NXR session must relay");
+        stream.shutdown().await?;
+        drop(permit);
+        Ok::<_, io::Error>(())
+    };
+    let target = async {
+        let (mut stream, _) = target_listener.accept().await?;
+        let mut request = [0_u8; 4];
+        stream.read_exact(&mut request).await?;
+        assert_eq!(&request, REQUEST);
+        stream.write_all(RESPONSE).await?;
+        stream.shutdown().await?;
+        Ok::<_, io::Error>(())
+    };
+
+    let (recovered, line, target) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(recovered, line, target)
+    })
+    .await
+    .expect("NXR recovery exchange must not stall");
+    recovered.expect("recovered landing handler must serve the new dial");
+    line.expect("recovered LINE session must relay");
+    target.expect("target I/O must succeed");
 }
