@@ -375,6 +375,90 @@ jobs:
             printf 'verdict=PASS\n'
             grep -E 'test result:|landing_udp_sender_proof|routing_shape PASS|dual_stack_domain_udp PASS' "$LOG" | tail -n20
           } | tee "$Q/stock-xray-handoff-xudp/receipt.txt"
+      - name: Mandatory stock Xray Client to rust-reality NXR LANDING TCP Vision
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test -n "${XRAY_BIN:-}"
+          test -x "$XRAY_BIN"
+          mkdir -p "$Q/stock-xray-nxr-tcp-vision"
+          {
+            printf 'source=%s\nrun=%s\nattempt=%s\n' \
+              "$HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'gate=mandatory-xray-client-to-rust-reality-nxr-tcp-vision\n'
+            printf 'test=stock_xray_client_nxr_tcp_vision_landing_is_sender\n'
+          } | tee "$Q/stock-xray-nxr-tcp-vision/identity.txt"
+          if ! command -v openssl >/dev/null 2>&1; then
+            test -n "${OPENSSL_BIN:-}"
+            test -x "$OPENSSL_BIN"
+            export PATH="$(dirname "$OPENSSL_BIN"):$PATH"
+          fi
+          LOG="$Q/stock-xray-nxr-tcp-vision/cargo-test.log"
+          set +e
+          cargo test --locked --test xudp_nxr_e2e \
+            stock_xray_client_nxr_tcp_vision_landing_is_sender \
+            -- --exact --nocapture --ignored 2>&1 | tee "$LOG"
+          status=${PIPESTATUS[0]}
+          set -e
+          if grep -E 'skip: XRAY_BIN|XRAY_BIN unset' "$LOG"; then
+            printf '%s\n' 'FAIL: stock Xray NXR TCP Vision skipped despite fixture' >&2
+            exit 1
+          fi
+          if ! grep -F 'test stock_xray_client_nxr_tcp_vision_landing_is_sender ... ok' "$LOG"; then
+            printf '%s\n' 'FAIL: stock Xray NXR TCP Vision test did not report ok' >&2
+            exit 1
+          fi
+          if ! grep -F 'landing_tcp_sender_proof' "$LOG"; then
+            printf '%s\n' 'FAIL: missing LANDING TCP sender proof for stock Xray NXR Vision' >&2
+            exit 1
+          fi
+          test "$status" -eq 0
+          {
+            printf 'verdict=PASS\n'
+            grep -E 'test result:|landing_tcp_sender_proof' "$LOG" | tail -n20
+          } | tee "$Q/stock-xray-nxr-tcp-vision/receipt.txt"
+      - name: Mandatory stock Xray Client to rust-reality Handoff LANDING TCP Vision
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          test -n "${XRAY_BIN:-}"
+          test -x "$XRAY_BIN"
+          mkdir -p "$Q/stock-xray-handoff-tcp-vision"
+          {
+            printf 'source=%s\nrun=%s\nattempt=%s\n' \
+              "$HEAD_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf 'gate=mandatory-xray-client-to-rust-reality-handoff-tcp-vision\n'
+            printf 'test=stock_xray_client_handoff_tcp_vision_landing_is_sender\n'
+          } | tee "$Q/stock-xray-handoff-tcp-vision/identity.txt"
+          if ! command -v openssl >/dev/null 2>&1; then
+            test -n "${OPENSSL_BIN:-}"
+            test -x "$OPENSSL_BIN"
+            export PATH="$(dirname "$OPENSSL_BIN"):$PATH"
+          fi
+          LOG="$Q/stock-xray-handoff-tcp-vision/cargo-test.log"
+          set +e
+          cargo test --locked --test xudp_handoff_e2e \
+            stock_xray_client_handoff_tcp_vision_landing_is_sender \
+            -- --exact --nocapture --ignored 2>&1 | tee "$LOG"
+          status=${PIPESTATUS[0]}
+          set -e
+          if grep -E 'skip: XRAY_BIN|XRAY_BIN unset' "$LOG"; then
+            printf '%s\n' 'FAIL: stock Xray Handoff TCP Vision skipped despite fixture' >&2
+            exit 1
+          fi
+          if ! grep -F 'test stock_xray_client_handoff_tcp_vision_landing_is_sender ... ok' "$LOG"; then
+            printf '%s\n' 'FAIL: stock Xray Handoff TCP Vision test did not report ok' >&2
+            exit 1
+          fi
+          if ! grep -F 'landing_tcp_sender_proof' "$LOG"; then
+            printf '%s\n' 'FAIL: missing LANDING TCP sender proof for stock Xray Handoff Vision' >&2
+            exit 1
+          fi
+          test "$status" -eq 0
+          {
+            printf 'verdict=PASS\n'
+            grep -E 'test result:|landing_tcp_sender_proof' "$LOG" | tail -n20
+          } | tee "$Q/stock-xray-handoff-tcp-vision/receipt.txt"
       - name: Mandatory rust-to-rust UDP/443 and genuine HTTP/3 over XUDP
         timeout-minutes: 15
         run: |
@@ -848,6 +932,8 @@ jobs:
               'handoff-xudp-e2e/identity.txt', 'handoff-xudp-e2e/receipt.txt',
               'stock-xray-nxr-xudp/identity.txt', 'stock-xray-nxr-xudp/receipt.txt',
               'stock-xray-handoff-xudp/identity.txt', 'stock-xray-handoff-xudp/receipt.txt',
+              'stock-xray-nxr-tcp-vision/identity.txt', 'stock-xray-nxr-tcp-vision/receipt.txt',
+              'stock-xray-handoff-tcp-vision/identity.txt', 'stock-xray-handoff-tcp-vision/receipt.txt',
               'nxr-udp443-h3/identity.txt', 'nxr-udp443-h3/receipt.txt',
               'handoff-udp443-h3/identity.txt', 'handoff-udp443-h3/receipt.txt',
               'quic-h3-udp443/identity.txt', 'quic-h3-udp443/receipt.txt',

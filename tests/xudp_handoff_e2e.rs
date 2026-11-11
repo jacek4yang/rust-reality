@@ -921,6 +921,163 @@ fn stock_xray_client_handoff_udp_echo_landing_is_sender() {
 }
 
 #[test]
+#[ignore = "requires pinned stock Xray via XRAY_BIN; Exact-head Native runs with --ignored --exact"]
+fn stock_xray_client_handoff_tcp_vision_landing_is_sender() {
+    let xray = require_stock_xray_bin();
+    let root = std::env::temp_dir().join(format!("rr-handoff-xray-tcp-{}", free_port()));
+    let _guard = DirGuard(root.clone());
+    fs::create_dir_all(&root).expect("mkdir stock-xray-handoff-tcp root");
+    let (cover_port, _cover) = start_openssl_cover(&root);
+    let (reality_private, reality_public) = generate_x25519();
+    let (landing_private, landing_public) = generate_x25519();
+    let user_id = generate("uuid");
+    let short_id = generate("short-id");
+    let psk = generate("psk");
+    let entry_port = free_port();
+    let landing_port = free_port();
+    let socks_port = free_port();
+
+    write(
+        &root.join("landing.json"),
+        &format!(
+            r#"{{
+  "role": "landing",
+  "listeners": [{{ "port": {landing_port}, "ip": "ipv4Only", "ipv4": "{landing_ip}" }}],
+  "landing": {{
+    "protocol": "handoff",
+    "psk": "{psk}",
+    "privateKey": "{landing_private}"
+  }}
+}}
+"#,
+            landing_ip = LANDING_IP,
+        ),
+    );
+    write(
+        &root.join("entry.json"),
+        &format!(
+            r#"{{
+  "role": "entry",
+  "listeners": [{{ "port": {entry_port}, "ipv4": "{line_ip}" }}],
+  "reality": {{
+    "cover": "localhost:{cover_port}",
+    "privateKey": "{reality_private}",
+    "serverNames": ["localhost"],
+    "coverOptimization": {{ "enabled": false }}
+  }},
+  "users": [{{
+    "id": "{user_id}",
+    "shortIds": ["{short_id}"],
+    "label": "xray-handoff-tcp"
+  }}],
+  "outbounds": {{
+    "landing-1": {{
+      "type": "handoff",
+      "address": "{landing_ip}",
+      "port": {landing_port},
+      "psk": "{psk}",
+      "landingPublicKey": "{landing_public}",
+      "warmTcp": false
+    }}
+  }},
+  "routing": {{ "default": "landing-1" }}
+}}
+"#,
+            line_ip = LINE_IP,
+            landing_ip = LANDING_IP,
+        ),
+    );
+    write(
+        &root.join("xray-client.json"),
+        &format!(
+            r#"{{
+  "log": {{ "loglevel": "warning" }},
+  "inbounds": [{{
+    "listen": "127.0.0.1",
+    "port": {socks_port},
+    "protocol": "socks",
+    "settings": {{ "auth": "noauth", "udp": false }}
+  }}],
+  "outbounds": [{{
+    "protocol": "vless",
+    "settings": {{
+      "vnext": [{{
+        "address": "127.0.0.1",
+        "port": {entry_port},
+        "users": [{{
+          "id": "{user_id}",
+          "encryption": "none",
+          "flow": "xtls-rprx-vision"
+        }}]
+      }}]
+    }},
+    "streamSettings": {{
+      "network": "tcp",
+      "security": "reality",
+      "realitySettings": {{
+        "fingerprint": "chrome",
+        "serverName": "localhost",
+        "publicKey": "{reality_public}",
+        "shortId": "{short_id}",
+        "spiderX": "/"
+      }}
+    }}
+  }}]
+}}
+"#
+        ),
+    );
+
+    let landing = spawn_logged(
+        "landing",
+        {
+            let mut c = Command::new(bin());
+            c.args(["run", "--config"]).arg(root.join("landing.json"));
+            c
+        },
+        &root.join("landing.log"),
+    );
+    wait_tcp(LANDING_IP, landing_port, Duration::from_secs(20));
+    let landing_pid = landing.0.id();
+    let entry = spawn_logged(
+        "entry",
+        {
+            let mut c = Command::new(bin());
+            c.args(["run", "--config"]).arg(root.join("entry.json"));
+            c
+        },
+        &root.join("entry.log"),
+    );
+    wait_tcp(LINE_IP, entry_port, Duration::from_secs(20));
+    let entry_pid = entry.0.id();
+    let _xray = spawn_logged(
+        "xray-client",
+        {
+            let mut c = Command::new(&xray);
+            c.args(["run", "-c"]).arg(root.join("xray-client.json"));
+            c
+        },
+        &root.join("xray-client.log"),
+    );
+    wait_tcp(LINE_IP, socks_port, Duration::from_secs(20));
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        socks_tcp::assert_length_echo_landing_is_tcp_sender(socks_port, landing_pid, entry_pid);
+    }));
+    if let Err(payload) = result {
+        eprintln!(
+            "stock Xray → Handoff TCP Vision failed\nxray:\n{}\nentry:\n{}\nlanding:\n{}",
+            fs::read_to_string(root.join("xray-client.log")).unwrap_or_default(),
+            fs::read_to_string(root.join("entry.log")).unwrap_or_default(),
+            fs::read_to_string(root.join("landing.log")).unwrap_or_default()
+        );
+        std::panic::resume_unwind(payload);
+    }
+    eprintln!("stock_xray_client_handoff_tcp_vision_landing_is_sender PASS");
+    let _ = (landing, entry);
+}
+
+#[test]
 fn browser_profiles_handoff_tcp_preserve_bytes_and_half_close() {
     for fingerprint in ["chrome", "firefox"] {
         let root = std::env::temp_dir().join(format!("rr-handoff-tcp-browser-{}", free_port()));
