@@ -894,3 +894,76 @@ async fn listen_only_handoff_landing_outage_refuses_new_dials_established_sessio
         "post-outage records must still move through the raw splice"
     );
 }
+
+async fn bind_loopback_again(address: std::net::SocketAddr) -> TcpListener {
+    let mut last = None;
+    for _ in 0..50 {
+        match TcpListener::bind(address).await {
+            Ok(listener) => return listener,
+            Err(error) => {
+                last = Some(error);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    }
+    panic!("could not re-bind landing {address}: {last:?}");
+}
+
+/// After a listen-only Handoff outage, the same [`HandoffLine`] must be
+/// able to transfer again once a listener returns on that landing address.
+/// Complements the #474 refuse-new-transfer tests. Does not claim field RCA
+/// for #253 and does not change production or campaign contracts.
+#[tokio::test(flavor = "current_thread")]
+async fn listen_only_handoff_landing_outage_recovers_when_listener_returns() {
+    let landing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("landing must bind");
+    let landing_address = landing_listener
+        .local_addr()
+        .expect("landing address must exist");
+    let fd_budget = FdBudget::new(4_096);
+    let line = handoff_line(landing_address);
+    let state = test_state(Destination::new(Address::Ipv4(Ipv4Addr::LOCALHOST), 9));
+
+    drop(landing_listener);
+    let refused = match line.transfer(&fd_budget, &state, [0x49; 32]).await {
+        Err(error) => error,
+        Ok(_) => panic!("new handoff transfers must be refused while the landing listener is down"),
+    };
+    match refused {
+        HandoffLineError::Connect(source) => {
+            assert_eq!(source.kind(), io::ErrorKind::ConnectionRefused);
+            assert_eq!(
+                source.raw_os_error(),
+                Some(111),
+                "Linux ECONNREFUSED errno must be 111"
+            );
+        }
+        other => panic!("expected HandoffLineError::Connect ECONNREFUSED, got {other}"),
+    }
+
+    let landing_listener = bind_loopback_again(landing_address).await;
+    let landing = async {
+        let (stream, _) = landing_listener.accept().await?;
+        let mut header = [0_u8; HEADER_LEN];
+        let mut stream = stream;
+        stream.read_exact(&mut header).await?;
+        let total = message_len_from_header(&header).map_err(io::Error::other)?;
+        let mut remainder = vec![0_u8; total - HEADER_LEN];
+        stream.read_exact(&mut remainder).await?;
+        Ok::<_, io::Error>(())
+    };
+    let recovered = async {
+        let (stream, permit) = line
+            .transfer(&fd_budget, &state, [0x4a; 32])
+            .await
+            .expect("the same HandoffLine must transfer after the landing listener returns");
+        drop(stream);
+        drop(permit);
+    };
+
+    let (landing, ()) = timeout(TEST_TIMEOUT, async { tokio::join!(landing, recovered) })
+        .await
+        .expect("Handoff recovery exchange must not time out");
+    landing.expect("recovered landing must consume the new transfer");
+}
