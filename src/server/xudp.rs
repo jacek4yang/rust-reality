@@ -1322,4 +1322,30 @@ mod tests {
         // After purge, a different user may claim the id.
         let _replacement = map.acquire(gid, [2; 16], now).unwrap();
     }
+
+    #[test]
+    fn global_id_grace_starts_at_last_release_not_at_first_acquire() {
+        let map = XudpGlobalMap::new();
+        let acquired = Instant::now();
+        let gid = [0x24_u8; 8];
+        let lease = map.acquire(gid, [1; 16], acquired).unwrap();
+        // The association outlives one idle period before it closes.
+        let released = acquired + XUDP_ASSOCIATION_IDLE + Duration::from_secs(5);
+        lease.release(released);
+        let within_grace = released + XUDP_ASSOCIATION_IDLE - Duration::from_secs(1);
+        map.purge(within_grace);
+        assert_eq!(
+            map.len(),
+            1,
+            "a released id keeps its owner for a full grace"
+        );
+        assert!(matches!(
+            map.acquire(gid, [2; 16], within_grace),
+            Err(XudpSessionError::AssociationConflict)
+        ));
+        let after_grace = released + XUDP_ASSOCIATION_IDLE;
+        map.purge(after_grace);
+        assert!(map.is_empty());
+        let _replacement = map.acquire(gid, [2; 16], after_grace).unwrap();
+    }
 }
