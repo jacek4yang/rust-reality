@@ -457,6 +457,70 @@ mod tests {
     }
 
     #[test]
+    fn reality_and_nxr_landing_failures_keep_their_rejection_categories() {
+        use crate::{
+            logging::RejectionReason,
+            runtime::AdmissionDenied,
+            server::{fallback::FallbackError, reality::RealityAcceptError},
+        };
+        let stall = || {
+            io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                io::Error::new(io::ErrorKind::TimedOut, "stall"),
+            )
+        };
+        let cases = [
+            (
+                ConnectionRunError::Reality(RealityAcceptError::Admission(
+                    AdmissionDenied::DirectConcurrency,
+                )),
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                ConnectionRunError::Reality(RealityAcceptError::HandshakeWriteTimeout),
+                RejectionReason::Timeout,
+            ),
+            (
+                ConnectionRunError::Reality(RealityAcceptError::Fallback(FallbackError::Io(
+                    io::Error::from(io::ErrorKind::ConnectionRefused),
+                ))),
+                RejectionReason::Outbound,
+            ),
+            (
+                ConnectionRunError::Nxr(NxrLandingError::Timeout),
+                RejectionReason::Timeout,
+            ),
+            (
+                ConnectionRunError::Nxr(NxrLandingError::DescriptorBudget),
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                ConnectionRunError::Handoff(HandoffLandingError::DescriptorBudget),
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                ConnectionRunError::Nxr(NxrLandingError::Relay(stall())),
+                RejectionReason::Timeout,
+            ),
+            (
+                ConnectionRunError::Nxr(NxrLandingError::Relay(io::Error::from(
+                    io::ErrorKind::ConnectionReset,
+                ))),
+                RejectionReason::Outbound,
+            ),
+            (
+                ConnectionRunError::Nxr(NxrLandingError::UdpIo(io::Error::from(
+                    io::ErrorKind::ConnectionRefused,
+                ))),
+                RejectionReason::Outbound,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.rejection_reason(), expected, "{error:?}");
+        }
+    }
+
+    #[test]
     fn established_socket_failures_are_not_malformed_protocol_input() {
         use crate::{logging::RejectionReason, server::vision::VisionSessionError};
 
