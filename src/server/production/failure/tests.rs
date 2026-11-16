@@ -367,3 +367,54 @@ fn line_cold_dial_connection_refused_keeps_errno_and_stage() {
         Stage::LandingDestination
     );
 }
+
+#[test]
+fn relay_failures_keep_their_stage_cause_and_errno() {
+    let detail = |stage, cause, errno| {
+        Some(FailureDetail {
+            stage,
+            cause,
+            errno,
+        })
+    };
+    let cases = [
+        // The exact projection ADR 0068 attributes to an injected LANDING kill.
+        (
+            ConnectionRunError::Vision(VisionSessionError::Relay(io::Error::from_raw_os_error(32))),
+            detail(Stage::SessionRelay, Cause::Io, Some(32)),
+        ),
+        (
+            ConnectionRunError::Nxr(NxrLandingError::Relay(io::Error::from_raw_os_error(104))),
+            detail(Stage::SessionRelay, Cause::ConnectionReset, Some(104)),
+        ),
+        (
+            ConnectionRunError::Vision(VisionSessionError::Io(io::Error::from(
+                io::ErrorKind::UnexpectedEof,
+            ))),
+            detail(Stage::SessionRelay, Cause::UnexpectedEof, None),
+        ),
+        (
+            ConnectionRunError::Vision(VisionSessionError::Relay(io::Error::from_raw_os_error(13))),
+            detail(Stage::SessionRelay, Cause::PermissionDenied, Some(13)),
+        ),
+        (
+            ConnectionRunError::Vision(VisionSessionError::Relay(io::Error::from_raw_os_error(99))),
+            detail(Stage::SessionRelay, Cause::AddressUnavailable, Some(99)),
+        ),
+        (
+            ConnectionRunError::Vision(VisionSessionError::HandoffLine(HandoffLineError::Relay(
+                io::Error::from_raw_os_error(104),
+            ))),
+            detail(Stage::HandoffRelay, Cause::ConnectionReset, Some(104)),
+        ),
+        (
+            ConnectionRunError::Handoff(HandoffLandingError::Egress(
+                OutboundConnectError::NxrConnect(io::Error::from_raw_os_error(111)),
+            )),
+            detail(Stage::LandingEgress, Cause::ConnectionRefused, Some(111)),
+        ),
+    ];
+    for (error, expected) in cases {
+        assert_eq!(super::detail(&error), expected, "{error:?}");
+    }
+}
