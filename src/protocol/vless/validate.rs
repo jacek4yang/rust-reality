@@ -376,6 +376,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_vision_xudp_for_a_short_id_owned_by_a_different_uuid() {
+        let request = request_header(ALLOWED_USER, vision_addons(), Command::Mux, None);
+        assert_eq!(
+            authorize_authenticated_vision_xudp(&request, UNKNOWN_USER),
+            Err(RequestValidationError::ShortIdOwnerMismatch)
+        );
+    }
+
+    #[test]
+    fn rejects_vision_xudp_without_the_vision_flow() {
+        for addons in [Vec::new(), vec![0x0a, 0x01, b'x']] {
+            let request = request_header(ALLOWED_USER, addons, Command::Mux, None);
+            assert_eq!(
+                authorize_authenticated_vision_xudp(&request, ALLOWED_USER),
+                Err(RequestValidationError::VisionFlowRequired)
+            );
+        }
+    }
+
     fn request_header(
         user_id: UserId,
         addons: Vec<u8>,
