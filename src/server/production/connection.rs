@@ -412,6 +412,51 @@ mod tests {
     }
 
     #[test]
+    fn line_session_failures_keep_resource_timeout_and_route_categories() {
+        use crate::{
+            logging::RejectionReason,
+            server::{
+                connector::DestinationConnectError, handoff::HandoffLineError,
+                outbound::OutboundConnectError, vision::VisionSessionError,
+            },
+        };
+        let cases = [
+            (
+                VisionSessionError::Outbound(OutboundConnectError::Direct(
+                    DestinationConnectError::DescriptorBudget,
+                )),
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                VisionSessionError::Outbound(OutboundConnectError::Direct(
+                    DestinationConnectError::Allocation,
+                )),
+                RejectionReason::ResourceLimit,
+            ),
+            (
+                VisionSessionError::Outbound(OutboundConnectError::NxrConnect(io::Error::from(
+                    io::ErrorKind::TimedOut,
+                ))),
+                RejectionReason::Timeout,
+            ),
+            (
+                VisionSessionError::Relay(io::Error::from(io::ErrorKind::TimedOut)),
+                RejectionReason::Timeout,
+            ),
+            (
+                VisionSessionError::HandoffLine(HandoffLineError::LandingRejected),
+                RejectionReason::Outbound,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(
+                ConnectionRunError::Vision(error).rejection_reason(),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn established_socket_failures_are_not_malformed_protocol_input() {
         use crate::{logging::RejectionReason, server::vision::VisionSessionError};
 
