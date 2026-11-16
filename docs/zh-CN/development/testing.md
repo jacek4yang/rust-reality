@@ -14,9 +14,14 @@
 
 采集器固定使用签名的 Chrome Stable 156.0.8078.74 及 ChromeDriver 156.0.8078.73，
 以及 Firefox 159.0（en-US win64）与 GeckoDriver 0.37.1。执行前检查下载包的
-SHA-256，浏览器可执行文件必须具有有效发布者签名及预期版本，采集前后的文件哈希
-必须一致。Chrome 使用 Google 官方企业 MSI，其下载地址可变：上游替换文件后，
-固定哈希检查必须失败，不能悄悄更换浏览器。更新后复现时需使用本地保留的已验证安装包。
+SHA-256，浏览器可执行文件必须具有有效发布者签名、预期版本及固定的可执行文件
+SHA-256，采集前后的文件哈希必须一致。Chrome 使用 Google 官方 Authenticode 签名、
+固定为 156.0.8078.74 的安装包，地址为不可变的带版本号 `dl.google.com/release2`
+URL，URL 与 SHA-256 来自 Google 更新服务。工作流将安装包解压到私有目录，不做系统级
+安装。其中的 `chrome.exe` 与保留的 `windows-20261029` 采集（当时使用官方企业 MSI）
+逐字节一致（SHA-256 `4132EB3E…49EC65`）。企业 MSI 地址始终提供当前 Stable，
+因此 2026-10-29 之后其固定哈希检查失败。Chrome for Testing 156.0.8078.74 因
+`chrome.exe` 未签名且与官方二进制不同而未采用。
 版本选择依据 Google 的 [Stable 发布公告](https://chromereleases.googleblog.com/2026/10/)
 及 Mozilla 的 [159.0 发布说明](https://www.firefox.com/en-US/firefox/159.0/releasenotes/)。
 工作流固定这些输入，不自动追随以后的频道更新。

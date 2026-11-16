@@ -52,17 +52,26 @@ jobs:
           }
           if ($browser -eq 'chrome') {
             $expectedVersion = '156.0.8078.74'
-            $distribution = 'Google Chrome Stable, official signed enterprise MSI'
-            $archive = Fetch-Pinned 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi' 'chrome.msi' 'cf1757b01c3af403de494a1b702e2a96701fd10026f5b89be53741689ed25895'
+            # Same chrome.exe as the retained official enterprise MSI capture
+            # (benchmarks/evidence/browser-clienthello/windows-20261029).
+            $expectedBrowserSha256 = '4132EB3E9C5B3978874EED48CB45C21DEBF343A0D383B6D2FB01A5FCF349EC65'
+            $distribution = 'Google Chrome Stable 156.0.8078.74, official signed versioned installer (dl.google.com release2)'
+            # Immutable versioned URL and SHA-256 from Google's update service; the
+            # rolling enterprise MSI URL is not pinnable to one version.
+            $archive = Fetch-Pinned 'https://dl.google.com/release2/chrome/adnbzwqfdty3qpprdhwig7aufvyq_156.0.8078.74/156.0.8078.74_chrome_installer_uncompressed.exe' 'chrome-installer.exe' '8783e3a9a3bb263a6b39da9e9ea6bdb7f31bb9dc9806f9b438ae7c1dde0480b0'
             $driverArchive = Fetch-Pinned 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/win64/chromedriver-win64.zip' 'driver.zip' 'f782a94fc2a16e7dc6be48c6a18516dc708de8e86ff4a736ddc3ff62ff207ebf'
             if ((Get-AuthenticodeSignature $archive).Status -ne 'Valid') { throw 'Chrome installer signature invalid' }
-            $install = Start-Process msiexec.exe -ArgumentList @('/i', $archive, '/qn', '/norestart') -Wait -PassThru
-            if ($install.ExitCode -notin @(0,3010)) { throw "Chrome installation failed: $($install.ExitCode)" }
+            # Private extraction of the embedded archive: no system install, so a
+            # runner-provided Chrome cannot shadow or block the pinned version.
+            & 7z x -t7z $archive "-o$inputs/chrome" -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Chrome extraction failed' }
             Expand-Archive $driverArchive -DestinationPath $inputs
-            $binary = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+            $binary = Join-Path $inputs 'chrome/Chrome-bin/chrome.exe'
             $driver = Join-Path $inputs 'chromedriver-win64/chromedriver.exe'
           } else {
             $expectedVersion = '159.0'
+            # Same firefox.exe as the retained windows-20261029 capture.
+            $expectedBrowserSha256 = 'D8B5ED82FCD9C0F159DC86DC1C4526CEAE981C4D9651F21908B6DE90D0A56D85'
             $distribution = 'Mozilla Firefox official Stable en-US win64'
             $archive = Fetch-Pinned 'https://archive.mozilla.org/pub/firefox/releases/159.0/win64/en-US/Firefox%20Setup%20159.0.exe' 'firefox.exe' '8776887b79925abbdd407fcdfe257d8382b54e24be52a6466426b95a804d6790'
             $driverArchive = Fetch-Pinned 'https://github.com/mozilla/geckodriver/releases/download/v0.37.1/geckodriver-v0.37.1-win64.zip' 'driver.zip' 'dfed9315abe8d2fbc1b6161a2ee8002452e79cf05ee92fdc653a4e26bc35edd8'
@@ -96,6 +105,7 @@ jobs:
           $identity | ConvertTo-Json -Depth 8 | Set-Content "$evidence/identity.json"
           if ($identity.publisher -ne 'Valid') { throw "browser publisher signature invalid: $($identity.publisher)" }
           if ($identity.browserVersion -ne $expectedVersion) { throw 'browser version differs from pinned stable version' }
+          if ($identity.browserSha256 -ne $expectedBrowserSha256) { throw 'browser executable differs from pinned binary' }
           Write-Host 'Browser identity verified; preparing local HTTPS certificates'
           & $tool prepare $private $caPath
           if ($LASTEXITCODE -ne 0) { throw 'test certificate preparation failed' }
