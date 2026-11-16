@@ -248,6 +248,40 @@ fn data_plaintext_round_trips_ipv4_ipv6_and_rejects_bad_addresses() {
 }
 
 #[test]
+fn decode_data_rejects_port_zero_and_unspecified_destinations() {
+    // A decoded DATA destination steers LANDING egress, so the decoder must
+    // fail closed on its own rather than rely on the peer's encoder.
+    let mut v4_port_zero = vec![4_u8, 1, 2, 3, 4];
+    v4_port_zero.extend_from_slice(&0_u16.to_be_bytes());
+    let mut v4_unspecified = vec![4_u8, 0, 0, 0, 0];
+    v4_unspecified.extend_from_slice(&53_u16.to_be_bytes());
+    let mut v6_unspecified = vec![6_u8];
+    v6_unspecified.extend_from_slice(&Ipv6Addr::UNSPECIFIED.octets());
+    v6_unspecified.extend_from_slice(&53_u16.to_be_bytes());
+    for plaintext in [v4_port_zero, v4_unspecified, v6_unspecified] {
+        assert_eq!(decode_data(&plaintext), Err(UdpPacketError::Address));
+    }
+}
+
+#[test]
+fn open_time_window_is_symmetric_and_inclusive() {
+    let public = StaticX25519Key::new(&SECRET).public_key();
+    let mut open = Vec::new();
+    seal_open(&HandoffPsk::new(PSK), &public, USER, NOW, &mut open).expect("seal");
+    for now in [NOW - 30, NOW + 30] {
+        accept_open(&open, &keys(), &replay(), now, 30).expect("open at the window bound");
+    }
+    for now in [NOW - 31, NOW + 31] {
+        assert_eq!(
+            accept_open(&open, &keys(), &replay(), now, 30).unwrap_err(),
+            UdpPacketError::TimeWindow,
+            "an open dated {} s from now must be rejected",
+            NOW.abs_diff(now)
+        );
+    }
+}
+
+#[test]
 fn fragments_reassemble_out_of_order_and_respect_bounds() {
     let plaintext: Vec<u8> = (0..MAX_DATA_PLAINTEXT_LEN)
         .map(|index| u8::try_from(index % 251).expect("byte"))
