@@ -1150,6 +1150,98 @@ async fn uplink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn uplink_direct_on_a_later_record_flushes_staged_framed_bytes_first() {
+    // The Direct boundary arrives on a later record while earlier framed
+    // payload is still staged (both records are buffered, so the loop keeps
+    // batching). The staged bytes and the boundary record's own content must
+    // reach the destination before any raw byte.
+    let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("destination must bind");
+    let destination_address = destination_listener
+        .local_addr()
+        .expect("destination address must exist");
+    let (mut client, server) = tcp_pair().await;
+    let (established_tls, mut client_write_records, mut client_read_records) = tls_states();
+    let established =
+        RealityEstablished::from_test_parts(TlsApplicationIo::new(server, established_tls), USER);
+    let governor = ResourceGovernorPolicy {
+        connect_timeout_ms: 1_000,
+        handshake_timeout_ms: 1_000,
+        fallback_timeout_ms: 1_000,
+        ..ResourceGovernorPolicy::default()
+    };
+    let handler = direct_handler(&governor);
+    let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+    let mut first = vision_request_header(destination_address.port());
+    let mut frame = Vec::new();
+    encoder
+        .encode(b"up-framed", VisionCommand::Continue, false, &mut frame)
+        .expect("Vision payload must encode");
+    first.extend_from_slice(&frame);
+    let mut boundary = Vec::new();
+    encoder
+        .encode(b"up-boundary", VisionCommand::Direct, false, &mut boundary)
+        .expect("Vision boundary must encode");
+
+    let exchange = async {
+        let handle = handler.handle(established);
+        let client_io = async {
+            let mut burst = Vec::new();
+            let mut sealed = Vec::new();
+            for plaintext in [first.as_slice(), boundary.as_slice()] {
+                client_write_records
+                    .seal_into(ContentType::ApplicationData, plaintext, 0, &mut sealed)
+                    .map_err(io::Error::other)?;
+                burst.extend_from_slice(&sealed);
+            }
+            burst.extend_from_slice(b"up-raw");
+            client.write_all(&burst).await?;
+            client.shutdown().await?;
+            loop {
+                let mut record = read_tls_record(&mut client, TEST_TIMEOUT)
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_wire();
+                let opened = client_read_records
+                    .open_in_place(&mut record)
+                    .map_err(io::Error::other)?;
+                match opened.content_type() {
+                    ContentType::ApplicationData => {}
+                    ContentType::Alert if opened.plaintext() == [1, 0] => break,
+                    _ => return Err(io::Error::other("unexpected outer TLS content")),
+                }
+            }
+            Ok::<_, io::Error>(())
+        };
+        let destination_io = async {
+            let (mut destination, _) = destination_listener.accept().await?;
+            let mut request = Vec::new();
+            destination.read_to_end(&mut request).await?;
+            destination.write_all(b"pong").await?;
+            destination.shutdown().await?;
+            Ok::<_, io::Error>(request)
+        };
+        tokio::join!(handle, client_io, destination_io)
+    };
+    let (stats, client_result, destination_result) = timeout(TEST_TIMEOUT, exchange)
+        .await
+        .expect("later-record direct exchange must not time out");
+    assert_eq!(
+        destination_result.expect("destination I/O must succeed"),
+        b"up-framedup-boundaryup-raw",
+        "staged framed bytes must precede the raw phase, none dropped"
+    );
+    client_result.expect("client I/O must succeed");
+    let stats = stats.expect("later-record direct handler must succeed");
+    assert!(stats.uplink_direct());
+    assert_eq!(
+        stats.uplink_direct_at_bytes(),
+        length_u64(b"up-framed".len() + b"up-boundary".len()),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn downlink_direct_drains_pipelined_raw_bytes_ahead_of_the_raw_relay() {
     let destination_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
@@ -1693,6 +1785,21 @@ async fn tcp_pair() -> (TcpStream, TcpStream) {
 
 fn vision_request(destination_port: u16, payload: &[u8]) -> Vec<u8> {
     vision_request_with_command(destination_port, payload, VisionCommand::End)
+}
+
+fn vision_request_header(destination_port: u16) -> Vec<u8> {
+    let mut addons = vec![0x0a, 0x10];
+    addons.extend_from_slice(VISION_FLOW.as_bytes());
+    let mut request = Vec::new();
+    request.push(VERSION);
+    request.extend_from_slice(USER.as_bytes());
+    request.push(u8::try_from(addons.len()).unwrap_or(u8::MAX));
+    request.extend_from_slice(&addons);
+    request.push(Command::Tcp.as_byte());
+    request.extend_from_slice(&destination_port.to_be_bytes());
+    request.push(1);
+    request.extend_from_slice(&Ipv4Addr::LOCALHOST.octets());
+    request
 }
 
 fn vision_request_with_command(
