@@ -294,3 +294,50 @@ fn test_cache(max_entries: u32) -> ReplayCache {
 const fn replay_key(value: u8) -> ReplayKey {
     ReplayKey([value; 32])
 }
+
+/// Production retains committed entries far longer than a pending handshake
+/// may last (120 s vs 10 s by default). With distinct TTLs, a committed
+/// ClientHello must keep rejecting replays after the pending deadline passes
+/// and its stale pending expiry record is purged, and only release once the
+/// committed retention elapses.
+#[test]
+fn committed_entry_outlives_its_pending_deadline() {
+    let config = ResourceGovernorPolicy {
+        max_replay_entries: 4,
+        handshake_timeout_ms: 10,
+        replay_retention_ms: 100,
+        ..ResourceGovernorPolicy::default()
+    };
+    let cache = ReplayCache::new(ResourceGovernor::new(&config), &config);
+    let key = replay_key(9);
+    let started = Instant::now();
+    let committed_at = started + Duration::from_millis(5);
+    cache
+        .reserve_key_at(key, started)
+        .expect("first reservation")
+        .commit_at(committed_at)
+        .expect("in-window commit");
+
+    // Past the pending deadline: purging the stale pending record must keep
+    // the committed entry, and an exact replay stays rejected.
+    let after_pending = started + Duration::from_millis(50);
+    assert_eq!(cache.purge_expired_at(after_pending), 0);
+    assert_eq!(cache.entry_count(), 1);
+    assert!(matches!(
+        cache.reserve_key_at(key, after_pending),
+        Err(ReplayError::Duplicate)
+    ));
+    let just_before_release = committed_at + Duration::from_millis(99);
+    assert!(matches!(
+        cache.reserve_key_at(key, just_before_release),
+        Err(ReplayError::Duplicate)
+    ));
+
+    // Once committed retention elapses the entry and its permit are released.
+    let released = committed_at + Duration::from_millis(100);
+    assert_eq!(cache.purge_expired_at(released), 1);
+    assert_eq!(cache.entry_count(), 0);
+    cache
+        .reserve_key_at(key, released)
+        .expect("retention elapsed; key admissible again");
+}
