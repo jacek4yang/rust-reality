@@ -404,6 +404,114 @@ async fn fd_pressure_reclaims_ready_permits_and_recovers() {
     assert_eq!(fd_budget.underflows(), 0);
 }
 
+/// A listener whose accept queue is already full and is never drained, so
+/// further connects stay in SYN retransmission: every pool dial to it remains
+/// in flight until it is cancelled or the connector timeout expires.
+struct StalledTarget {
+    target: Arc<str>,
+    _listener: tokio::net::TcpListener,
+    _backlog: Vec<std::net::TcpStream>,
+}
+
+impl StalledTarget {
+    fn start() -> Self {
+        let socket = tokio::net::TcpSocket::new_v4().expect("stalled socket");
+        socket
+            .bind((Ipv4Addr::LOCALHOST, 0).into())
+            .expect("stalled target must bind");
+        let listener = socket.listen(1).expect("stalled target must listen");
+        let address = listener.local_addr().expect("stalled address must exist");
+        let mut backlog = Vec::new();
+        for _ in 0..8 {
+            match std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)) {
+                Ok(stream) => backlog.push(stream),
+                Err(_) => break,
+            }
+        }
+        Self {
+            target: Arc::from(address.to_string()),
+            _listener: listener,
+            _backlog: backlog,
+        }
+    }
+
+    fn pool(
+        &self,
+        generation: u64,
+        policy: &WarmConnectionPolicy,
+        authority: WarmPoolAuthority,
+        fd_budget: FdBudget,
+    ) -> AdaptiveTcpPool {
+        AdaptiveTcpPool::new(
+            Arc::clone(&self.target),
+            generation,
+            DestinationConnector::with_environment(
+                Duration::from_secs(30),
+                NetworkConfig::default(),
+                NetworkEnvironment::detect(),
+            ),
+            fd_budget,
+            authority,
+            policy,
+        )
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn resource_pressure_cancels_in_flight_speculative_dials() {
+    let target = StalledTarget::start();
+    let policy = policy();
+    let pressure = PressureGauge::new();
+    let authority = WarmPoolAuthority::new(&policy, 1, pressure.clone());
+    let fd_budget = FdBudget::new(64);
+    let pool = target.pool(63, &policy, authority.clone(), fd_budget.clone());
+    assert!(pool.activate());
+    wait_for(|| pool.snapshot().connecting > 0).await;
+    assert_eq!(
+        pool.snapshot().ready,
+        0,
+        "the stalled target never completes a dial"
+    );
+
+    pressure.set(ResourcePressure::Pressure);
+    // Without cancellation the dials would hold their connecting permits and
+    // descriptor units until the 30s connector timeout.
+    wait_for(|| {
+        pool.snapshot().connecting == 0 && authority.counts() == (0, 0) && fd_budget.in_use() == 0
+    })
+    .await;
+
+    pressure.set(ResourcePressure::Normal);
+    pool.deactivate();
+    assert_eq!(fd_budget.underflows(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn fd_pressure_cancels_in_flight_speculative_dials() {
+    let target = StalledTarget::start();
+    let policy = policy();
+    let authority = WarmPoolAuthority::new(&policy, 1, PressureGauge::new());
+    let fd_budget = FdBudget::new(64);
+    let pool = target.pool(64, &policy, authority.clone(), fd_budget.clone());
+    assert!(pool.activate());
+    wait_for(|| pool.snapshot().connecting > 0).await;
+
+    let mut held = Vec::new();
+    while fd_budget.pressure() == FdPressure::Normal {
+        held.push(fd_budget.try_acquire(1).expect("budget below capacity"));
+    }
+    wait_for(|| pool.snapshot().connecting == 0 && authority.counts() == (0, 0)).await;
+    assert_eq!(
+        fd_budget.in_use(),
+        held.len() as u64,
+        "cancelled dials must return their descriptor units"
+    );
+
+    drop(held);
+    pool.deactivate();
+    assert_eq!(fd_budget.underflows(), 0);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn fd_pressure_backoff_bounds_refill_churn() {
     let fixture = CoverFixture::start().await;
