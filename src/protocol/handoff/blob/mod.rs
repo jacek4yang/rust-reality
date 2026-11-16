@@ -9,6 +9,8 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 mod cursor;
 mod policy;
+#[cfg(test)]
+mod tests;
 
 use cursor::BlobCursor;
 use policy::{decode_policy_snapshot, encode_policy_snapshot, encoded_policy_len};
