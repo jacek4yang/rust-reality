@@ -128,6 +128,14 @@ mod tests {
             decode_authenticated_request(&encoded, &key, NOW + 2, 1),
             Err(NxrProtocolError::TimeWindow)
         );
+        // Future-dated requests must be rejected as well: a one-sided window
+        // would let a captured request be replayed until its timestamp passes.
+        assert_eq!(
+            decode_authenticated_request(&encoded, &key, NOW - 2, 1),
+            Err(NxrProtocolError::TimeWindow)
+        );
+        assert!(decode_authenticated_request(&encoded, &key, NOW - 1, 1).is_ok());
+        assert!(decode_authenticated_request(&encoded, &key, NOW + 1, 1).is_ok());
         encoded.push(0);
         assert_eq!(
             decode_authenticated_request(&encoded, &key, NOW, 1),
