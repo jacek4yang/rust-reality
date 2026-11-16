@@ -18,11 +18,17 @@ the bounded independent decoder; see ADR 0061 for the evidence boundary.
 The collector pins signed Chrome Stable 156.0.8078.74 with ChromeDriver
 156.0.8078.73 and Firefox 159.0 (en-US win64) with GeckoDriver 0.37.1. Archive
 SHA-256 values are checked before execution, and the browser executable must
-have a valid publisher signature and the expected version. The executable hash
-must remain unchanged throughout collection. Chrome uses Google's official
-enterprise MSI. Its download URL is mutable: a future replacement fails the
-pinned digest check rather than silently changing the browser. Preserve the
-verified input package locally when reproducing this capture after an update.
+have a valid publisher signature, the expected version, and the pinned
+executable SHA-256. The executable hash must remain unchanged throughout
+collection. Chrome uses Google's official Authenticode-signed installer for
+exactly 156.0.8078.74 at its immutable versioned `dl.google.com/release2` URL;
+the URL and SHA-256 come from Google's update service. The workflow extracts
+the installer into a private directory instead of installing it system-wide.
+Its `chrome.exe` is byte-identical (SHA-256 `4132EB3E…49EC65`) to the binary in
+the retained `windows-20261029` capture, which used the official enterprise
+MSI. That MSI URL serves whatever is current Stable, so its digest pin failed
+after 2026-10-29. Chrome for Testing 156.0.8078.74 was rejected because its
+`chrome.exe` is unsigned and differs from the official binary.
 Version selection used Google's [Stable release announcement](https://chromereleases.googleblog.com/2026/10/)
 and Mozilla's
 [159.0 release notes](https://www.firefox.com/en-US/firefox/159.0/releasenotes/).
