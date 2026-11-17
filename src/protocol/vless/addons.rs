@@ -204,4 +204,41 @@ mod tests {
             Err(AddonsDecodeError::Truncated)
         );
     }
+
+    #[test]
+    fn rejects_field_number_zero_even_with_a_valid_wire_type() {
+        assert_eq!(
+            Addons::parse(&[0x02, 0x00]),
+            Err(AddonsDecodeError::InvalidFieldNumber)
+        );
+    }
+
+    #[test]
+    fn tenth_varint_byte_may_only_carry_the_top_bit() {
+        // Field 3, varint wire type, value u64::MAX: accepted like protowire.
+        let mut max = vec![0x18];
+        max.extend_from_slice(&[0xff; 9]);
+        max.push(0x01);
+        assert_eq!(Addons::parse(&max), Ok(Addons::default()));
+
+        let mut overflow = vec![0x18];
+        overflow.extend_from_slice(&[0xff; 9]);
+        overflow.push(0x02);
+        assert_eq!(
+            Addons::parse(&overflow),
+            Err(AddonsDecodeError::VarintOverflow)
+        );
+    }
+
+    #[test]
+    fn fixed_width_unknown_fields_missing_one_byte_are_truncated() {
+        assert_eq!(
+            Addons::parse(&[0x1d, 0, 0, 0]),
+            Err(AddonsDecodeError::Truncated)
+        );
+        assert_eq!(
+            Addons::parse(&[0x19, 0, 0, 0, 0, 0, 0, 0]),
+            Err(AddonsDecodeError::Truncated)
+        );
+    }
 }
