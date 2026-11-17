@@ -89,3 +89,40 @@ pub struct FailureDetail {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errno: Option<i32>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FailureCause;
+
+    /// Operators (troubleshooting guide) and offline stability evaluation match
+    /// these exact strings, so a serde rename is a log-contract change.
+    #[test]
+    fn failure_causes_serialize_to_their_documented_snake_case_names() {
+        let cases = [
+            (FailureCause::Timeout, "timeout"),
+            (FailureCause::ConnectionRefused, "connection_refused"),
+            (FailureCause::ConnectionReset, "connection_reset"),
+            (FailureCause::ConnectionAborted, "connection_aborted"),
+            (FailureCause::Unreachable, "unreachable"),
+            (FailureCause::PermissionDenied, "permission_denied"),
+            (FailureCause::AddressUnavailable, "address_unavailable"),
+            (FailureCause::UnexpectedEof, "unexpected_eof"),
+            (FailureCause::Io, "io"),
+            (FailureCause::Admission, "admission"),
+            (FailureCause::DescriptorBudget, "descriptor_budget"),
+            (FailureCause::Allocation, "allocation"),
+            (FailureCause::Policy, "policy"),
+            (FailureCause::Protocol, "protocol"),
+            (FailureCause::Clock, "clock"),
+            (FailureCause::Entropy, "entropy"),
+            (FailureCause::LandingRejected, "landing_rejected"),
+            (FailureCause::Internal, "internal"),
+        ];
+        for (cause, name) in cases {
+            assert_eq!(
+                serde_json::to_value(cause).expect("cause must serialize"),
+                serde_json::Value::String(name.to_owned()),
+            );
+        }
+    }
+}
