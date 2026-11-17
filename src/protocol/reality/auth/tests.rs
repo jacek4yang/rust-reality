@@ -197,6 +197,109 @@ fn rejects_unknown_short_id_and_time_skew() {
 }
 
 #[test]
+fn rejects_a_non_zero_reserved_plaintext_byte() {
+    let (authenticator, _) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
+    let mut plaintext = [0_u8; 16];
+    plaintext[..4].copy_from_slice(&[1, 2, 3, 1]);
+    plaintext[4..8].copy_from_slice(&NOW.to_be_bytes());
+    plaintext[8..].copy_from_slice(&SHORT_ID);
+    assert!(matches!(
+        authenticator.authenticate(&sealed_hello(&plaintext), u64::from(NOW)),
+        Err(RealityAuthError::ReservedByte)
+    ));
+}
+
+#[test]
+fn rejects_a_client_hello_without_tls13() {
+    let (authenticator, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
+    let mut message = hello.raw_message().to_vec();
+    // supported_versions (0x002b) offering only TLS 1.3 becomes TLS 1.2 only.
+    let tls13_only = [0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04];
+    let offset = message
+        .windows(tls13_only.len())
+        .position(|window| window == tls13_only)
+        .expect("fixture offers TLS 1.3 through supported_versions");
+    message[offset + tls13_only.len() - 1] = 0x03;
+    let tls12 = ClientHello::parse_message(&message).expect("TLS 1.2 ClientHello must parse");
+    assert!(!tls12.offers_tls13());
+    assert!(matches!(
+        authenticator.authenticate(&tls12, u64::from(NOW)),
+        Err(RealityAuthError::UnsupportedTls)
+    ));
+}
+
+#[test]
+fn accepts_any_one_of_several_configured_server_names() {
+    let (_, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
+    let mut config = auth_config([0x11; 32]);
+    config.server_names = Some(vec![
+        "other.example.com".to_owned(),
+        "www.example.com".to_owned(),
+    ]);
+    let authenticator = compile_config(&config, &["aabb"]).expect("configuration must compile");
+    authenticator
+        .authenticate(&hello, u64::from(NOW))
+        .expect("a hello matching any configured name must authenticate");
+}
+
+#[test]
+fn zero_max_time_diff_disables_the_skew_check() {
+    let (_, hello) = valid_handshake(SHORT_ID, NOW, &["aabb"]);
+    let mut config = auth_config([0x11; 32]);
+    config.max_time_diff_ms = Some(0);
+    let authenticator = compile_config(&config, &["aabb"]).expect("configuration must compile");
+    for now in [0, u64::from(NOW) + 86_400 * 365] {
+        authenticator
+            .authenticate(&hello, now)
+            .expect("maxTimeDiff 0 must accept any client time, as stock Xray does");
+    }
+}
+
+#[test]
+fn compile_backstops_reject_incomplete_or_ambiguous_identity_sets() {
+    let mut no_names = auth_config([0x11; 32]);
+    no_names.server_names = Some(Vec::new());
+    assert!(matches!(
+        compile_config(&no_names, &["aabb"]),
+        Err(RealityAuthConfigError::MissingServerName)
+    ));
+
+    let mut one_bad_name = auth_config([0x11; 32]);
+    one_bad_name.server_names = Some(vec!["www.example.com".to_owned(), "www.*.edu".to_owned()]);
+    assert!(matches!(
+        compile_config(&one_bad_name, &["aabb"]),
+        Err(RealityAuthConfigError::InvalidServerName)
+    ));
+
+    let config = auth_config([0x11; 32]);
+    assert!(matches!(
+        compile_config(&config, &[]),
+        Err(RealityAuthConfigError::MissingShortId)
+    ));
+    assert!(matches!(
+        compile_config(&config, &["aabb", "AABB"]),
+        Err(RealityAuthConfigError::DuplicateShortId)
+    ));
+}
+
+#[test]
+fn short_id_decoding_rejects_empty_odd_and_non_hex_input() {
+    for invalid in ["", "abc", "0g", "a", "0123456789abcdef00"] {
+        assert!(
+            matches!(
+                super::decode_short_id(invalid),
+                Err(RealityAuthConfigError::InvalidShortId)
+            ),
+            "{invalid:?} must be rejected"
+        );
+    }
+    assert_eq!(
+        super::decode_short_id("0123456789abcdef"),
+        Ok([0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef])
+    );
+}
+
+#[test]
 fn rejects_non_contributory_x25519_share() {
     let config = auth_config([0x11; 32]);
     let authenticator = compile_config(&config, &["aabb"]).expect("configuration must compile");
@@ -268,6 +371,19 @@ fn valid_handshake(
     client_time: u32,
     configured_short_ids: &[&str],
 ) -> (RealityAuthenticator, ClientHello) {
+    let mut plaintext = [0_u8; 16];
+    plaintext[..3].copy_from_slice(&[1, 2, 3]);
+    plaintext[4..8].copy_from_slice(&client_time.to_be_bytes());
+    plaintext[8..].copy_from_slice(&short_id);
+    let hello = sealed_hello(&plaintext);
+    let config = auth_config([0x11; 32]);
+    let authenticator =
+        compile_config(&config, configured_short_ids).expect("configuration must compile");
+    (authenticator, hello)
+}
+
+/// Seals `plaintext` into a ClientHello for the fixed test server key.
+fn sealed_hello(plaintext: &[u8; 16]) -> ClientHello {
     let server_secret = StaticSecret::from([0x11; 32]);
     let client_secret = StaticSecret::from([0x22; 32]);
     let client_public = PublicKey::from(&client_secret).to_bytes();
@@ -283,11 +399,7 @@ fn valid_handshake(
         X25519_GROUP,
         &client_public,
     );
-    let mut plaintext = [0_u8; 16];
-    plaintext[..3].copy_from_slice(&[1, 2, 3]);
-    plaintext[4..8].copy_from_slice(&client_time.to_be_bytes());
-    plaintext[8..].copy_from_slice(&short_id);
-    let ciphertext = seal_session_id(auth_key.as_bytes(), &[0x33; 12], &plaintext, &zero_message);
+    let ciphertext = seal_session_id(auth_key.as_bytes(), &[0x33; 12], plaintext, &zero_message);
     let message = client_hello_with_key_share(
         random,
         &ciphertext,
@@ -296,11 +408,7 @@ fn valid_handshake(
         X25519_GROUP,
         &client_public,
     );
-    let hello = ClientHello::parse_message(&message).expect("ClientHello must parse");
-    let config = auth_config([0x11; 32]);
-    let authenticator =
-        compile_config(&config, configured_short_ids).expect("configuration must compile");
-    (authenticator, hello)
+    ClientHello::parse_message(&message).expect("ClientHello must parse")
 }
 
 fn compile_config(

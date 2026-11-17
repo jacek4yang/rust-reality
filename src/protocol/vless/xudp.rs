@@ -737,4 +737,143 @@ mod tests {
             "failed encode must be failure-atomic"
         );
     }
+
+    /// New+Data+UDP to 1.1.1.1:53 with `extra` appended to the metadata.
+    fn new_meta(option: u8, extra: &[u8]) -> Vec<u8> {
+        let mut meta = vec![0x00, 0x00, 0x01, option, 0x02, 0x00, 0x35, 0x01, 1, 1, 1, 1];
+        meta.extend_from_slice(extra);
+        meta
+    }
+
+    fn frame(meta: &[u8], payload: Option<&[u8]>) -> Vec<u8> {
+        let mut out = u16::try_from(meta.len()).unwrap().to_be_bytes().to_vec();
+        out.extend_from_slice(meta);
+        if let Some(payload) = payload {
+            out.extend_from_slice(&u16::try_from(payload.len()).unwrap().to_be_bytes());
+            out.extend_from_slice(payload);
+        }
+        out
+    }
+
+    #[test]
+    fn rejects_metadata_shorter_than_the_fixed_header() {
+        for length in 0..4_u8 {
+            let mut input = vec![0x00, length];
+            input.extend(std::iter::repeat_n(0, usize::from(length) + 4));
+            assert_eq!(
+                decode_xudp_packet(&input),
+                Err(XudpCodecError::MetaTooSmall {
+                    length: usize::from(length)
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_trailing_metadata_for_every_status() {
+        // New without the Data option never carries a GlobalID: 8 extra bytes are trailing.
+        assert_eq!(
+            decode_xudp_packet(&frame(&new_meta(0x00, &[7; 8]), None)),
+            Err(XudpCodecError::TrailingMetaBytes { remaining: 8 })
+        );
+        // New with Data: GlobalID consumed, anything after it is trailing.
+        assert_eq!(
+            decode_xudp_packet(&frame(&new_meta(0x01, &[7; 9]), Some(b"x"))),
+            Err(XudpCodecError::TrailingMetaBytes { remaining: 1 })
+        );
+        // Keep with an address rewrite followed by one extra byte.
+        let keep = [
+            0x00, 0x00, 0x02, 0x01, 0x02, 0x00, 0x35, 0x01, 1, 1, 1, 1, 0xEE,
+        ];
+        assert_eq!(
+            decode_xudp_packet(&frame(&keep, Some(b"x"))),
+            Err(XudpCodecError::TrailingMetaBytes { remaining: 1 })
+        );
+        // End and KeepAlive are header-only.
+        for status in [0x03, 0x04] {
+            assert_eq!(
+                decode_xudp_packet(&frame(&[0x00, 0x00, status, 0x00, 0xEE], None)),
+                Err(XudpCodecError::TrailingMetaBytes { remaining: 1 })
+            );
+        }
+    }
+
+    #[test]
+    fn keep_rejects_tcp_and_unknown_networks_distinctly() {
+        let keep_tcp = [0x00, 0x00, 0x02, 0x01, 0x01, 0x00, 0x35, 0x01, 1, 1, 1, 1];
+        assert_eq!(
+            decode_xudp_packet(&frame(&keep_tcp, Some(b"x"))),
+            Err(XudpCodecError::TcpNetworkRejected)
+        );
+        let keep_unknown = [0x00, 0x00, 0x02, 0x01, 0x03];
+        assert_eq!(
+            decode_xudp_packet(&frame(&keep_unknown, Some(b"x"))),
+            Err(XudpCodecError::UnknownNetwork(0x03))
+        );
+    }
+
+    #[test]
+    fn header_only_frames_consume_no_payload_length() {
+        // End and KeepAlive without the Data option stop at the metadata, so a
+        // following frame in the same buffer is left untouched.
+        for (status, expected) in [
+            (0x03, XudpSessionStatus::End),
+            (0x04, XudpSessionStatus::KeepAlive),
+        ] {
+            let mut input = frame(&[0x00, 0x00, status, 0x00], None);
+            input.extend_from_slice(&[0x00, 0x04]);
+            let (packet, consumed) = decode_xudp_packet(&input).expect("header-only frame");
+            assert_eq!(packet.status, expected);
+            assert_eq!(consumed, 6);
+            assert!(packet.payload.is_empty());
+        }
+    }
+
+    #[test]
+    fn decoder_enforces_the_stock_payload_cap_exactly() {
+        let at_cap = vec![0x5A; XUDP_MAX_PAYLOAD_LEN];
+        let (packet, consumed) =
+            decode_xudp_packet(&frame(&new_meta(0x01, &[]), Some(&at_cap))).expect("at cap");
+        assert_eq!(packet.payload.len(), XUDP_MAX_PAYLOAD_LEN);
+        assert_eq!(consumed, 2 + 12 + 2 + XUDP_MAX_PAYLOAD_LEN);
+
+        let over = vec![0x5A; XUDP_MAX_PAYLOAD_LEN + 1];
+        assert_eq!(
+            decode_xudp_packet(&frame(&new_meta(0x01, &[]), Some(&over))),
+            Err(XudpCodecError::PayloadTooLarge {
+                length: XUDP_MAX_PAYLOAD_LEN + 1
+            })
+        );
+    }
+
+    #[test]
+    fn domain_addresses_must_be_non_empty_utf8() {
+        let domain_meta = |domain: &[u8]| {
+            let mut meta = vec![0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x35, 0x02];
+            meta.push(u8::try_from(domain.len()).unwrap());
+            meta.extend_from_slice(domain);
+            meta
+        };
+        assert_eq!(
+            decode_xudp_packet(&frame(&domain_meta(b""), None)),
+            Err(XudpCodecError::EmptyDomain)
+        );
+        assert_eq!(
+            decode_xudp_packet(&frame(&domain_meta(&[0xFF, 0xFE]), None)),
+            Err(XudpCodecError::InvalidDomainUtf8)
+        );
+        let (packet, _) = decode_xudp_packet(&frame(&domain_meta(b"dns.test"), None)).unwrap();
+        assert_eq!(
+            packet.destination,
+            Some(Destination::new(Address::Domain("dns.test".to_owned()), 53))
+        );
+
+        let mut out = vec![0xAA];
+        let empty = Destination::new(Address::Domain(String::new()), 53);
+        assert_eq!(
+            encode_xudp_packet(&empty, b"x", true, None, false, &mut out),
+            Err(XudpCodecError::EmptyDomain)
+        );
+        assert_eq!(out, vec![0xAA], "failed encode must be failure-atomic");
+    }
 }
