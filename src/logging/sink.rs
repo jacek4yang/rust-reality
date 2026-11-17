@@ -937,6 +937,100 @@ mod tests {
 
     static TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
+    /// rr-dev qualification (Native benches, Frozen stability) matches these
+    /// `event` tags in product logs; a rename would only surface there.
+    #[test]
+    fn tooling_consumed_events_keep_their_wire_tags() {
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 443));
+        let cases = [
+            (
+                LogEvent::GenerationRetired { generation: 1 },
+                "generation_retired",
+            ),
+            (
+                LogEvent::ConnectionTaskOwnership {
+                    address,
+                    tracked_tasks: 0,
+                },
+                "connection_task_ownership",
+            ),
+            (
+                LogEvent::ResourceOwnership {
+                    handshakes: 0,
+                    fallbacks: 0,
+                    crypto_operations: 0,
+                    dns_lookups: 0,
+                    pre_auth_idle_connections: 0,
+                    pre_auth_idle_capacity: 0,
+                    fd_capacity: 0,
+                    pipe_pair_capacity: None,
+                    warm_socket_capacity: 0,
+                    replay_capacity: 0,
+                    replay_expiry_ms: 0,
+                    retirement_deadline_ms: 0,
+                    generation: 0,
+                    admitted_connections: 0,
+                    replay_entries: 0,
+                    fd_units_in_use: 0,
+                    retained_pipe_pairs: None,
+                    retained_pipe_bytes: None,
+                    warm_ready: 0,
+                    warm_connecting: 0,
+                },
+                "resource_ownership",
+            ),
+            (
+                LogEvent::ListenerStarted {
+                    tag: "in".to_owned(),
+                    address,
+                },
+                "listener_started",
+            ),
+            (
+                LogEvent::ConnectionClosed { peer: address },
+                "connection_closed",
+            ),
+            (
+                LogEvent::ConfigurationRejected {
+                    field: "inbounds".to_owned(),
+                },
+                "configuration_rejected",
+            ),
+            (
+                LogEvent::AcceptErrorRecovered {
+                    address,
+                    accept_error_class: "descriptorPressure",
+                    errno: None,
+                    accept_backoff_ms: 0,
+                },
+                "accept_error_recovered",
+            ),
+            (
+                LogEvent::ConnectionCompleted {
+                    duration_ms: 0,
+                    uplink_bytes: 0,
+                    downlink_bytes: 0,
+                    uplink_direct: false,
+                    downlink_direct: false,
+                    relay_backend: None,
+                    uplink_direct_at_bytes: 0,
+                    downlink_direct_at_bytes: 0,
+                    uplink_backend: None,
+                    downlink_backend: None,
+                    uplink_handoff_delay_us: 0,
+                    downlink_handoff_delay_us: 0,
+                    handoff_server_sequence: None,
+                    pipe_capacity_downgraded: false,
+                },
+                "connection_completed",
+            ),
+        ];
+        for (event, tag) in cases {
+            let value = serde_json::to_value(&event).expect("event must serialize");
+            assert_eq!(value["event"], tag, "{event:?}");
+        }
+    }
+
     #[test]
     fn none_output_drops_every_event_without_touching_storage() {
         let directory = test_directory();
