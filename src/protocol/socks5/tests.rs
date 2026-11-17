@@ -357,3 +357,39 @@ fn encode(destination: &Destination) -> Vec<u8> {
     let written = encode_connect_request(destination, &mut output).expect("encode destination");
     output[..written].to_vec()
 }
+
+#[test]
+fn udp_associate_rejects_other_commands_and_nonzero_reserved_bytes() {
+    let valid = [VERSION, 3, 0, 1, 0, 0, 0, 0, 0, 0];
+    assert!(decode_udp_associate_request(&valid).is_ok());
+
+    let mut connect = valid;
+    connect[1] = 1;
+    assert_eq!(
+        decode_udp_associate_request(&connect),
+        Err(DecodeError::UnsupportedCommand(1))
+    );
+
+    let mut reserved = valid;
+    reserved[2] = 1;
+    assert_eq!(
+        decode_udp_associate_request(&reserved),
+        Err(DecodeError::InvalidReservedField(1))
+    );
+}
+
+#[test]
+fn udp_datagrams_reject_port_zero_and_non_canonical_domains() {
+    assert_eq!(
+        decode_udp_datagram(&[0, 0, 0, 1, 127, 0, 0, 1, 0, 0, b'x']),
+        Err(DecodeError::ZeroPort)
+    );
+    for byte in [b' ', b'/', b':', 0x7f] {
+        assert_eq!(
+            decode_udp_datagram(&[0, 0, 0, 3, 3, b'a', byte, b'b', 0, 53, b'x']),
+            Err(DecodeError::InvalidDomainName),
+            "byte {byte:#04x} must not be accepted in a SOCKS5 domain"
+        );
+    }
+    assert!(decode_udp_datagram(&[0, 0, 0, 3, 3, b'a', b'_', b'b', 0, 53, b'x']).is_ok());
+}
