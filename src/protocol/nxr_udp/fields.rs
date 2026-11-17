@@ -17,6 +17,10 @@ pub(super) fn decode_destination(input: &[u8]) -> Result<(Destination, usize), N
     if port == 0 {
         return Err(NxrUdpError::Port);
     }
+    // Same bound the authenticated open and every encoder enforce.
+    if address_type == ADDRESS_DOMAIN && !(1..=MAX_DOMAIN_LEN).contains(&address_len) {
+        return Err(NxrUdpError::Address);
+    }
     let total = 5usize.checked_add(address_len).ok_or(NxrUdpError::Length)?;
     if input.len() < total {
         return Err(NxrUdpError::Truncated);

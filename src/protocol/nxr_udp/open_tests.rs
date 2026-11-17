@@ -103,3 +103,60 @@ fn authenticated_port_zero_is_rejected() {
         NOW
     );
 }
+
+#[test]
+fn open_header_sizing_rejects_bad_magic_and_address_lengths() {
+    use super::layout::{ADDRESS_DOMAIN, ADDRESS_IPV4, ADDRESS_LENGTH_OFFSET, MAX_DOMAIN_LEN};
+    use super::udp_open_len_from_header;
+    use crate::protocol::nxr::REQUEST_HEADER_LEN;
+
+    let open = open_at(NOW);
+    let header = &open[..REQUEST_HEADER_LEN];
+    assert_eq!(udp_open_len_from_header(header), Ok(open.len()));
+
+    let mut bad_magic = header.to_vec();
+    bad_magic[0] ^= 0xff;
+    assert_eq!(
+        udp_open_len_from_header(&bad_magic),
+        Err(NxrUdpError::Version)
+    );
+
+    let with_address = |kind: u8, length: u16| {
+        let mut header = header.to_vec();
+        header[5] = kind;
+        header[ADDRESS_LENGTH_OFFSET..ADDRESS_LENGTH_OFFSET + 2]
+            .copy_from_slice(&length.to_be_bytes());
+        udp_open_len_from_header(&header)
+    };
+    let max = u16::try_from(MAX_DOMAIN_LEN).unwrap();
+    assert!(with_address(ADDRESS_DOMAIN, max).is_ok());
+    for (kind, length) in [
+        (ADDRESS_DOMAIN, 0),
+        (ADDRESS_DOMAIN, max + 1),
+        (ADDRESS_IPV4, 5),
+        (ADDRESS_IPV4, 16),
+    ] {
+        assert_eq!(
+            with_address(kind, length),
+            Err(NxrUdpError::Address),
+            "kind {kind} length {length}"
+        );
+    }
+}
+
+#[test]
+fn open_rejects_trailing_bytes_and_port_zero_on_encode() {
+    let mut open = open_at(NOW);
+    open.push(0);
+    assert_eq!(
+        decode_udp_open(&open, &key(), NOW, WINDOW),
+        Err(NxrUdpError::Length)
+    );
+
+    let destination = Destination::new(Address::Ipv4(Ipv4Addr::new(192, 0, 2, 7)), 0);
+    let mut out = Vec::new();
+    assert_eq!(
+        encode_udp_open(&destination, [0xAB; 16], NOW, [0x44; 16], &key(), &mut out),
+        Err(NxrUdpError::Port)
+    );
+}
