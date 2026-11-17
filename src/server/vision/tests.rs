@@ -1646,6 +1646,33 @@ async fn nested_reader_classifies_fragmented_records_and_clean_eof() {
     ));
 }
 
+/// The same mid-record close as a reset (RST, e.g. a destination killed with
+/// unread input) is a socket failure, not a truncated record; it therefore
+/// keeps the established-socket `outbound` classification.
+#[tokio::test(flavor = "current_thread")]
+async fn nested_reader_reports_a_reset_inside_a_record_as_socket_io() {
+    let (client, server) = tcp_pair().await;
+    let (destination, _) = server.into_split();
+    let mut reader = super::NestedRecordReader::new(destination);
+    let mut client = client;
+    let mut truncated = vec![23, 0x03, 0x03, 0, 100];
+    truncated.extend_from_slice(&[0x5a; 10]);
+    client
+        .write_all(&truncated)
+        .await
+        .expect("truncated record must be written");
+    // Zero linger turns close into RST instead of FIN.
+    client.set_zero_linger().expect("zero linger must be set");
+    drop(client);
+    match reader.next(TEST_TIMEOUT).await {
+        Err(super::VisionSessionError::Io(error)) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
+        }
+        Err(error) => panic!("expected a reset socket error, got {error:?}"),
+        Ok(_) => panic!("expected a reset socket error, got a read"),
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn nested_reader_reports_truncated_records_and_partial_headers() {
     let (mut client, server) = tcp_pair().await;

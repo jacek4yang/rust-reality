@@ -418,3 +418,46 @@ fn relay_failures_keep_their_stage_cause_and_errno() {
         assert_eq!(super::detail(&error), expected, "{error:?}");
     }
 }
+
+/// A destination that ends its stream inside a nested TLS record (FIN) keeps
+/// its `protocol` rejection and gains only a closed-vocabulary detail; the
+/// reset (RST) form of the same close stays an `outbound` socket failure.
+/// Neither is a fault-injection exemption: both are ordinary rejections.
+#[test]
+fn destination_truncation_keeps_its_classification_and_gains_detail() {
+    let peer = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 40_000));
+    let fin = ConnectionRunError::Vision(VisionSessionError::DestinationTruncatedTlsRecord);
+    let rst = ConnectionRunError::Vision(VisionSessionError::Io(io::Error::from_raw_os_error(104)));
+    let cases = [
+        (
+            fin,
+            serde_json::json!({
+                "event": "connection_rejected",
+                "peer": "127.0.0.1:40000",
+                "reason": "protocol",
+                "failure": {"stage": "session_relay", "cause": "unexpected_eof"},
+            }),
+        ),
+        (
+            rst,
+            serde_json::json!({
+                "event": "connection_rejected",
+                "peer": "127.0.0.1:40000",
+                "reason": "outbound",
+                "failure": {"stage": "session_relay", "cause": "connection_reset", "errno": 104},
+            }),
+        ),
+    ];
+    for (error, expected) in cases {
+        let event = LogEvent::ConnectionRejected {
+            peer,
+            reason: error.rejection_reason(),
+            failure: detail(&error),
+        };
+        assert_eq!(
+            serde_json::to_value(&event).expect("event must serialize"),
+            expected,
+            "{error:?}"
+        );
+    }
+}
