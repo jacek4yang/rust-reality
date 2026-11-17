@@ -796,3 +796,63 @@ fn normalize_with_ownership(
     verify(raw, &sample, policy)?;
     Ok(sample)
 }
+
+#[cfg(test)]
+mod product_contract_tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use rust_reality::logging::LogEvent;
+
+    use super::Event;
+
+    /// Serializes a product event as the logger frames it, then decodes it
+    /// with the Frozen ownership schema (`deny_unknown_fields`). A renamed,
+    /// added or removed product field would otherwise surface only as an
+    /// `invalid ownership event` hours into a Frozen campaign.
+    fn decodes(event: &LogEvent, level: &str) {
+        let mut value = serde_json::to_value(event).expect("product event must serialize");
+        let record = value.as_object_mut().expect("product event is an object");
+        record.insert("timestampUnixMs".to_owned(), 1.into());
+        record.insert("level".to_owned(), level.into());
+        serde_json::from_value::<Event>(value)
+            .unwrap_or_else(|error| panic!("Frozen schema rejects {event:?}: {error}"));
+    }
+
+    #[test]
+    fn product_ownership_events_decode_with_the_frozen_schema() {
+        decodes(&LogEvent::ConfigurationPublished { generation: 0 }, "info");
+        decodes(&LogEvent::GenerationRetired { generation: 0 }, "debug");
+        decodes(
+            &LogEvent::ConnectionTaskOwnership {
+                address: SocketAddr::from((Ipv4Addr::LOCALHOST, 443)),
+                tracked_tasks: 0,
+            },
+            "debug",
+        );
+        decodes(
+            &LogEvent::ResourceOwnership {
+                handshakes: 0,
+                fallbacks: 0,
+                crypto_operations: 0,
+                dns_lookups: 0,
+                pre_auth_idle_connections: 0,
+                pre_auth_idle_capacity: 0,
+                fd_capacity: 0,
+                pipe_pair_capacity: Some(0),
+                warm_socket_capacity: 0,
+                replay_capacity: 0,
+                replay_expiry_ms: 0,
+                retirement_deadline_ms: 0,
+                generation: 0,
+                admitted_connections: 0,
+                replay_entries: 0,
+                fd_units_in_use: 0,
+                retained_pipe_pairs: Some(0),
+                retained_pipe_bytes: Some(0),
+                warm_ready: 0,
+                warm_connecting: 0,
+            },
+            "debug",
+        );
+    }
+}
