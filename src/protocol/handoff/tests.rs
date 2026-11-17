@@ -940,3 +940,68 @@ fn same_shard_expiry_releases_replay_capacity() {
         .expect("expired entries purged from the same shard must release capacity");
     assert_eq!(cache.entry_count(), 1);
 }
+
+/// Builds a TCP continuation state with the fields the constructor bounds.
+fn bounded_state(
+    server_secret: TrafficSecret,
+    inbound_tag: &str,
+    prefetched: Vec<u8>,
+) -> Result<ContinuationState, HandoffError> {
+    let suite = CipherSuite::ChaCha20Poly1305Sha256;
+    let destination = Destination::new(Address::Domain("example.com".to_owned()), 443);
+    ContinuationState::new(
+        suite,
+        TrafficSecret::from_bytes(suite.hash(), &[0x11; 32]).expect("client secret"),
+        0,
+        server_secret,
+        0,
+        false,
+        SessionKind::Tcp,
+        [0x33; 16],
+        inbound_tag,
+        destination.clone(),
+        Vec::new(),
+        prefetched,
+        HandoffPolicySnapshot::tcp_placeholder(destination),
+    )
+}
+
+#[test]
+fn continuation_state_bounds_server_secret_tag_and_prefetch_exactly() {
+    let suite = CipherSuite::ChaCha20Poly1305Sha256;
+    let server = || TrafficSecret::from_bytes(suite.hash(), &[0x12; 32]).expect("server secret");
+    let max_tag = "t".repeat(super::MAX_INBOUND_TAG_LEN);
+    assert!(bounded_state(server(), &max_tag, vec![0; MAX_PREFETCHED_PLAINTEXT_LEN]).is_ok());
+
+    let wrong_server_hash =
+        TrafficSecret::from_bytes(HashAlgorithm::Sha384, &[0x12; 48]).expect("sha384 secret");
+    for result in [
+        bounded_state(wrong_server_hash, "tag", Vec::new()),
+        bounded_state(server(), &format!("{max_tag}t"), Vec::new()),
+        bounded_state(server(), "tag", vec![0; MAX_PREFETCHED_PLAINTEXT_LEN + 1]),
+        bounded_state(server(), "t\u{e9}g", Vec::new()),
+    ] {
+        assert_eq!(result.map(|_| ()), Err(HandoffError::State));
+    }
+}
+
+#[test]
+fn transfer_header_rejects_bad_magic_and_accepts_the_exact_blob_cap() {
+    let (_, landing_public) = landing_key_pair(0x83);
+    let psk = HandoffPsk::new([0x55; 32]);
+    let message = seal(&test_state(Vec::new(), Vec::new()), &psk, &landing_public);
+    let header = &message[..HEADER_LEN];
+    assert_eq!(message_len_from_header(header), Ok(message.len()));
+
+    let mut bad_magic = header.to_vec();
+    bad_magic[0] ^= 0xff;
+    assert_eq!(
+        message_len_from_header(&bad_magic),
+        Err(HandoffError::Version)
+    );
+
+    let mut at_cap = header.to_vec();
+    let cap = u32::try_from(MAX_BLOB_LEN).expect("cap fits u32");
+    at_cap[110..114].copy_from_slice(&cap.to_be_bytes());
+    assert_eq!(message_len_from_header(&at_cap), Ok(MAX_MESSAGE_LEN));
+}
