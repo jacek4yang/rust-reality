@@ -937,6 +937,241 @@ mod tests {
 
     static TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
+    /// rr-dev qualification (Native benches, Frozen stability) matches these
+    /// `event` tags in product logs; a rename would only surface there.
+    /// Field values are placeholders: only the tag is asserted.
+    #[test]
+    fn tooling_consumed_events_keep_their_wire_tags() {
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 443));
+        let cases = [
+            (
+                LogEvent::GenerationRetired { generation: 1 },
+                "generation_retired",
+            ),
+            (
+                LogEvent::ConnectionTaskOwnership {
+                    address,
+                    tracked_tasks: 0,
+                },
+                "connection_task_ownership",
+            ),
+            (
+                LogEvent::ResourceOwnership {
+                    handshakes: 0,
+                    fallbacks: 0,
+                    crypto_operations: 0,
+                    dns_lookups: 0,
+                    pre_auth_idle_connections: 0,
+                    pre_auth_idle_capacity: 0,
+                    fd_capacity: 0,
+                    pipe_pair_capacity: None,
+                    warm_socket_capacity: 0,
+                    replay_capacity: 0,
+                    replay_expiry_ms: 0,
+                    retirement_deadline_ms: 0,
+                    generation: 0,
+                    admitted_connections: 0,
+                    replay_entries: 0,
+                    fd_units_in_use: 0,
+                    retained_pipe_pairs: None,
+                    retained_pipe_bytes: None,
+                    warm_ready: 0,
+                    warm_connecting: 0,
+                },
+                "resource_ownership",
+            ),
+            (
+                LogEvent::ListenerStarted {
+                    tag: "in".to_owned(),
+                    address,
+                },
+                "listener_started",
+            ),
+            (
+                LogEvent::ConnectionClosed { peer: address },
+                "connection_closed",
+            ),
+            (
+                LogEvent::ConfigurationRejected {
+                    field: "inbounds".to_owned(),
+                },
+                "configuration_rejected",
+            ),
+            (
+                LogEvent::AcceptErrorRecovered {
+                    address,
+                    accept_error_class: "descriptorPressure",
+                    errno: None,
+                    accept_backoff_ms: 0,
+                },
+                "accept_error_recovered",
+            ),
+            (
+                LogEvent::ConnectionCompleted {
+                    duration_ms: 0,
+                    uplink_bytes: 0,
+                    downlink_bytes: 0,
+                    uplink_direct: false,
+                    downlink_direct: false,
+                    relay_backend: None,
+                    uplink_direct_at_bytes: 0,
+                    downlink_direct_at_bytes: 0,
+                    uplink_backend: None,
+                    downlink_backend: None,
+                    uplink_handoff_delay_us: 0,
+                    downlink_handoff_delay_us: 0,
+                    handoff_server_sequence: None,
+                    pipe_capacity_downgraded: false,
+                },
+                "connection_completed",
+            ),
+            (
+                LogEvent::ConfigurationPublished { generation: 0 },
+                "configuration_published",
+            ),
+            (
+                LogEvent::ConnectionAccepted { peer: address },
+                "connection_accepted",
+            ),
+            (
+                LogEvent::CoverPoolSummary {
+                    generation: 0,
+                    pool_ready: 0,
+                    pool_connecting: 0,
+                    pool_in_use: 0,
+                    pool_checkout_total: 0,
+                    pool_checkout_hit: 0,
+                    pool_checkout_miss: 0,
+                    pool_cold_fallback: 0,
+                    pool_connect_failure: 0,
+                    pool_connect_timeout: 0,
+                    pool_connect_resource: 0,
+                    pool_connect_policy: 0,
+                    pool_connect_io: 0,
+                    pool_failure_streak: 0,
+                    pool_backoff_remaining_ms: 0,
+                    pool_stale_discard: 0,
+                    pool_refill: 0,
+                    pool_target_ready: 0,
+                    pool_growth: 0,
+                    pool_shrink: 0,
+                    arrival_rate_ewma: String::new(),
+                    connect_latency_ewma_ms: String::new(),
+                    recent_burst: String::new(),
+                },
+                "cover_pool_summary",
+            ),
+            (
+                LogEvent::TransportPoolSummary {
+                    transport: "x",
+                    generation: 0,
+                    pool_ready: 0,
+                    pool_connecting: 0,
+                    pool_in_use: 0,
+                    pool_checkout_total: 0,
+                    pool_checkout_hit: 0,
+                    pool_checkout_miss: 0,
+                    pool_cold_fallback: 0,
+                    pool_connect_failure: 0,
+                    pool_connect_timeout: 0,
+                    pool_connect_resource: 0,
+                    pool_connect_policy: 0,
+                    pool_connect_io: 0,
+                    pool_failure_streak: 0,
+                    pool_backoff_remaining_ms: 0,
+                    pool_stale_discard: 0,
+                    pool_refill: 0,
+                    pool_target_ready: 0,
+                    pool_growth: 0,
+                    pool_shrink: 0,
+                    arrival_rate_ewma: String::new(),
+                    connect_latency_ewma_ms: String::new(),
+                    recent_burst: String::new(),
+                },
+                "transport_pool_summary",
+            ),
+            (
+                LogEvent::CoverProfileSummary {
+                    generation: 0,
+                    cover_profile_state: "x",
+                    cover_profile_hit: 0,
+                    cover_profile_miss: 0,
+                    cover_profile_stale: 0,
+                    cover_profile_unstable: 0,
+                    cover_profile_refresh: 0,
+                    cover_profile_refresh_failure: 0,
+                    cover_profile_disagreement: 0,
+                    cover_profile_disabled: 0,
+                    cover_profile_collecting: 0,
+                    cover_profile_validated: 0,
+                },
+                "cover_profile_summary",
+            ),
+            (
+                LogEvent::RelayBackendReport {
+                    backends: Vec::new(),
+                },
+                "relay_backend_report",
+            ),
+            (
+                LogEvent::DescriptorBudgetReport {
+                    fd_soft_limit: 0,
+                    fd_hard_limit: 0,
+                    fd_fixed_reserve: 0,
+                    fd_safety_headroom: 0,
+                    fd_effective_budget: 0,
+                    fd_clamped: false,
+                    fd_recommended_soft_limit: 0,
+                },
+                "descriptor_budget_report",
+            ),
+            (
+                LogEvent::DescriptorPressureChanged {
+                    fd_pressure_state: "x",
+                    fd_units_in_use: 0,
+                    fd_effective_budget: 0,
+                },
+                "descriptor_pressure_changed",
+            ),
+            (
+                LogEvent::MachineReport {
+                    resource_mode: "x",
+                    fd_soft_limit: 0,
+                    fd_hard_limit: 0,
+                    fd_effective_soft_limit: 0,
+                    fd_soft_raise_attempted: false,
+                    fd_soft_limit_raised: false,
+                    memlock_soft_limit: 0,
+                    memlock_hard_limit: 0,
+                    available_cpus: 0,
+                    cpu_quota_us: None,
+                    cpu_period_us: None,
+                    cpuset_effective: None,
+                    memory_source: "x",
+                    memory_current: None,
+                    memory_high: None,
+                    memory_max: None,
+                    memory_total: 0,
+                },
+                "machine_report",
+            ),
+            (
+                LogEvent::ResourcePressureChanged {
+                    pressure_state: "x",
+                    fd_pressure_state: "x",
+                    memory_bytes_in_use: None,
+                    memory_pressure_enter: 0,
+                    memory_critical_enter: 0,
+                },
+                "resource_pressure_changed",
+            ),
+        ];
+        for (event, tag) in cases {
+            let value = serde_json::to_value(&event).expect("event must serialize");
+            assert_eq!(value["event"], tag, "{event:?}");
+        }
+    }
+
     #[test]
     fn none_output_drops_every_event_without_touching_storage() {
         let directory = test_directory();
