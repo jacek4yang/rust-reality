@@ -932,7 +932,7 @@ mod tests {
         sync::atomic::{AtomicU64, Ordering},
     };
 
-    use super::{LogEvent, Logger};
+    use super::{AdmissionResource, LogEvent, Logger};
     use crate::config::node::log::{FileLogConfig, LogConfig, LogLevel, LogOutput};
 
     static TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -1097,5 +1097,28 @@ mod tests {
 
     fn cleanup(directory: &Path) {
         fs::remove_dir_all(directory).expect("test directory must be removed");
+    }
+
+    #[test]
+    fn admission_resources_serialize_to_their_documented_snake_case_names() {
+        let cases = [
+            (AdmissionResource::Connections, "connections"),
+            (AdmissionResource::Handshakes, "handshakes"),
+            (
+                AdmissionResource::PreAuthIdleConnections,
+                "pre_auth_idle_connections",
+            ),
+            (AdmissionResource::Fallbacks, "fallbacks"),
+            (AdmissionResource::CryptoOperations, "crypto_operations"),
+            (AdmissionResource::ReplayEntries, "replay_entries"),
+            (AdmissionResource::DirectConnections, "direct_connections"),
+            (AdmissionResource::FileDescriptors, "file_descriptors"),
+        ];
+        for (resource, name) in cases {
+            assert_eq!(
+                serde_json::to_value(resource).expect("resource must serialize"),
+                serde_json::Value::String(name.to_owned()),
+            );
+        }
     }
 }
