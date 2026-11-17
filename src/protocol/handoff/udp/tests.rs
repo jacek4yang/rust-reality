@@ -438,3 +438,154 @@ fn pmtu_fixed_never_probes() {
     assert_eq!(plpmtu_from_ip_mtu(1280, true), 1232);
     assert_eq!(plpmtu_from_ip_mtu(100, true), MIN_PLPMTU);
 }
+
+/// Builds one FRAG plaintext: `id`, `index`, `count`, then `chunk`.
+fn frag(id: u32, index: u8, count: u8, chunk: &[u8]) -> Vec<u8> {
+    let mut fragment = id.to_be_bytes().to_vec();
+    fragment.extend_from_slice(&[index, count]);
+    fragment.extend_from_slice(chunk);
+    fragment
+}
+
+#[test]
+fn reassembly_rejects_out_of_range_index_and_empty_chunks() {
+    let now = Instant::now();
+    let mut reassembler = Reassembler::new(ReassemblyLimits::default());
+    // index == count would address past the group's chunk slots.
+    assert!(reassembler.insert(&frag(1, 2, 2, &[0xaa]), now).is_err());
+    // More fragments than MAX_FRAGMENTS is a malformed header.
+    let too_many = u8::try_from(MAX_FRAGMENTS + 1).expect("fits");
+    assert!(
+        reassembler
+            .insert(&frag(1, 0, too_many, &[0xaa]), now)
+            .is_err()
+    );
+    // A header with no chunk carries nothing to reassemble.
+    assert!(reassembler.insert(&frag(1, 0, 2, &[]), now).is_err());
+    assert_eq!(reassembler.pending_groups(), 0);
+    assert_eq!(reassembler.buffered_bytes(), 0);
+}
+
+#[test]
+fn reassembly_never_yields_more_than_one_data_plaintext() {
+    let now = Instant::now();
+    let mut reassembler = Reassembler::new(ReassemblyLimits::default());
+    let first = MAX_DATA_PLAINTEXT_LEN / 2;
+    let second = MAX_DATA_PLAINTEXT_LEN - first + 1;
+    assert_eq!(
+        reassembler
+            .insert(&frag(7, 0, 2, &vec![1; first]), now)
+            .expect("first half"),
+        None
+    );
+    assert_eq!(
+        reassembler
+            .insert(&frag(7, 1, 2, &vec![2; second]), now)
+            .expect("oversized group is dropped, not reported"),
+        None,
+        "a group one byte over MAX_DATA_PLAINTEXT_LEN must never complete"
+    );
+    assert_eq!(reassembler.pending_groups(), 0);
+    assert_eq!(reassembler.buffered_bytes(), 0);
+    assert_eq!(reassembler.dropped_groups(), 1);
+}
+
+#[test]
+fn reassembly_byte_cap_is_exact_and_evicts_only_other_groups() {
+    let limits = ReassemblyLimits {
+        max_groups: 4,
+        max_bytes: 2500,
+        timeout: Duration::from_secs(10),
+    };
+    let start = Instant::now();
+    let mut reassembler = Reassembler::new(limits);
+    // A single chunk larger than the whole budget is rejected outright.
+    assert!(
+        reassembler
+            .insert(&frag(9, 0, 2, &[9; 2501]), start)
+            .is_err()
+    );
+
+    // Exactly at the cap fits without eviction.
+    assert_eq!(
+        reassembler
+            .insert(&frag(1, 0, 2, &[1; 1000]), start)
+            .expect("a0"),
+        None
+    );
+    let later = start + Duration::from_millis(1);
+    assert_eq!(
+        reassembler
+            .insert(&frag(2, 0, 2, &[2; 1500]), later)
+            .expect("b0"),
+        None
+    );
+    assert_eq!(reassembler.buffered_bytes(), 2500);
+    assert_eq!(reassembler.dropped_groups(), 0);
+
+    // Completing group 1 needs room; the oldest *other* group (2) is evicted,
+    // never the group being completed.
+    let whole = reassembler
+        .insert(&frag(1, 1, 2, &[1; 1000]), later)
+        .expect("a1")
+        .expect("group 1 completes after evicting group 2");
+    assert_eq!(whole, vec![1; 2000]);
+    assert_eq!(reassembler.dropped_groups(), 1);
+    assert_eq!(reassembler.pending_groups(), 0);
+    assert_eq!(reassembler.buffered_bytes(), 0);
+
+    // One byte over the cap evicts exactly one older group.
+    assert_eq!(
+        reassembler
+            .insert(&frag(3, 0, 2, &[3; 1000]), later)
+            .expect("c0"),
+        None
+    );
+    assert_eq!(
+        reassembler
+            .insert(&frag(4, 0, 2, &[4; 1501]), later)
+            .expect("d0"),
+        None
+    );
+    assert_eq!(reassembler.pending_groups(), 1);
+    assert_eq!(reassembler.buffered_bytes(), 1501);
+    assert_eq!(reassembler.dropped_groups(), 2);
+}
+
+#[test]
+fn reassembly_group_limit_evicts_the_oldest_group() {
+    let limits = ReassemblyLimits {
+        max_groups: 2,
+        max_bytes: 100_000,
+        timeout: Duration::from_secs(10),
+    };
+    let start = Instant::now();
+    let mut reassembler = Reassembler::new(limits);
+    assert_eq!(
+        reassembler
+            .insert(&frag(1, 0, 2, &[1; 10]), start)
+            .expect("a0"),
+        None
+    );
+    let t1 = start + Duration::from_millis(1);
+    assert_eq!(
+        reassembler
+            .insert(&frag(2, 0, 2, &[2; 10]), t1)
+            .expect("b0"),
+        None
+    );
+    let t2 = start + Duration::from_millis(2);
+    assert_eq!(
+        reassembler
+            .insert(&frag(3, 0, 2, &[3; 10]), t2)
+            .expect("c0"),
+        None
+    );
+    assert_eq!(reassembler.dropped_groups(), 1);
+    // Group 2 (newer than group 1) survived the eviction and still completes.
+    let whole = reassembler
+        .insert(&frag(2, 1, 2, &[2; 10]), t2)
+        .expect("b1")
+        .expect("group 2 must survive; the oldest group 1 is the one evicted");
+    assert_eq!(whole, vec![2; 20]);
+}

@@ -907,3 +907,36 @@ fn debug_output_is_redacted() {
     assert!(!rendered.contains("user_id"));
     assert!(rendered.contains("ContinuationState"));
 }
+
+#[test]
+fn replay_cache_rejects_zero_capacity_or_retention() {
+    // Zero retention would forget every nonce at once and disable replay
+    // protection; zero capacity would reject every message.
+    assert!(HandoffReplayCache::new(0, Duration::from_secs(1)).is_err());
+    assert!(HandoffReplayCache::new(1, Duration::ZERO).is_err());
+}
+
+#[test]
+fn same_shard_expiry_releases_replay_capacity() {
+    let cache =
+        HandoffReplayCache::new(2, Duration::from_millis(100)).expect("replay policy must compile");
+    let now = MonotonicInstant::now();
+    // All three nonces share shard `1 % REPLAY_SHARDS`.
+    let nonce = |second: u8| {
+        let mut nonce = [0; NONCE_LEN];
+        nonce[0] = 1;
+        nonce[1] = second;
+        nonce
+    };
+    cache
+        .reserve_at(nonce(0), now)
+        .expect("first nonce must fit");
+    cache
+        .reserve_at(nonce(1), now)
+        .expect("second nonce must fit");
+    assert_eq!(cache.reserve_at(nonce(2), now), Err(HandoffError::Replay));
+    cache
+        .reserve_at(nonce(2), now + Duration::from_millis(101))
+        .expect("expired entries purged from the same shard must release capacity");
+    assert_eq!(cache.entry_count(), 1);
+}
