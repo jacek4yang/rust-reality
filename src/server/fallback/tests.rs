@@ -656,3 +656,91 @@ fn push_extension(output: &mut Vec<u8>, extension_type: u16, value: &[u8]) {
     );
     output.extend_from_slice(value);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn cover_reads_never_outlive_the_fallback_session_deadline() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("cover listener must bind");
+    let target = listener
+        .local_addr()
+        .expect("cover listener address must exist")
+        .to_string();
+    // A cover that accepts and then stays silent forever.
+    let silent_cover = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    let config = ResourceGovernorPolicy {
+        fallback_timeout_ms: 200,
+        ..ResourceGovernorPolicy::default()
+    };
+    let fallback = test_fallback(target, &config);
+    let client_hello = client_hello();
+    // Each caller-supplied timeout is far longer than the session lifetime.
+    let generous = Duration::from_secs(60);
+    let bound = Duration::from_secs(5);
+
+    let mut connection = fallback.connect(PREFIX).await.expect("cover must open");
+    let error = timeout(bound, connection.read_server_hello(&client_hello, generous))
+        .await
+        .expect("ServerHello read must stop at the session deadline")
+        .expect_err("a silent cover must not produce a ServerHello");
+    assert!(matches!(
+        error.kind(),
+        crate::protocol::reality::tls13::TargetServerHelloReadErrorKind::Timeout
+    ));
+
+    let mut connection = fallback.connect(PREFIX).await.expect("cover must open");
+    let error = timeout(
+        bound,
+        connection.read_server_flight(&client_hello, generous),
+    )
+    .await
+    .expect("server flight read must stop at the session deadline")
+    .expect_err("a silent cover must not produce a server flight");
+    assert!(matches!(
+        error.kind(),
+        crate::protocol::reality::tls13::TargetServerHelloReadErrorKind::Timeout
+    ));
+
+    let mut connection = fallback.connect(PREFIX).await.expect("cover must open");
+    let mut prefix = Vec::new();
+    let result = timeout(bound, connection.complete_prefix(&mut prefix, 1, generous))
+        .await
+        .expect("prefix completion must stop at the session deadline");
+    assert!(matches!(result, Err(FallbackError::SessionTimeout)));
+
+    silent_cover.abort();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn exhausted_descriptor_budget_is_reported_distinctly_and_fails_closed() {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("cover listener must bind");
+    let target = listener
+        .local_addr()
+        .expect("cover listener address must exist")
+        .to_string();
+    let config = ResourceGovernorPolicy::default();
+    let budget = FdBudget::new(1);
+    let _exhausting = budget.try_acquire(1).expect("the only unit must be free");
+    let relay = TcpRelay::new(TcpRelayConfig::for_test(), budget).expect("test relay must build");
+    let fallback = RealityFallback::new(target, ResourceGovernor::new(&config), &config, relay);
+
+    for _ in 0..2 {
+        assert!(matches!(
+            fallback.connect(PREFIX).await,
+            Err(FallbackError::DescriptorBudget)
+        ));
+    }
+    assert!(
+        timeout(Duration::from_millis(50), listener.accept())
+            .await
+            .is_err(),
+        "no cover socket may be opened without a descriptor permit"
+    );
+}
