@@ -2,9 +2,14 @@ name: Frozen candidate qualification
 
 # One source and one packaged GNU executable across VM, native and package proof.
 # Explicit review freeze only; ordinary draft edits keep their existing fast gates.
+# Closing or merging a PR makes its PR-head campaign obsolete: the `closed`
+# event enters only that PR's concurrency group, cancels the run in flight
+# there, and runs no job itself. Dispatches (group = ref) and other PRs are
+# never touched; completed runs and their artifacts are untouched. Exact-main
+# is qualified by dispatching Native and Frozen on the same main SHA.
 on:
   pull_request:
-    types: [ready_for_review]
+    types: [ready_for_review, closed]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +18,7 @@ permissions:
 
 concurrency:
   group: frozen-qualification-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event.action == 'closed' }}
 
 jobs:
   # Fail fast when this SHA has no Native run at all. Frozen is often started
@@ -24,6 +29,8 @@ jobs:
   # and skipped runs are not success and are not in flight.
   native-preflight:
     name: Exact-head Native preflight
+    # The root job: skipping it skips every dependent job on `closed`.
+    if: github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:

@@ -85,8 +85,11 @@ the default branch.
 
 QEMU starts on `ready_for_review` or explicit `workflow_dispatch`, rather than
 every draft push. Dispatch uses the selected branch's exact SHA. Existing
-campaigns are not cancelled by newer requests. A result never qualifies a
-different SHA; after another commit on a ready PR, explicitly request the new
+campaigns are not cancelled by newer requests. Closing or merging a PR cancels
+only that PR's in-flight PR-head campaign, which can no longer qualify anything;
+completed runs and their artifacts are kept. After each bounded merge batch,
+dispatch Native and then Frozen on the same exact `main` SHA. A result never
+qualifies a different SHA; after another commit on a ready PR, explicitly request the new
 campaign. Missing or skipped qualification is not a pass. The existing Tier B
 contract remains required until a reviewed replacement covers its obligations.
 See [ADR 0036](../../adr/0036-separate-native-and-qemu-qualification.md).

@@ -62,6 +62,8 @@ PR head 的证据不能替代后续合并提交；发布前必须保留新的 ex
 
 QEMU 在 `ready_for_review` 或显式 `workflow_dispatch` 时启动，不再随每次草稿推送
 重跑。手动触发绑定所选分支的精确 SHA；新请求不取消已运行的 campaign。
+关闭或合并 PR 只取消该 PR 自己正在运行的 PR-head campaign（它已无法证明任何提交）；
+已完成的运行及其产物保留。每批有限合并后，对同一个 exact `main` SHA 先手动触发 Native，再触发 Frozen。
 结果不能替代另一 SHA 的验证：已进入评审的 PR 再有提交时，必须显式请求新 campaign。
 缺失或跳过不算通过。在经过评审的替代方案覆盖相应义务前，既有 Tier B 合同仍然有效。
 参见 [ADR 0036](../../adr/0036-separate-native-and-qemu-qualification.md)。
