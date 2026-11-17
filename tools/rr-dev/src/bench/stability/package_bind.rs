@@ -171,7 +171,20 @@ mod tests {
         ));
         assert!(!coordinator.contains("continue-on-error"));
         assert!(!coordinator.contains("contents: write"));
+        // A newer request never cancels a campaign; only the PR's own
+        // `closed` event cancels its obsolete PR-head run, in its own group,
+        // and that event runs no job.
         assert!(!coordinator.contains("cancel-in-progress: true"));
+        assert_eq!(coordinator.matches("cancel-in-progress:").count(), 1);
+        assert!(coordinator.contains(
+            "group: frozen-qualification-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: ${{ github.event.action == 'closed' }}\n"
+        ));
+        assert!(coordinator.contains("types: [ready_for_review, closed]"));
+        assert!(coordinator.contains(
+            "  native-preflight:\n    name: Exact-head Native preflight\n    # The root job: skipping it skips every dependent job on `closed`.\n    if: github.event.action != 'closed'\n"
+        ));
+        // Every other job depends on the root, so none runs on `closed`.
+        assert_eq!(coordinator.matches("\n    needs:").count(), 3);
         // Workflow may still be the sequential campaign until a token with
         // `workflow` scope publishes the ADR 0042 matrix rewrite.
         assert!(
