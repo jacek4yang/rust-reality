@@ -31,6 +31,8 @@ pub use wire::{NxrUdpFrame, decode_frame, drain_frames, encode_frame, frame_wire
 pub use wire::fuzz_decode_frame;
 
 #[cfg(test)]
+mod frame_tests;
+#[cfg(test)]
 mod open_tests;
 
 #[cfg(test)]
