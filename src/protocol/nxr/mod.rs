@@ -164,6 +164,88 @@ mod tests {
         }
     }
 
+    #[test]
+    fn header_sizing_rejects_bad_magic_flags_and_address_shapes() {
+        use super::layout::{
+            ADDRESS_DOMAIN, ADDRESS_IPV4, ADDRESS_IPV6, ADDRESS_LENGTH_OFFSET, MAX_DOMAIN_LEN,
+        };
+        let key = NxrKey::new([0x21; 32]);
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::new(192, 0, 2, 1)), 443);
+        let mut encoded = Vec::new();
+        encode_request(&destination, NOW, [0x66; 16], &key, &mut encoded).expect("encode");
+        let header = &encoded[..REQUEST_HEADER_LEN];
+        assert_eq!(request_len_from_header(header), Ok(encoded.len()));
+
+        let mut bad_magic = header.to_vec();
+        bad_magic[0] ^= 0xff;
+        assert_eq!(
+            request_len_from_header(&bad_magic),
+            Err(NxrProtocolError::Version)
+        );
+        for flags in [super::FLAG_UDP, 2, 0xff] {
+            let mut bad_flags = header.to_vec();
+            bad_flags[super::FLAGS_OFFSET] = flags;
+            assert_eq!(
+                request_len_from_header(&bad_flags),
+                Err(NxrProtocolError::Flags),
+                "flags {flags}"
+            );
+        }
+
+        let with_address = |kind: u8, length: u16| {
+            let mut header = header.to_vec();
+            header[5] = kind;
+            header[ADDRESS_LENGTH_OFFSET..ADDRESS_LENGTH_OFFSET + 2]
+                .copy_from_slice(&length.to_be_bytes());
+            request_len_from_header(&header)
+        };
+        let max = u16::try_from(MAX_DOMAIN_LEN).expect("domain cap fits u16");
+        assert!(with_address(ADDRESS_DOMAIN, max).is_ok());
+        for (kind, length) in [
+            (ADDRESS_DOMAIN, 0),
+            (ADDRESS_DOMAIN, max + 1),
+            (ADDRESS_IPV4, 5),
+            (ADDRESS_IPV6, 17),
+            (0, 4),
+            (4, 4),
+        ] {
+            assert_eq!(
+                with_address(kind, length),
+                Err(NxrProtocolError::Address),
+                "kind {kind} length {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn port_zero_and_out_of_range_domains_fail_on_both_sides() {
+        use super::layout::{PORT_OFFSET, TAG_LEN};
+        let key = NxrKey::new([0x22; 32]);
+        let mut out = Vec::new();
+        for destination in [
+            Destination::new(Address::Ipv4(Ipv4Addr::new(192, 0, 2, 1)), 0),
+            Destination::new(Address::Domain(String::new()), 443),
+            Destination::new(Address::Domain("a".repeat(254)), 443),
+        ] {
+            assert!(
+                encode_request(&destination, NOW, [0x66; 16], &key, &mut out).is_err(),
+                "{destination:?} must not encode"
+            );
+        }
+
+        // An authenticated request whose port is zero is still rejected.
+        let destination = Destination::new(Address::Ipv4(Ipv4Addr::new(192, 0, 2, 1)), 443);
+        encode_request(&destination, NOW, [0x66; 16], &key, &mut out).expect("encode");
+        out[PORT_OFFSET..PORT_OFFSET + 2].copy_from_slice(&[0, 0]);
+        let authenticated_len = out.len() - TAG_LEN;
+        let tag = key.tag(&out[..authenticated_len]);
+        out[authenticated_len..].copy_from_slice(&tag);
+        assert_eq!(
+            decode_authenticated_request(&out, &key, NOW, 1),
+            Err(NxrProtocolError::Port)
+        );
+    }
+
     fn hex(input: &[u8]) -> String {
         input.iter().map(|byte| format!("{byte:02x}")).collect()
     }
