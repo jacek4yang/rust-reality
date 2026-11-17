@@ -50,15 +50,21 @@ fn identity_fingerprint(identity: &Identity) -> Result<String, String> {
     serde_json::to_string(identity).map_err(|error| error.to_string())
 }
 
+/// Name the path in an I/O failure: a bare `No such file or directory` cannot
+/// tell an incomplete cell artifact from a missing campaign file.
+fn io_context(path: &Path, error: &std::io::Error) -> String {
+    format!("{}: {error}", path.display())
+}
+
 fn copy_file(src_root: &Path, dst_root: &Path, relative: &str) -> Result<(), String> {
     let source = src_root.join(relative);
     let destination = dst_root.join(relative);
     if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent).map_err(|error| io_context(parent, &error))?;
     }
     if destination.exists() {
-        let left = fs::read(&source).map_err(|error| error.to_string())?;
-        let right = fs::read(&destination).map_err(|error| error.to_string())?;
+        let left = fs::read(&source).map_err(|error| io_context(&source, &error))?;
+        let right = fs::read(&destination).map_err(|error| io_context(&destination, &error))?;
         if left != right {
             return Err(format!(
                 "merged path {relative} differs across cell directories"
@@ -75,18 +81,20 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
     if !src.is_dir() {
         return Err(format!("missing cell tree {}", src.display()));
     }
-    fs::create_dir_all(dst).map_err(|error| error.to_string())?;
-    for entry in fs::read_dir(src).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+    fs::create_dir_all(dst).map_err(|error| io_context(dst, &error))?;
+    for entry in fs::read_dir(src).map_err(|error| io_context(src, &error))? {
+        let entry = entry.map_err(|error| io_context(src, &error))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_context(&entry.path(), &error))?;
         let target = dst.join(entry.file_name());
         if file_type.is_dir() {
             copy_tree(&entry.path(), &target)?;
         } else if file_type.is_file() {
             if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                fs::create_dir_all(parent).map_err(|error| io_context(parent, &error))?;
             }
-            fs::copy(entry.path(), &target).map_err(|error| error.to_string())?;
+            fs::copy(entry.path(), &target).map_err(|error| io_context(&entry.path(), &error))?;
         } else {
             return Err(format!("refusing non-regular {}", entry.path().display()));
         }
@@ -144,9 +152,10 @@ fn absorb_terminal(root: &Path, cell_errors: &mut Vec<String>) -> Result<(), Str
     if !terminal.is_file() {
         return Ok(());
     }
-    let value: Value =
-        serde_json::from_slice(&fs::read(&terminal).map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
+    let value: Value = serde_json::from_slice(
+        &fs::read(&terminal).map_err(|error| io_context(&terminal, &error))?,
+    )
+    .map_err(|error| error.to_string())?;
     if value.get("completed").and_then(Value::as_bool) != Some(true) {
         let primary = value
             .get("primary_error")
@@ -196,13 +205,13 @@ fn ingest_cell(
             let path = root.join(side);
             if path.is_file() {
                 let dest_name = format!("{cell_dir_name}-{side}");
-                fs::copy(&path, out.join(dest_name)).map_err(|error| error.to_string())?;
+                fs::copy(&path, out.join(dest_name)).map_err(|error| io_context(&path, &error))?;
             }
         }
         let diagnosis_path = root.join(&cell_dir_name).join("cell-diagnosis.json");
         if diagnosis_path.is_file() {
             let diagnosis: Value = serde_json::from_slice(
-                &fs::read(&diagnosis_path).map_err(|error| error.to_string())?,
+                &fs::read(&diagnosis_path).map_err(|error| io_context(&diagnosis_path, &error))?,
             )
             .map_err(|error| error.to_string())?;
             summary.push(diagnosis);
@@ -294,9 +303,11 @@ fn discover_cell_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
         let entries = fs::read_dir(&dir)
             .map_err(|error| format!("read cells-root {}: {error}", dir.display()))?;
         for entry in entries {
-            let entry = entry.map_err(|error| error.to_string())?;
+            let entry = entry.map_err(|error| io_context(&dir, &error))?;
             let path = entry.path();
-            let file_type = entry.file_type().map_err(|error| error.to_string())?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| io_context(&path, &error))?;
             if file_type.is_dir() {
                 stack.push(path);
                 continue;
@@ -304,7 +315,7 @@ fn discover_cell_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
             if !file_type.is_file() || entry.file_name() != "cell-matrix.json" {
                 continue;
             }
-            let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+            let bytes = fs::read(&path).map_err(|error| io_context(&path, &error))?;
             let meta: Value = serde_json::from_slice(&bytes)
                 .map_err(|error| format!("{}: {error}", path.display()))?;
             let cell = meta
