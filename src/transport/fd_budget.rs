@@ -660,4 +660,18 @@ mod tests {
         assert_eq!(budget.in_use(), 0);
         assert_eq!(budget.underflows(), 0);
     }
+
+    #[test]
+    fn a_zero_capacity_budget_is_clamped_to_one_unit_instead_of_panicking() {
+        let budget = FdBudget::new(0);
+        assert_eq!(budget.capacity(), 1);
+        assert!(budget.try_acquire(2).is_none());
+        let permit = budget
+            .try_acquire(1)
+            .expect("the single unit is admissible");
+        assert_eq!(budget.pressure(), FdPressure::High);
+        drop(permit);
+        assert_eq!(budget.pressure(), FdPressure::Normal);
+        assert_eq!(budget.underflows(), 0);
+    }
 }
