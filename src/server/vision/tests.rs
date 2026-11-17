@@ -1775,6 +1775,133 @@ fn assembles_fragmented_handshake_header_across_records() {
     );
 }
 
+/// Mirrors `MAX_NESTED_TLS_RECORD_SIZE` and `MAX_NESTED_SERVER_HELLO_SIZE`.
+const NESTED_RECORD_BODY_CAP: usize = (1 << 14) + 2_048;
+const NESTED_SERVER_HELLO_CAP: usize = 8 * 1024;
+
+#[test]
+fn only_a_handshake_server_hello_starts_classification() {
+    let hello = server_hello(0x1301, true);
+    let mut detector = NestedTlsDetector::new();
+    // A ServerHello-shaped body inside application data, and a non-ServerHello
+    // handshake message, must not classify the stream.
+    assert_eq!(
+        detector.observe(&record(23, &hello)),
+        PaddingDecision::Continue
+    );
+    assert_eq!(
+        detector.observe(&record(22, &[11, 0, 0, 2, 0, 0])),
+        PaddingDecision::Continue
+    );
+    assert_eq!(
+        detector.observe(&record(22, &hello)),
+        PaddingDecision::Continue
+    );
+    assert_eq!(
+        detector.observe(&record(23, b"ciphertext")),
+        PaddingDecision::Direct
+    );
+}
+
+#[test]
+fn unclassified_streams_end_padding_at_exactly_eight_records() {
+    let mut detector = NestedTlsDetector::new();
+    for _ in 0..7 {
+        assert_eq!(
+            detector.observe(&record(23, b"x")),
+            PaddingDecision::Continue
+        );
+    }
+    assert_eq!(detector.observe(&record(23, b"x")), PaddingDecision::End);
+}
+
+#[test]
+fn server_hello_length_cap_is_exact() {
+    let header = |total: usize| {
+        let length = u32::try_from(total - 4).unwrap().to_be_bytes();
+        vec![2, length[1], length[2], length[3]]
+    };
+    let mut at_cap = NestedTlsDetector::new();
+    assert_eq!(
+        at_cap.observe(&record(22, &header(NESTED_SERVER_HELLO_CAP))),
+        PaddingDecision::Continue
+    );
+    let mut over_cap = NestedTlsDetector::new();
+    assert_eq!(
+        over_cap.observe(&record(22, &header(NESTED_SERVER_HELLO_CAP + 1))),
+        PaddingDecision::End
+    );
+}
+
+#[test]
+fn supported_versions_must_select_exactly_tls13() {
+    let with_supported_versions = |value: &[u8]| {
+        let mut hello = server_hello(0x1301, false);
+        let extensions_length = hello.len() - 2;
+        let mut extension = vec![0, 43];
+        extension.extend_from_slice(&u16::try_from(value.len()).unwrap().to_be_bytes());
+        extension.extend_from_slice(value);
+        hello[extensions_length..]
+            .copy_from_slice(&u16::try_from(extension.len()).unwrap().to_be_bytes());
+        hello.extend_from_slice(&extension);
+        let body_length = u32::try_from(hello.len() - 4).unwrap().to_be_bytes();
+        hello[1..4].copy_from_slice(&body_length[1..]);
+        hello
+    };
+    assert!(super::nested::is_tls13_server_hello(
+        &with_supported_versions(&[0x03, 0x04])
+    ));
+    for value in [&[0x7f, 0x1c, 0x03, 0x04][..], &[0x03, 0x03], &[0x03]] {
+        assert!(
+            !super::nested::is_tls13_server_hello(&with_supported_versions(value)),
+            "{value:02x?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn nested_reader_frames_only_known_content_types_within_the_record_cap() {
+    let (mut client, server) = tcp_pair().await;
+    let (destination, _) = server.into_split();
+    let mut reader = super::NestedRecordReader::new(destination);
+
+    let at_cap = record(23, &vec![0x5a; NESTED_RECORD_BODY_CAP]);
+    let mut over_cap = vec![23, 0x03, 0x03];
+    over_cap.extend_from_slice(
+        &u16::try_from(NESTED_RECORD_BODY_CAP + 1)
+            .unwrap()
+            .to_be_bytes(),
+    );
+    let heartbeat = record(24, b"hb");
+    for bytes in [&at_cap, &over_cap, &heartbeat] {
+        client
+            .write_all(bytes)
+            .await
+            .expect("bytes must be written");
+    }
+    client.shutdown().await.expect("client must half-close");
+
+    match reader.next(TEST_TIMEOUT).await.expect("record at cap") {
+        super::NestedRead::Record(bytes) => assert_eq!(bytes, at_cap.as_slice()),
+        _ => panic!("a record at the body cap must be framed"),
+    }
+    match reader.next(TEST_TIMEOUT).await.expect("oversized header") {
+        super::NestedRead::Unframed(bytes) => assert_eq!(bytes, over_cap.as_slice()),
+        _ => panic!("a header above the body cap must be unframed"),
+    }
+    match reader
+        .next(TEST_TIMEOUT)
+        .await
+        .expect("unknown content type")
+    {
+        // Unframed bytes are whatever is buffered; they never wait for a full record.
+        super::NestedRead::Unframed(bytes) => {
+            assert!(!bytes.is_empty() && heartbeat.starts_with(bytes));
+        }
+        _ => panic!("content type 24 is not a framed TLS record"),
+    }
+}
+
 fn server_hello(cipher_suite: u16, tls13: bool) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&[0x03, 0x03]);
