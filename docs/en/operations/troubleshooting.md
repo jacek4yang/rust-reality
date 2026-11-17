@@ -342,6 +342,12 @@ resource failures retain their categories. These failures are not `protocol`
 rejections: that category denotes malformed protocol input, not a broken
 established connection.
 
+One exception stays `protocol`: when a Vision destination ends its stream (FIN)
+inside a nested TLS record, the rejection carries `failure.stage:
+"session_relay"` with `failure.cause: "unexpected_eof"`. The same close as a
+reset (RST) is a socket failure and appears as `outbound` with
+`failure.cause: "connection_reset"`.
+
 Set `log.level` to `debug` for per-connection events. It is verbose, and it is
 the level at which a single connection's life can be followed end to end.
 

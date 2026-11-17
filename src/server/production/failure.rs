@@ -50,6 +50,11 @@ pub(super) fn detail(error: &ConnectionRunError) -> Option<FailureDetail> {
         | ConnectionRunError::Vision(
             VisionSessionError::Relay(error) | VisionSessionError::Io(error),
         ) => (Stage::SessionRelay, io_cause(error)),
+        // The destination ended its stream (FIN) inside a nested TLS record.
+        // Additive diagnostics only: the rejection stays `protocol`.
+        ConnectionRunError::Vision(VisionSessionError::DestinationTruncatedTlsRecord) => {
+            (Stage::SessionRelay, (Cause::UnexpectedEof, None))
+        }
         // LANDING pre-auth: socket accepted, peer not yet authenticated.
         ConnectionRunError::Handoff(
             HandoffLandingError::Admission(_)

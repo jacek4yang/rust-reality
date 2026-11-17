@@ -1977,6 +1977,30 @@ fn restart_disconnect_matches_only_one_witnessed_topology_epipe() {
     }
 }
 
+/// A truncated nested TLS record (FIN inside a record) is a `protocol`
+/// rejection with closed-vocabulary detail. It stays an unexpected rejection
+/// even inside a witnessed restart window: no evaluator exemption covers it.
+#[test]
+fn truncated_record_detail_is_never_a_restart_exemption() {
+    use super::execution::{RestartDisconnect, product_log_with_faults};
+    let event = json!({"event":"connection_rejected","level":"warn","timestampUnixMs":105,
+    "peer":"127.0.0.1:43028","reason":"protocol",
+    "failure":{"stage":"session_relay","cause":"unexpected_eof"}});
+    let mut proof = Some(RestartDisconnect {
+        peer: "127.0.0.1:43028".to_owned(),
+        start_ms: 100,
+        end_ms: 110,
+        stage: "session_relay",
+    });
+    assert_eq!(
+        product_log_with_faults(&format!("{event}\n").into_bytes(), &mut vec![], &mut proof)
+            .unwrap()
+            .rejections,
+        1
+    );
+    assert!(proof.is_some(), "the restart proof must remain unconsumed");
+}
+
 #[test]
 fn captured_nxr_restart_requires_matching_ack_kill_and_intact_prefix() {
     let root =

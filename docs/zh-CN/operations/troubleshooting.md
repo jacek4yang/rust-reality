@@ -315,6 +315,11 @@ LANDING 内嵌的 egress 准入/描述符失败仍归类为 `resource_limit`，�
 资源故障仍保留各自分类。这些故障不属于 `protocol` 拒绝：该类别表示协议输入格式
 错误，而不是已建立的连接断开。
 
+唯一仍归类为 `protocol` 的情况：Vision 目标在嵌套 TLS record 中途结束数据流（FIN），
+此时拒绝事件带有 `failure.stage: "session_relay"` 和 `failure.cause: "unexpected_eof"`。
+同样的关闭若以重置（RST）发生，则属于套接字故障，记为 `outbound`，
+并带有 `failure.cause: "connection_reset"`。
+
 把 `log.level` 设成 `debug` 可以看到每连接事件。它很吵，但那是能把一个连接的一生从头
 跟到尾的级别。
 
