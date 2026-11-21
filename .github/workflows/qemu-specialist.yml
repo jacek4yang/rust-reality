@@ -783,17 +783,52 @@ jobs:
           ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
           fetch-depth: 0
+      # download-artifact v4 can exit successfully mid-download without its
+      # `download-path` output (actions/download-artifact#475), leaving a
+      # partially restored cell directory. `download-path` is set only after
+      # every download completed, so an empty value triggers exactly one
+      # identical retry, and the guard fails closed before any merge.
       - name: Restore shared prepare controller
+        id: restore-prepare
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/rr-qemu-prepare
+      - name: Retry an incomplete prepare controller restore once
+        id: retry-prepare
+        if: steps.restore-prepare.outputs.download-path == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
           path: ${{ runner.temp }}/rr-qemu-prepare
       - name: Restore every cell campaign directory
+        id: restore-cells
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: hosted-qemu-cell-${{ env.HEAD_SHA }}-*
           path: ${{ runner.temp }}/rr-qemu-cells
           merge-multiple: false
+      - name: Retry an incomplete cell campaign restore once
+        id: retry-cells
+        if: steps.restore-cells.outputs.download-path == ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: hosted-qemu-cell-${{ env.HEAD_SHA }}-*
+          path: ${{ runner.temp }}/rr-qemu-cells
+          merge-multiple: false
+      - name: Require the prepare and cell restores to have completed
+        env:
+          PREPARE: ${{ steps.restore-prepare.outputs.download-path || steps.retry-prepare.outputs.download-path }}
+          CELLS: ${{ steps.restore-cells.outputs.download-path || steps.retry-cells.outputs.download-path }}
+        run: |
+          status=0
+          for name in PREPARE CELLS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::artifact restore $name did not complete after one retry"
+              status=1
+            fi
+          done
+          exit "$status"
       - name: Merge identity-bound cell evidence
         run: |
           set -euo pipefail
@@ -827,11 +862,28 @@ jobs:
             "$RUNNER_TEMP/rr-cloud-campaign/xray" "$RUNNER_TEMP/rr-cloud-campaign/openssl"
 
       - name: Restore guest UDP receipts
+        id: restore-udp-guest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-*
           path: ${{ runner.temp }}/rr-qemu-udp-guest
           merge-multiple: false
+      - name: Retry an incomplete guest UDP receipt restore once
+        id: retry-udp-guest
+        if: steps.restore-udp-guest.outputs.download-path == ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-*
+          path: ${{ runner.temp }}/rr-qemu-udp-guest
+          merge-multiple: false
+      - name: Require the guest UDP receipt restore to have completed
+        env:
+          UDP_GUEST: ${{ steps.restore-udp-guest.outputs.download-path || steps.retry-udp-guest.outputs.download-path }}
+        run: |
+          if [ -z "$UDP_GUEST" ]; then
+            echo "::error::artifact restore UDP_GUEST did not complete after one retry"
+            exit 1
+          fi
       - name: Aggregate guest UDP four-cell fail-closed
         run: |
           set -euo pipefail
