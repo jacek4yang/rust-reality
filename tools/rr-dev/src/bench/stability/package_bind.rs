@@ -195,12 +195,8 @@ mod tests {
         // The four-cell merge restores fail closed the same way, before any
         // merge or guest UDP aggregation reads a partially restored directory.
         assert!(campaign.contains("for name in PREPARE CELLS; do"));
-        assert!(campaign.contains(
-            "if: steps.restore-cells.outputs.download-path == ''\n"
-        ));
-        assert!(campaign.contains(
-            "if: steps.restore-udp-guest.outputs.download-path == ''\n"
-        ));
+        assert!(campaign.contains("if: steps.restore-cells.outputs.download-path == ''\n"));
+        assert!(campaign.contains("if: steps.restore-udp-guest.outputs.download-path == ''\n"));
         let merge = campaign
             .find("      - name: Merge identity-bound cell evidence")
             .expect("merge step");
