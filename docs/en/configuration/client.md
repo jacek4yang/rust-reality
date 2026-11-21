@@ -207,8 +207,9 @@ each group keeps its own health and sticky-primary state.
 - Local and LINE TCP sockets use the shared NODELAY and kernel keepalive policy.
   Cancelling the client listener cancels its owned connections; completed
   connection tasks are reaped while the listener remains active.
-- Listeners must bind loopback (`127.0.0.1` / `::1`). Non-loopback binds are
-  rejected.
+- Listeners bind only their `ipv4` address, which must be set to a loopback
+  address such as `127.0.0.1`. Absent, unspecified, and other non-loopback
+  addresses are rejected. The client never binds IPv6.
 - A group lists one to eight LINE tags; tags must exist and be unique in the
   group.
 - `shortId` is even-length hex, 2–16 characters, left-aligned as on the entry.

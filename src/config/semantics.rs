@@ -142,21 +142,8 @@ pub fn validate(node: NodeConfig) -> Result<ValidatedConfig, SemanticError> {
 
 fn validate_client(client: &ClientConfig) -> Result<(), SemanticError> {
     validate_listeners(&client.listeners)?;
-    for listener in &client.listeners {
-        let v4 = listener.ipv4_address();
-        let v6 = listener.ipv6_address();
-        if !v4.is_loopback() && v4 != std::net::Ipv4Addr::UNSPECIFIED {
-            // Client SOCKS5 must stay on loopback in this PR; remote bind is PR4+.
-            if !v4.is_unspecified() && !v4.is_loopback() {
-                return fail(
-                    "listeners",
-                    "client SOCKS5 listeners must bind loopback (127.0.0.1 or ::1)",
-                );
-            }
-        }
-        let _ = v6;
-    }
-    // Prefer explicit loopback: reject unspecified (0.0.0.0) for client.
+    // The client binds only `ipv4`, so it must be an explicit loopback address;
+    // absent or unspecified would expose the unauthenticated proxy.
     for (index, listener) in client.listeners.iter().enumerate() {
         let path = format!("listeners[{index}]");
         match listener.ipv4 {

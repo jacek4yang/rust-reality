@@ -602,3 +602,36 @@ fn asset_sources_must_be_https() {
         r#","assets":{"geoip":"https://example.com/geoip.dat"}"#,
     ));
 }
+
+/// The client binds only its listener's `ipv4`, so that address alone decides
+/// exposure: it must be an explicit loopback address.
+#[test]
+fn client_listeners_require_an_explicit_ipv4_loopback() {
+    let client = |listener: &str| {
+        format!(
+            r#"{{
+              "role": "client",
+              "listeners": [{listener}],
+              "lines": [{{ "address": "127.0.0.1", "port": 8443,
+                           "id": "11111111-1111-4111-8111-111111111111",
+                           "publicKey": "{}", "shortId": "0102030405060708",
+                           "serverName": "www.example.com" }}]
+            }}"#,
+            key(4)
+        )
+    };
+    accept(&client(r#"{ "port": 10808, "ipv4": "127.0.0.1" }"#));
+    accept(&client(r#"{ "port": 10808, "ipv4": "127.0.0.2" }"#));
+    for listener in [
+        r#"{ "port": 10808 }"#,
+        r#"{ "port": 10808, "ipv4": "0.0.0.0" }"#,
+        r#"{ "port": 10808, "ipv4": "10.0.0.1" }"#,
+        r#"{ "port": 10808, "ipv6": "::1" }"#,
+    ] {
+        assert_eq!(
+            reject(&client(listener)).path(),
+            "listeners[0].ipv4",
+            "{listener}"
+        );
+    }
+}
