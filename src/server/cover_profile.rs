@@ -8,6 +8,7 @@
 
 use std::{
     collections::VecDeque,
+    future::Future,
     ops::Range,
     sync::{
         Arc, Mutex, MutexGuard,
@@ -440,6 +441,7 @@ async fn run_collector(inner: Arc<CoverProfilesInner>) {
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum CollectionFailure {
     Unavailable,
     Unstable,
@@ -449,9 +451,21 @@ async fn collect_consensus(
     inner: &CoverProfilesInner,
     candidate: &Candidate,
 ) -> Result<CoverProfile, CollectionFailure> {
+    require_consensus(|variant| collect_observation(inner, candidate, variant)).await
+}
+
+/// Runs [`REQUIRED_CONSENSUS`] observations concurrently and publishes only
+/// when every one succeeds with an identical result: any failure is
+/// unavailable and any disagreement is unstable.
+async fn require_consensus<T, F, Fut>(observe: F) -> Result<T, CollectionFailure>
+where
+    T: PartialEq,
+    F: Fn(u8) -> Fut,
+    Fut: Future<Output = Result<T, CollectionFailure>>,
+{
     let mut observations = FuturesUnordered::new();
     for variant in 0..REQUIRED_CONSENSUS {
-        observations.push(collect_observation(inner, candidate, variant));
+        observations.push(observe(variant));
     }
     let mut consensus = None;
     while let Some(observed) = observations.next().await {

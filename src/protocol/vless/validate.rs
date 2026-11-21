@@ -396,6 +396,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn vision_tcp_authorizer_rejects_non_tcp_commands_that_carry_a_destination() {
+        for command in [Command::Udp, Command::Reverse] {
+            let request =
+                request_header(ALLOWED_USER, vision_addons(), command, Some(destination()));
+            assert_eq!(
+                authorize_authenticated_vision_tcp(&request, ALLOWED_USER),
+                Err(RequestValidationError::UnsupportedCommand(command))
+            );
+        }
+    }
+
+    #[test]
+    fn shared_vision_field_validator_requires_a_destination() {
+        assert_eq!(
+            super::validate_authenticated_vision_fields(
+                ALLOWED_USER,
+                &vision_addons(),
+                Command::Tcp,
+                false,
+                ALLOWED_USER,
+            ),
+            Err(RequestValidationError::MissingDestination)
+        );
+    }
+
     fn request_header(
         user_id: UserId,
         addons: Vec<u8>,

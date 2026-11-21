@@ -414,3 +414,28 @@ fn the_direct_barrier_pauses_only_at_critical_pressure() {
     gauge.set(crate::runtime::ResourcePressure::Normal);
     assert!(barrier.try_acquire().is_ok());
 }
+
+#[test]
+fn dial_rate_intervals_round_up_so_the_rate_is_never_exceeded() {
+    for rate in [1_u64, 3, 7, 1_000, 999_983] {
+        let (interval_nanos, burst_nanos) = super::rate_timing(rate);
+        assert!(
+            interval_nanos * rate >= NANOS_PER_SECOND,
+            "rate {rate}: interval {interval_nanos} would admit more than {rate}/s"
+        );
+        assert!(
+            (interval_nanos - 1) * rate < NANOS_PER_SECOND,
+            "rate {rate}: interval {interval_nanos} is not the tightest conservative value"
+        );
+        assert_eq!(burst_nanos, interval_nanos * rate);
+    }
+}
+
+#[test]
+fn an_exhausted_dial_burst_refills_on_the_exact_nanosecond() {
+    let gate = DialRateGate::new(4);
+    let interval_nanos = NANOS_PER_SECOND / 4;
+    assert!((0..4).all(|_| gate.try_take_at(0)));
+    assert!(!gate.try_take_at(interval_nanos - 1));
+    assert!(gate.try_take_at(interval_nanos));
+}

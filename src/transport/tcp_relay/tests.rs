@@ -1144,3 +1144,141 @@ async fn an_active_directional_relay_never_times_out_across_many_windows() {
         );
     }
 }
+
+/// A writer that accepts nothing, or whose shutdown reports `shutdown_error`.
+struct ScriptedWriter {
+    accepts: bool,
+    shutdown_error: Option<io::ErrorKind>,
+}
+
+impl tokio::io::AsyncWrite for ScriptedWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        std::task::Poll::Ready(Ok(if self.accepts { bytes.len() } else { 0 }))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::task::Poll::Ready(self.shutdown_error.map_or(Ok(()), |kind| Err(kind.into())))
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_destination_accepting_zero_bytes_ends_the_direction_instead_of_spinning() {
+    let ledger = super::TransferLedger::new();
+    let mut buffer = [0_u8; 64];
+    let writer = ScriptedWriter {
+        accepts: false,
+        shutdown_error: None,
+    };
+    let error = time::timeout(
+        Duration::from_secs(2),
+        super::copy_direction(
+            &b"payload"[..],
+            writer,
+            &mut buffer,
+            &ledger,
+            true,
+            None,
+            false,
+        ),
+    )
+    .await
+    .expect("a zero-byte write must not spin")
+    .expect_err("a zero-byte write must fail");
+    assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+}
+
+/// A destination already gone at the closing shutdown is tolerated only when
+/// the context treats peer resets as EOF; otherwise the error surfaces.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_closing_shutdown_is_tolerated_only_with_reset_as_eof() {
+    for (source_reset_is_eof, kind, tolerated) in [
+        (true, io::ErrorKind::BrokenPipe, true),
+        (false, io::ErrorKind::BrokenPipe, false),
+        (true, io::ErrorKind::PermissionDenied, false),
+    ] {
+        let ledger = super::TransferLedger::new();
+        let mut buffer = [0_u8; 64];
+        let writer = ScriptedWriter {
+            accepts: true,
+            shutdown_error: Some(kind),
+        };
+        let result = super::copy_direction(
+            &b"payload"[..],
+            writer,
+            &mut buffer,
+            &ledger,
+            true,
+            None,
+            source_reset_is_eof,
+        )
+        .await;
+        assert_eq!(
+            result.is_ok(),
+            tolerated,
+            "{source_reset_is_eof} {kind:?}: {result:?}"
+        );
+    }
+}
+
+/// A destination that drains slowly forces partial splice-outs; every byte
+/// left in the pipe must still be delivered before the direction closes.
+#[tokio::test(flavor = "current_thread")]
+async fn a_slow_destination_receives_every_spliced_byte() {
+    const TOTAL: usize = 8 * 1024 * 1024;
+    let relay = TcpRelay::new(
+        TcpRelayConfig {
+            splice: true,
+            pipe_pool: false,
+            ..TcpRelayConfig::for_test()
+        },
+        FdBudget::new(64),
+    )
+    .expect("relay policy");
+    let (mut client, inbound) = tcp_pair().await;
+    let (outbound, mut target) = tcp_pair().await;
+    let payload: Vec<u8> = (0..TOTAL).map(|index| (index % 251) as u8).collect();
+    let expected = payload.clone();
+    let relaying = tokio::spawn(async move {
+        relay
+            .relay_owned(inbound, outbound, RelayContext::owned())
+            .await
+    });
+    let sending = tokio::spawn(async move {
+        client.write_all(&payload).await.expect("send payload");
+        client.shutdown().await.expect("half-close");
+        client
+    });
+    let received = time::timeout(Duration::from_secs(30), async {
+        let mut received = Vec::with_capacity(TOTAL);
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let read = target.read(&mut chunk).await.expect("receive payload");
+            if read == 0 {
+                break received;
+            }
+            received.extend_from_slice(&chunk[..read]);
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the relay must deliver the payload and FIN");
+    assert_eq!(received.len(), TOTAL);
+    assert!(received == expected, "spliced bytes must arrive in order");
+    drop(target);
+    drop(sending.await.expect("sender"));
+    let _ = relaying.await;
+}

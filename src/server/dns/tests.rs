@@ -1070,3 +1070,177 @@ async fn literals_and_invalid_names_never_touch_the_backend() {
     assert!(matches!(error, DnsError::InvalidName));
     assert_eq!(harness.backend.calls(), 0);
 }
+
+#[tokio::test]
+async fn names_are_case_folded_and_bounded_at_exactly_253_bytes() {
+    let harness = build(
+        MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30))),
+        &cache_config(),
+        Duration::from_secs(5),
+        64,
+    );
+    for name in ["Example.TEST", "example.test.", "EXAMPLE.test"] {
+        harness
+            .resolver
+            .resolve(name, IpFamily::Any, Duration::from_secs(5))
+            .await
+            .expect("case and trailing-dot variants resolve");
+    }
+    assert_eq!(harness.backend.calls(), 1, "variants share one cache entry");
+
+    harness
+        .resolver
+        .resolve(&"a".repeat(253), IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect("a 253-byte name is within the DNS limit");
+    let error = harness
+        .resolver
+        .resolve(&"a".repeat(254), IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect_err("a 254-byte name exceeds the DNS limit");
+    assert!(matches!(error, DnsError::InvalidName));
+    assert_eq!(harness.backend.calls(), 2);
+}
+
+#[test]
+fn upstream_addresses_are_deduplicated_and_capped() {
+    let mut ips = Vec::new();
+    super::push_unique(&mut ips, v4(1)).expect("first address");
+    super::push_unique(&mut ips, v4(1)).expect("duplicate is ignored");
+    assert_eq!(ips, vec![v4(1)]);
+    for last in 2..=u8::try_from(super::MAX_RESOLVED_IPS).expect("cap fits u8") {
+        super::push_unique(&mut ips, v4(last)).expect("within the cap");
+    }
+    assert_eq!(ips.len(), super::MAX_RESOLVED_IPS);
+    super::push_unique(&mut ips, v4(1)).expect("a duplicate at the cap is still ignored");
+    assert!(matches!(
+        super::push_unique(&mut ips, v6(1)),
+        Err(UpstreamError::TooManyAddresses)
+    ));
+}
+
+#[tokio::test]
+async fn caller_budgets_never_exceed_the_configured_timeout() {
+    let harness = build(
+        MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30)))
+            .with_delay(Duration::from_secs(10)),
+        &cache_config(),
+        Duration::from_millis(100),
+        64,
+    );
+    let error = time::timeout(
+        Duration::from_secs(2),
+        harness
+            .resolver
+            .resolve("slow.test", IpFamily::Any, Duration::from_secs(60)),
+    )
+    .await
+    .expect("the configured timeout must bound a generous caller budget")
+    .expect_err("a slow upstream must time out");
+    assert!(matches!(error, DnsError::Timeout));
+}
+
+#[tokio::test]
+async fn an_exhausted_budget_times_out_without_an_upstream_query() {
+    let harness = build(
+        MockBackend::answering(vec![v4(1)], Some(Duration::from_secs(30))),
+        &cache_config(),
+        Duration::from_secs(5),
+        64,
+    );
+    let error = harness
+        .resolver
+        .resolve("budget.test", IpFamily::Any, Duration::ZERO)
+        .await
+        .expect_err("a zero budget cannot resolve");
+    assert!(matches!(error, DnsError::Timeout));
+    time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(harness.backend.calls(), 0);
+}
+
+#[tokio::test]
+async fn negative_soa_ttls_are_clamped_to_the_configured_ceiling() {
+    let backend = MockBackend::answering(vec![], None);
+    backend.set_outcome(MockOutcome::NotFound {
+        nxdomain: true,
+        negative_ttl: Some(Duration::from_secs(3600)),
+    });
+    let cache = DnsCacheConfig {
+        negative_ttl_seconds: Some(1),
+        ..cache_config()
+    };
+    let harness = build(backend, &cache, Duration::from_secs(5), 64);
+    harness
+        .resolver
+        .resolve("absent.test", IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect_err("NXDOMAIN must fail");
+    time::sleep(Duration::from_millis(1_200)).await;
+    harness
+        .resolver
+        .resolve("absent.test", IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect_err("NXDOMAIN must still fail");
+    assert_eq!(
+        harness.backend.calls(),
+        2,
+        "an hour-long SOA TTL must not outlive the one-second ceiling"
+    );
+}
+
+#[tokio::test]
+async fn cache_pressure_drops_expired_entries_before_evicting_live_ones() {
+    let cache = DnsCacheConfig {
+        max_entries: Some(2),
+        ..cache_config()
+    };
+    let harness = build(
+        MockBackend::answering(vec![v4(1)], Some(Duration::from_millis(50))),
+        &cache,
+        Duration::from_secs(5),
+        64,
+    );
+    harness
+        .resolver
+        .resolve("short.test", IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect("short.test resolves");
+    harness.backend.set_outcome(MockOutcome::Answer {
+        ips: vec![v4(2)],
+        ttl: Some(Duration::from_secs(30)),
+    });
+    harness
+        .resolver
+        .resolve("long.test", IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect("long.test resolves");
+    time::sleep(Duration::from_millis(80)).await;
+    harness
+        .resolver
+        .resolve("new.test", IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect("new.test resolves");
+    let metrics = harness.resolver.metrics();
+    assert_eq!(
+        metrics.evictions, 0,
+        "an expired entry must make room first"
+    );
+    assert_eq!(metrics.expirations, 1);
+    let calls = harness.backend.calls();
+    harness
+        .resolver
+        .resolve("long.test", IpFamily::Any, Duration::from_secs(5))
+        .await
+        .expect("long.test is still cached");
+    assert_eq!(harness.backend.calls(), calls);
+}
+
+#[test]
+fn server_hostname_labels_are_bounded_and_hyphen_trimmed() {
+    let label63 = "a".repeat(63);
+    assert!(parse_server_spec(&format!("{label63}.example")).is_ok());
+    let label64 = "a".repeat(64);
+    assert!(parse_server_spec(&format!("{label64}.example")).is_err());
+    assert!(parse_server_spec("dns-.example").is_err());
+    assert!(parse_server_spec("-dns.example").is_err());
+}

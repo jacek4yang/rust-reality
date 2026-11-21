@@ -1348,4 +1348,113 @@ mod tests {
         assert!(map.is_empty());
         let _replacement = map.acquire(gid, [2; 16], after_grace).unwrap();
     }
+
+    /// An expired, unleased association no longer reserves its id or a
+    /// capacity slot: another user may take the id once it idles out.
+    #[test]
+    fn an_idle_expired_association_is_purged_before_acquire() {
+        let map = XudpGlobalMap::new();
+        let now = Instant::now();
+        map.acquire([0x21; 8], [1; 16], now).unwrap().release(now);
+        assert!(matches!(
+            map.acquire(
+                [0x21; 8],
+                [2; 16],
+                now + XUDP_ASSOCIATION_IDLE - Duration::from_secs(1)
+            ),
+            Err(XudpSessionError::AssociationConflict)
+        ));
+        let later = now + XUDP_ASSOCIATION_IDLE;
+        let _taken = map.acquire([0x21; 8], [2; 16], later).unwrap();
+        assert_eq!(map.len(), 1);
+    }
+
+    /// Only an incomplete trailing frame waits for more bytes; any other
+    /// codec failure ends the session instead of stalling the buffer.
+    #[test]
+    fn draining_fails_closed_on_a_malformed_frame() {
+        let dest = Destination::from(SocketAddr::from((Ipv4Addr::new(1, 1, 1, 1), 53)));
+        let mut wire = Vec::new();
+        encode_xudp_packet(&dest, b"ok", false, None, true, &mut wire).unwrap();
+        let mut truncated = wire.clone();
+        truncated.pop();
+        assert!(drain_xudp_frames(&mut truncated).unwrap().is_empty());
+        assert_eq!(truncated.len(), wire.len() - 1);
+
+        let mut malformed = wire.clone();
+        // A zero metadata length is never valid.
+        malformed[0] = 0;
+        malformed[1] = 0;
+        assert!(matches!(
+            drain_xudp_frames(&mut malformed),
+            Err(XudpSessionError::Codec(_))
+        ));
+    }
+
+    /// Every LANDING frame must carry the next sequence number: a replayed
+    /// or skipped frame fails closed even though its tag verifies.
+    #[tokio::test(flavor = "current_thread")]
+    async fn nxr_downlink_rejects_out_of_sequence_frames() {
+        use crate::protocol::{
+            nxr::NxrKey,
+            nxr_udp::{DIR_LANDING_TO_LINE, FRAME_TYPE_DATAGRAM, NxrUdpSessionKey, encode_frame},
+        };
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let (line, accepted) = tokio::join!(
+            TcpStream::connect(listener.local_addr().unwrap()),
+            listener.accept()
+        );
+        let mut landing = accepted.unwrap().0;
+        let key = NxrKey::new([0x44; 32]);
+        let session = NxrUdpSessionKey::derive(&key, b"downlink-sequence");
+        let source = Destination::from(SocketAddr::from((Ipv4Addr::new(9, 9, 9, 9), 53)));
+        let budget = crate::transport::FdBudget::new(4);
+        let mut assoc = XudpNxrAssociation {
+            stream: line.unwrap(),
+            _permit: OutboundPermit::for_test(budget.try_acquire(1).unwrap()),
+            session: NxrUdpSessionKey::derive(&key, b"downlink-sequence"),
+            seq_out: NxrUdpSeq::new(),
+            seq_in: NxrUdpSeq::new(),
+            last_uplink_destination: source.clone(),
+            inbound_buf: Vec::new(),
+            pending_downlink: VecDeque::new(),
+            global_lease: None,
+            last_activity: Instant::now(),
+            uplink_datagrams: 0,
+            downlink_datagrams: 0,
+        };
+        let frame = |seq: u32| {
+            let mut wire = Vec::new();
+            encode_frame(
+                &session,
+                DIR_LANDING_TO_LINE,
+                FRAME_TYPE_DATAGRAM,
+                seq,
+                Some(&source),
+                b"reply",
+                &mut wire,
+            )
+            .unwrap();
+            wire
+        };
+        let mut burst = frame(0);
+        burst.extend_from_slice(&frame(0));
+        landing.write_all(&burst).await.unwrap();
+
+        let mut out = Vec::new();
+        let mut scratch = [0_u8; 16];
+        assoc
+            .recv_downlink_frame(&mut scratch, &mut out, Instant::now())
+            .await
+            .expect("sequence 0 is accepted");
+        assert!(matches!(
+            assoc
+                .recv_downlink_frame(&mut scratch, &mut out, Instant::now())
+                .await,
+            Err(XudpSessionError::NxrCarrier(NxrUdpError::Sequence))
+        ));
+        assert_eq!(assoc.downlink_datagrams(), 1);
+    }
 }

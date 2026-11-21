@@ -401,3 +401,59 @@ fn an_operator_pin_below_the_default_becomes_an_immovable_knob() {
     assert_eq!(dns.floor, 32, "the floor never undercuts an operator pin");
     assert_eq!(dns.ceiling, 32);
 }
+
+/// The watermarks are inclusive: exactly 85% counts as high and exactly 40%
+/// as low, so a knob at either boundary still walks.
+#[test]
+fn the_watermarks_are_inclusive_at_exactly_85_and_40_percent() {
+    use super::{Knob, KnobState, SCALE_DOWN_TICKS, SCALE_UP_TICKS};
+    let mut knob = KnobState::new(Knob::Connections, 1_000, 100);
+    knob.value = 800;
+    let changes: Vec<_> = (0..u64::from(SCALE_UP_TICKS))
+        .filter_map(|tick| knob.tick(680, tick, 0))
+        .collect();
+    assert_eq!(changes.len(), 1, "85% of 800 must trip the scale-up");
+    assert_eq!(changes[0].reason, ChangeReason::HighUtilization);
+
+    let mut knob = KnobState::new(Knob::Connections, 1_000, 100);
+    let changes: Vec<_> = (0..u64::from(SCALE_DOWN_TICKS))
+        .filter_map(|tick| knob.tick(400, tick, 0))
+        .collect();
+    assert_eq!(changes.len(), 1, "40% of 1000 must trip the scale-down");
+    assert_eq!(changes[0].reason, ChangeReason::LowUtilization);
+}
+
+/// One high tick breaks a run of low ticks, so the scale-down needs six
+/// fresh consecutive low ticks afterwards.
+#[test]
+fn a_high_tick_breaks_a_run_of_low_ticks() {
+    use super::{Knob, KnobState, SCALE_DOWN_TICKS};
+    let mut knob = KnobState::new(Knob::Connections, 1_000, 100);
+    let mut tick = 0;
+    for _ in 1..SCALE_DOWN_TICKS {
+        assert!(knob.tick(0, tick, 0).is_none());
+        tick += 1;
+    }
+    assert!(knob.tick(1_000, tick, 0).is_none());
+    tick += 1;
+    for _ in 1..SCALE_DOWN_TICKS {
+        assert!(knob.tick(0, tick, 0).is_none(), "tick {tick}");
+        tick += 1;
+    }
+    assert!(knob.tick(0, tick, 0).is_some());
+}
+
+/// Critical pressure on a knob already at its floor reports no change and
+/// does not restart the dwell.
+#[test]
+fn critical_pressure_at_the_floor_is_a_silent_no_op() {
+    use super::{Knob, KnobState};
+    let mut knob = KnobState::new(Knob::Connections, 1_000, 100);
+    let first = knob
+        .clamp_to_floor(1, 10)
+        .expect("first clamp moves to the floor");
+    assert_eq!((first.from, first.to), (1_000, 100));
+    assert!(knob.clamp_to_floor(2, 20).is_none());
+    assert_eq!(knob.last_change_tick, Some(1));
+    assert_eq!(knob.last_change.as_ref().map(|change| change.to), Some(100));
+}

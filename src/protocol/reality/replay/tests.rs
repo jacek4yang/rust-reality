@@ -341,3 +341,70 @@ fn committed_entry_outlives_its_pending_deadline() {
         .reserve_key_at(key, released)
         .expect("retention elapsed; key admissible again");
 }
+
+/// The pending entry expires at its deadline instant, exactly as the purge
+/// treats it, so a commit that arrives at that instant is too late.
+#[test]
+fn a_commit_at_the_exact_pending_deadline_is_lost() {
+    let cache = test_cache(1);
+    let started = Instant::now();
+    let mut reservation = cache
+        .reserve_key_at(replay_key(11), started)
+        .expect("first handshake must reserve");
+    assert!(matches!(
+        reservation.commit_at(started + Duration::from_millis(100)),
+        Err(ReplayError::ReservationLost)
+    ));
+    assert_eq!(cache.entry_count(), 0);
+}
+
+/// A stale reservation whose pending entry expired and was replaced for the
+/// same ClientHello must neither commit nor remove the replacement.
+#[test]
+fn a_stale_reservation_cannot_commit_or_evict_its_replacement() {
+    let cache = test_cache(2);
+    let started = Instant::now();
+    let key = replay_key(12);
+    let mut stale = cache
+        .reserve_key_at(key, started)
+        .expect("first handshake must reserve");
+    let replaced_at = started + Duration::from_millis(100);
+    let mut replacement = cache
+        .reserve_key_at(key, replaced_at)
+        .expect("an expired pending entry must be replaceable");
+
+    assert!(matches!(
+        stale.commit_at(replaced_at + Duration::from_millis(1)),
+        Err(ReplayError::ReservationLost)
+    ));
+    assert_eq!(cache.entry_count(), 1);
+    assert!(matches!(
+        cache.reserve_key_at(key, replaced_at + Duration::from_millis(1)),
+        Err(ReplayError::Duplicate)
+    ));
+    replacement
+        .commit_at(replaced_at + Duration::from_millis(2))
+        .expect("the live replacement must still commit");
+    drop(stale);
+    drop(replacement);
+    assert_eq!(cache.entry_count(), 1);
+}
+
+/// Abandoned reservations leave stale expiry records behind; the heap must
+/// be compacted so churn cannot grow it without bound.
+#[test]
+fn abandoned_reservations_do_not_grow_the_expiry_heap_without_bound() {
+    let cache = test_cache(1);
+    let now = Instant::now();
+    let key = replay_key(13);
+    for _ in 0..4_096 {
+        drop(cache.reserve_key_at(key, now).expect("churn must reserve"));
+    }
+    let shard = super::lock_recover(&cache.inner.shards[super::shard_index(key)]);
+    assert!(shard.entries.is_empty());
+    assert!(
+        shard.expirations.len() <= 1_025,
+        "stale expiry records: {}",
+        shard.expirations.len()
+    );
+}

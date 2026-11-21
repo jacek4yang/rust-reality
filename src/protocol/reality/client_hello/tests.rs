@@ -659,3 +659,301 @@ fn arbitrary_bytes_never_panic() {
         let _result = ClientHello::parse_message(&input);
     }
 }
+
+// Structural rules of the pre-authentication parser, each broken alone.
+
+fn u8_vector(bytes: &[u8]) -> Vec<u8> {
+    let mut output = vec![u8::try_from(bytes.len()).expect("test vector must fit u8")];
+    output.extend_from_slice(bytes);
+    output
+}
+
+fn u16_vector(bytes: &[u8]) -> Vec<u8> {
+    let mut output = u16::try_from(bytes.len())
+        .expect("test vector must fit u16")
+        .to_be_bytes()
+        .to_vec();
+    output.extend_from_slice(bytes);
+    output
+}
+
+fn extension(extension_type: u16, body: &[u8]) -> Vec<u8> {
+    let mut output = extension_type.to_be_bytes().to_vec();
+    output.extend_from_slice(&u16_vector(body));
+    output
+}
+
+/// Assembles a ClientHello from already length-prefixed cipher, compression
+/// and extension fields, so each field's own rule can be violated alone.
+fn assemble(session_id: &[u8], ciphers: &[u8], compression: &[u8], extensions: &[u8]) -> Vec<u8> {
+    let mut body = 0x0303_u16.to_be_bytes().to_vec();
+    body.extend_from_slice(&[7; 32]);
+    body.extend_from_slice(&u8_vector(session_id));
+    body.extend_from_slice(ciphers);
+    body.extend_from_slice(compression);
+    body.extend_from_slice(extensions);
+    let mut message = vec![1];
+    let length = u32::try_from(body.len()).expect("test ClientHello must fit u24");
+    message.extend_from_slice(&length.to_be_bytes()[1..]);
+    message.extend_from_slice(&body);
+    message
+}
+
+fn server_name_extension(names: &[(u8, &[u8])]) -> Vec<u8> {
+    let mut list = Vec::new();
+    for (name_type, name) in names {
+        list.push(*name_type);
+        list.extend_from_slice(&u16_vector(name));
+    }
+    extension(super::EXT_SERVER_NAME, &u16_vector(&list))
+}
+
+fn key_share_extension(shares: &[(u16, &[u8])]) -> Vec<u8> {
+    let mut list = Vec::new();
+    for (group, data) in shares {
+        list.extend_from_slice(&group.to_be_bytes());
+        list.extend_from_slice(&u16_vector(data));
+    }
+    extension(super::EXT_KEY_SHARE, &u16_vector(&list))
+}
+
+fn alpn_extension(protocols: &[&[u8]]) -> Vec<u8> {
+    let list: Vec<u8> = protocols.iter().flat_map(|p| u8_vector(p)).collect();
+    extension(super::EXT_ALPN, &u16_vector(&list))
+}
+
+fn psk_extension(identities: &[&[u8]], binders: &[&[u8]]) -> Vec<u8> {
+    let mut identity_list = Vec::new();
+    for identity in identities {
+        identity_list.extend_from_slice(&u16_vector(identity));
+        identity_list.extend_from_slice(&0_u32.to_be_bytes());
+    }
+    let binder_list: Vec<u8> = binders.iter().flat_map(|b| u8_vector(b)).collect();
+    let mut body = u16_vector(&identity_list);
+    body.extend_from_slice(&u16_vector(&binder_list));
+    extension(EXT_PRE_SHARED_KEY, &body)
+}
+
+fn base_extensions() -> Vec<u8> {
+    let mut output = server_name_extension(&[(0, b"a.example")]);
+    output.extend_from_slice(&extension(super::EXT_SUPPORTED_VERSIONS, &[2, 0x03, 0x04]));
+    output.extend_from_slice(&key_share_extension(&[(X25519_GROUP, &[0x42; 32])]));
+    output
+}
+
+fn with_extensions(extensions: &[u8]) -> Vec<u8> {
+    assemble(
+        &[1; 32],
+        &u16_vector(&[0x13, 0x01]),
+        &[1, 0],
+        &u16_vector(extensions),
+    )
+}
+
+fn parse(message: &[u8]) -> Result<ClientHello, ClientHelloError> {
+    ClientHello::parse_message(message)
+}
+
+fn rejects(message: &[u8], field: &'static str) {
+    assert_eq!(
+        parse(message).err(),
+        Some(ClientHelloError::Malformed(field)),
+        "{field}"
+    );
+}
+
+#[test]
+fn fixed_fields_and_vector_framing_are_exact() {
+    let valid = with_extensions(&base_extensions());
+    assert!(parse(&valid).expect("valid hello").offers_tls13());
+
+    let mut trailing = valid.clone();
+    trailing.push(0);
+    assert_eq!(
+        parse(&trailing).err(),
+        Some(ClientHelloError::LengthMismatch)
+    );
+
+    let ciphers = u16_vector(&[0x13, 0x01]);
+    let extensions = u16_vector(&base_extensions());
+    assert!(parse(&assemble(&[1; 32], &ciphers, &[1, 0], &extensions)).is_ok());
+    rejects(
+        &assemble(&[1; 33], &ciphers, &[1, 0], &extensions),
+        "session ID",
+    );
+    rejects(
+        &assemble(&[1; 32], &u16_vector(&[]), &[1, 0], &extensions),
+        "cipher suites",
+    );
+    rejects(
+        &assemble(
+            &[1; 32],
+            &u16_vector(&[0x13, 0x01, 0x13]),
+            &[1, 0],
+            &extensions,
+        ),
+        "cipher suites",
+    );
+    rejects(
+        &assemble(&[1; 32], &ciphers, &[0], &extensions),
+        "compression methods",
+    );
+    let mut short_extensions = extensions.clone();
+    short_extensions.push(0);
+    assert_eq!(
+        parse(&assemble(&[1; 32], &ciphers, &[1, 0], &short_extensions)).err(),
+        Some(ClientHelloError::LengthMismatch)
+    );
+
+    let mut application_record = record(&valid);
+    application_record[0] = 0x17;
+    assert_eq!(
+        ClientHello::parse_record(&application_record).err(),
+        Some(ClientHelloError::NotHandshakeRecord)
+    );
+}
+
+#[test]
+fn extensions_are_unique_and_psk_must_be_last() {
+    let mut duplicate = base_extensions();
+    duplicate.extend_from_slice(&extension(0x1234, &[]));
+    duplicate.extend_from_slice(&extension(0x1234, &[]));
+    rejects(&with_extensions(&duplicate), "duplicate extension");
+
+    let psk = psk_extension(&[b"t"], &[&[0x55; 32]]);
+    let mut last = base_extensions();
+    last.extend_from_slice(&psk);
+    assert!(
+        parse(&with_extensions(&last))
+            .expect("PSK last")
+            .offers_psk()
+    );
+    let mut not_last = base_extensions();
+    not_last.extend_from_slice(&psk);
+    not_last.extend_from_slice(&extension(0x1234, &[]));
+    rejects(&with_extensions(&not_last), "pre-shared key ordering");
+}
+
+#[test]
+fn server_name_is_one_bounded_ascii_host_name() {
+    let hello = |names: &[(u8, &[u8])]| {
+        let mut extensions = server_name_extension(names);
+        extensions.extend_from_slice(&extension(super::EXT_SUPPORTED_VERSIONS, &[2, 0x03, 0x04]));
+        with_extensions(&extensions)
+    };
+    let longest = [b'a'; 253];
+    assert_eq!(
+        parse(&hello(&[(0, &longest)]))
+            .expect("253-byte name")
+            .server_name()
+            .map(str::len),
+        Some(253)
+    );
+    rejects(&hello(&[(0, &[b'a'; 254])]), "server name");
+    rejects(&hello(&[(0, "é.example".as_bytes())]), "server name");
+    rejects(&hello(&[(0, b"a\0.example")]), "server name");
+    rejects(
+        &hello(&[(0, b"a.example"), (0, b"b.example")]),
+        "duplicate host name",
+    );
+}
+
+#[test]
+fn version_share_and_alpn_vectors_are_nonempty_and_bounded() {
+    let with = |extra: &[u8]| {
+        let mut extensions = server_name_extension(&[(0, b"a.example")]);
+        extensions.extend_from_slice(extra);
+        with_extensions(&extensions)
+    };
+    rejects(
+        &with(&extension(super::EXT_SUPPORTED_VERSIONS, &[0])),
+        "supported versions",
+    );
+
+    let share = [0x42_u8; 1];
+    let shares: Vec<(u16, &[u8])> = (0..16).map(|group| (0x1000 + group, &share[..])).collect();
+    assert_eq!(
+        parse(&with(&key_share_extension(&shares)))
+            .expect("16 shares")
+            .key_shares()
+            .count(),
+        16
+    );
+    let mut too_many = shares.clone();
+    too_many.push((0x2000, &share));
+    rejects(&with(&key_share_extension(&too_many)), "key share count");
+    rejects(
+        &with(&key_share_extension(&[(X25519_GROUP, &[])])),
+        "empty key share",
+    );
+
+    let protocols: Vec<&[u8]> = (0..32).map(|_| &b"h2"[..]).collect();
+    assert_eq!(
+        parse(&with(&alpn_extension(&protocols)))
+            .expect("32 protocols")
+            .alpn_protocols()
+            .count(),
+        32
+    );
+    let mut too_many = protocols.clone();
+    too_many.push(b"h2");
+    rejects(&with(&alpn_extension(&too_many)), "ALPN protocol count");
+    rejects(&with(&alpn_extension(&[b"h2", b""])), "empty ALPN protocol");
+}
+
+#[test]
+fn psk_identities_and_binders_are_bounded_and_paired() {
+    let with = |psk: Vec<u8>| {
+        let mut extensions = base_extensions();
+        extensions.extend_from_slice(&psk);
+        with_extensions(&extensions)
+    };
+    let binder = [0x55_u8; 32];
+    let identities: Vec<&[u8]> = (0..16).map(|_| &b"t"[..]).collect();
+    let binders: Vec<&[u8]> = (0..16).map(|_| &binder[..]).collect();
+    assert!(parse(&with(psk_extension(&identities, &binders))).is_ok());
+
+    let mut many_identities = identities.clone();
+    many_identities.push(b"t");
+    let mut many_binders = binders.clone();
+    many_binders.push(&binder);
+    rejects(
+        &with(psk_extension(&many_identities, &many_binders)),
+        "PSK identity count",
+    );
+    rejects(
+        &with(psk_extension(&identities, &many_binders)),
+        "PSK binder count",
+    );
+    rejects(&with(psk_extension(&[b"t"], &[&[0x55; 31]])), "PSK binder");
+    rejects(
+        &with(psk_extension(&[b""], &[&binder])),
+        "empty PSK identity",
+    );
+    rejects(
+        &with(psk_extension(&[], &[])),
+        "PSK identity and binder count",
+    );
+    rejects(
+        &with(psk_extension(&[b"t"], &[&binder, &binder])),
+        "PSK identity and binder count",
+    );
+}
+
+#[test]
+fn grease_is_rfc8701_exact_and_never_an_offered_share_group() {
+    for value in [0x0a0a, 0x1a1a, 0xfafa] {
+        assert!(super::is_grease(value), "{value:#06x}");
+    }
+    for value in [0x0a1a, 0x1a0a, 0x0a0b, X25519_GROUP] {
+        assert!(!super::is_grease(value), "{value:#06x}");
+    }
+    let mut extensions = server_name_extension(&[(0, b"a.example")]);
+    extensions.extend_from_slice(&key_share_extension(&[
+        (0x0a0a, &[0]),
+        (X25519_GROUP, &[0x42; 32]),
+    ]));
+    let hello = parse(&with_extensions(&extensions)).expect("GREASE share parses");
+    assert!(!hello.key_share_group_offered(0x0a0a));
+    assert!(hello.key_share_group_offered(X25519_GROUP));
+}

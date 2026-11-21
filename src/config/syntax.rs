@@ -380,4 +380,20 @@ mod tests {
             "credentials in an asset URL would be logged wherever the URL is"
         );
     }
+
+    #[test]
+    fn hostnames_are_capped_at_253_characters() {
+        let label = "a".repeat(63);
+        let name = format!("{label}.{label}.{label}.{}", "a".repeat(61));
+        assert_eq!(name.len(), 253);
+        assert!(is_hostname(&name));
+        assert!(!is_hostname(&format!("{name}a")));
+    }
+
+    #[test]
+    fn external_matchers_name_exactly_one_tag() {
+        assert!(check_ip_matcher("ext:geo.dat:cn").is_ok());
+        assert!(check_ip_matcher("ext:geo.dat:cn:extra").is_err());
+        assert!(check_domain_matcher("ext:geo.dat:a:b").is_err());
+    }
 }

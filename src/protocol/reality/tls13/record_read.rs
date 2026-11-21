@@ -583,4 +583,127 @@ mod tests {
         ));
         assert_eq!(reader.position, header.len());
     }
+
+    struct FailAfterReader {
+        bytes: Vec<u8>,
+        position: usize,
+    }
+
+    impl AsyncRead for FailAfterReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _context: &mut std::task::Context<'_>,
+            output: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            let Some(byte) = self.bytes.get(self.position).copied() else {
+                return Poll::Ready(Err(io::Error::other("injected socket failure")));
+            };
+            output.put_slice(&[byte]);
+            self.position += 1;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    const LARGE_RECORD: [u8; 13] = [23, 3, 3, 0, 8, 1, 1, 1, 1, 1, 1, 1, 1];
+
+    async fn storage_after_large_record() -> Vec<u8> {
+        let mut reader = OneByteReader {
+            bytes: LARGE_RECORD.to_vec(),
+            position: 0,
+        };
+        let mut wire = record_storage().expect("record storage must reserve");
+        read_tls_record_into(
+            &mut reader,
+            &mut wire,
+            &mut armed_idle(Duration::from_secs(1)),
+        )
+        .await
+        .expect("larger record must be read");
+        assert_eq!(wire.len(), LARGE_RECORD.len());
+        wire
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reused_storage_reports_only_the_header_of_an_oversized_record() {
+        let mut wire = storage_after_large_record().await;
+        let header = [23, 3, 3, 0xff, 0xff];
+        let mut reader = OneByteReader {
+            bytes: header.to_vec(),
+            position: 0,
+        };
+
+        let error = read_tls_record_into(
+            &mut reader,
+            &mut wire,
+            &mut armed_idle(Duration::from_secs(1)),
+        )
+        .await
+        .expect_err("oversized record must be rejected");
+
+        assert!(matches!(
+            error.kind(),
+            TlsRecordReadErrorKind::RecordTooLarge
+        ));
+        assert_eq!(
+            error.wire_prefix(),
+            header,
+            "no stale bytes may follow the header"
+        );
+        assert_eq!(wire.as_slice(), header);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reused_storage_keeps_the_exact_prefix_after_eof() {
+        let mut wire = storage_after_large_record().await;
+        let prefix = [23, 3, 3, 0, 8, 0xaa, 0xbb];
+        let mut reader = OneByteReader {
+            bytes: prefix.to_vec(),
+            position: 0,
+        };
+
+        let error = read_tls_record_into(
+            &mut reader,
+            &mut wire,
+            &mut armed_idle(Duration::from_secs(1)),
+        )
+        .await
+        .expect_err("peer close mid-record must fail");
+
+        assert!(matches!(
+            error.kind(),
+            TlsRecordReadErrorKind::UnexpectedEof
+        ));
+        assert_eq!(
+            error.wire_prefix(),
+            prefix,
+            "no stale bytes may follow the prefix"
+        );
+        assert_eq!(wire.as_slice(), prefix);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn reused_storage_keeps_the_exact_prefix_after_a_socket_error() {
+        let mut wire = storage_after_large_record().await;
+        let prefix = [23, 3, 3, 0, 8, 0xaa, 0xbb];
+        let mut reader = FailAfterReader {
+            bytes: prefix.to_vec(),
+            position: 0,
+        };
+
+        let error = read_tls_record_into(
+            &mut reader,
+            &mut wire,
+            &mut armed_idle(Duration::from_secs(1)),
+        )
+        .await
+        .expect_err("socket failure mid-record must fail");
+
+        assert!(matches!(error.kind(), TlsRecordReadErrorKind::Io(_)));
+        assert_eq!(
+            error.wire_prefix(),
+            prefix,
+            "no stale bytes may follow the prefix"
+        );
+        assert_eq!(wire.as_slice(), prefix);
+    }
 }
