@@ -16,10 +16,12 @@
 //!   needs an `std` error, and no diagnostic string is invented down here.
 //! * **Descriptors are owned, never raw.** Creation returns [`OwnedFd`];
 //!   observation takes `impl `[`AsFd`]. Nothing in the public API accepts or
-//!   hands out a bare descriptor number, and no mechanism here needs `unsafe`:
-//!   the reviewed `rustix` API covers every one of them. This crate remains
-//!   the place raw-syscall `unsafe` would live if a future mechanism needed
-//!   it (ADR 0008); today none does.
+//!   hands out a bare descriptor number, and no kernel mechanism here needs
+//!   `unsafe`: the reviewed `rustix` API covers every one of them. This crate
+//!   remains the place raw-syscall `unsafe` would live if a future mechanism
+//!   needed it (ADR 0008). Besides the stale-descriptor `AbortMark` (ADR
+//!   0015), the only `unsafe` call is the C library policy in [`heap`],
+//!   glibc's `malloc_trim`, which no syscall wrapper can provide.
 //!
 //! # The `std` feature
 //!
@@ -42,6 +44,8 @@ extern crate std;
 
 #[cfg(target_os = "linux")]
 pub mod errno;
+#[cfg(target_os = "linux")]
+pub mod heap;
 #[cfg(target_os = "linux")]
 pub mod memory;
 #[cfg(target_os = "linux")]

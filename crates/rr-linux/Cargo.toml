@@ -23,11 +23,12 @@ std = ["rustix/std"]
 rustix = { version = "1.1.6", default-features = false, features = ["fs", "net", "param", "pipe", "process"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# Compile-time ABI constant source only — `SOMAXCONN`, whose value is a
+# Compile-time ABI constant source for `SOMAXCONN`, whose value is a
 # target-specific C library policy (4096 on GNU, 128 on musl) that neither
-# rustix nor linux-raw-sys exposes. `default-features = false` drops `libc/std`
-# and keeps this crate's dependency closure `no_std`; nothing in this crate
-# calls a libc function or mediates a syscall through libc.
+# rustix nor linux-raw-sys exposes, and the one C library policy call this
+# crate makes: glibc's `malloc_trim` in `heap`. `default-features = false`
+# drops `libc/std` and keeps this crate's dependency closure `no_std`; no
+# syscall is mediated through libc.
 libc = { version = "0.2.180", default-features = false }
 
 [lints.rust]
