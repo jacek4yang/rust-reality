@@ -513,7 +513,8 @@ where
 {
     let mut recycled = None;
     let mut last_error = None;
-    for address in addresses {
+    let total = addresses.len();
+    for (index, address) in addresses.into_iter().enumerate() {
         let permit = match fd_budget.as_ref() {
             Some(budget) => Some(
                 recycled
@@ -524,7 +525,8 @@ where
             None => None,
         };
         let started = Instant::now();
-        match time::timeout_at(deadline, connector.clone()(address)).await {
+        let attempt_deadline = partial_deadline(started, deadline, total - index);
+        match time::timeout_at(attempt_deadline, connector.clone()(address)).await {
             Ok(Ok(value)) => {
                 planner.record_success(family, started.elapsed());
                 return Ok((value, permit));
@@ -538,7 +540,18 @@ where
                 last_error = Some(error);
                 recycled = permit;
             }
-            Err(_) => return Err(DestinationConnectError::TimedOut { timeout }),
+            Err(_) if attempt_deadline >= deadline => {
+                return Err(DestinationConnectError::TimedOut { timeout });
+            }
+            // Only this candidate's share of the budget expired: an
+            // unresponsive address must not starve the remaining ones.
+            Err(_) => {
+                last_error = Some(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "candidate connect attempt timed out",
+                ));
+                recycled = permit;
+            }
         }
     }
     Err(DestinationConnectError::Io(last_error.expect(
@@ -585,12 +598,21 @@ where
                 }
             };
             let address = addresses[next];
+            let attempt_deadline =
+                partial_deadline(Instant::now(), deadline, addresses.len() - next);
             next += 1;
             active.push(address);
             let connect = connector.clone();
             tasks.spawn(async move {
                 let started = Instant::now();
-                let outcome = connect(address).await;
+                let outcome = time::timeout_at(attempt_deadline, connect(address))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "candidate connect attempt timed out",
+                        ))
+                    });
                 AttemptResult {
                     address,
                     started,
@@ -602,6 +624,9 @@ where
         }
 
         if tasks.is_empty() {
+            if Instant::now() >= deadline {
+                return Err(DestinationConnectError::TimedOut { timeout });
+            }
             return Err(last_error.map_or(
                 DestinationConnectError::NoAddressesForPolicy,
                 DestinationConnectError::Io,
@@ -664,6 +689,22 @@ where
                 if next < addresses.len() && tasks.len() < 2 && !fd_blocked => {}
         }
     }
+}
+
+/// The smallest share of the remaining budget a candidate is given before
+/// the next one is tried, unless less than this remains overall.
+const MIN_ATTEMPT_BUDGET: Duration = Duration::from_secs(2);
+
+/// Splits the remaining overall budget evenly across the candidates not yet
+/// tried, as Go's dialer does, so one unresponsive address cannot consume the
+/// whole deadline. Each share is at least [`MIN_ATTEMPT_BUDGET`] (or whatever
+/// remains), and the result never exceeds the overall deadline.
+fn partial_deadline(now: Instant, deadline: Instant, remaining_candidates: usize) -> Instant {
+    let remaining = deadline.saturating_duration_since(now);
+    let candidates = u32::try_from(remaining_candidates.max(1)).unwrap_or(u32::MAX);
+    let share = (remaining / candidates).max(MIN_ATTEMPT_BUDGET.min(remaining));
+    now.checked_add(share)
+        .map_or(deadline, |end| end.min(deadline))
 }
 
 fn attempt_permit(
