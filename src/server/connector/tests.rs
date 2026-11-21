@@ -669,3 +669,99 @@ async fn unresponsive_candidates_release_their_race_slots() {
     assert!(winner == live_v6 || winner == live_v4);
     assert!(started.elapsed() < Duration::from_secs(20));
 }
+
+/// Each untried candidate gets an equal share of what is left, so the
+/// shares stay even as candidates time out and the last one runs to the
+/// overall deadline, which still reports the overall timeout.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn candidate_shares_are_recomputed_over_the_untried_candidates() {
+    let attempts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = Arc::clone(&attempts);
+    let started = Instant::now();
+    let addresses: Vec<_> = (1..=3)
+        .map(|host| SocketAddr::new(Ipv4Addr::new(192, 0, 2, host).into(), 443))
+        .collect();
+    let result = race_with(
+        test_planner(DialPolicy::Ipv4Only, 1),
+        addresses,
+        started + Duration::from_secs(12),
+        Duration::from_secs(12),
+        None,
+        move |address: SocketAddr| {
+            let attempts = Arc::clone(&attempts);
+            async move {
+                attempts.lock().unwrap().push(Instant::now());
+                std::future::pending::<()>().await;
+                Ok(address)
+            }
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(DestinationConnectError::TimedOut { timeout }) if timeout == Duration::from_secs(12)
+    ));
+    let offsets: Vec<_> = observed
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|at| *at - started)
+        .collect();
+    assert_eq!(
+        offsets,
+        [
+            Duration::ZERO,
+            Duration::from_secs(4),
+            Duration::from_secs(8)
+        ]
+    );
+    assert_eq!(started.elapsed(), Duration::from_secs(12));
+}
+
+/// Mixed families with every candidate unresponsive: the race reports the
+/// overall timeout at the deadline, and every candidate is attempted.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn an_all_unresponsive_race_reports_the_overall_timeout() {
+    let attempts = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed = Arc::clone(&attempts);
+    let started = Instant::now();
+    let addresses = vec![
+        SocketAddr::new(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).into(), 443),
+        SocketAddr::new(Ipv4Addr::new(192, 0, 2, 1).into(), 443),
+        SocketAddr::new(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2).into(), 443),
+        SocketAddr::new(Ipv4Addr::new(192, 0, 2, 2).into(), 443),
+    ];
+    let result = race_with(
+        test_planner(DialPolicy::PreferIpv6, 250),
+        addresses,
+        started + Duration::from_secs(20),
+        Duration::from_secs(20),
+        None,
+        move |address: SocketAddr| {
+            let attempts = Arc::clone(&attempts);
+            async move {
+                attempts.lock().unwrap().push(Instant::now() - started);
+                std::future::pending::<()>().await;
+                Ok(address)
+            }
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(DestinationConnectError::TimedOut { timeout }) if timeout == Duration::from_secs(20)
+    ));
+    assert_eq!(started.elapsed(), Duration::from_secs(20));
+    // 20 s over four candidates: v6 gets 5 s; v4 starts after the 250 ms
+    // fallback delay with a third of the remaining 19.75 s; each later
+    // candidate starts when a slot frees and splits what is left.
+    assert_eq!(
+        *observed.lock().unwrap(),
+        [
+            Duration::ZERO,
+            Duration::from_millis(250),
+            Duration::from_secs(5),
+            Duration::from_millis(6834),
+        ]
+    );
+}
