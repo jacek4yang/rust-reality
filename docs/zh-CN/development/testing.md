@@ -249,6 +249,21 @@ VM 执行器退出后，使用 `cargo dev bench stability-check --evidence BUNDL
 `native-mechanism`、`native-descriptor-pressure` 和 `native-resources`。
 命令固定既有套件参数、保留嵌套的原始观测，并拒绝缩短原生测试时长或恢复覆盖。
 这些独占主机的负载必须在 VM 活动释放主机锁后执行。
+托管 Frozen 在四个 VM 单元运行的同时，在另一台 runner 上执行这些检查。
+`cargo dev bench stability-freeze --output FRESH_DIRECTORY --candidate FROZEN_BINARY
+--xray XRAY_BINARY --openssl OPENSSL_BINARY` 用与各单元相同的 prepare 输入，冻结与各单元
+完全相同的身份，不含单元也不含检查。上述检查原样扩展该证据包。
+`cargo dev bench stability-export-checks --evidence NATIVE/evidence.json --output FRESH_DIRECTORY`
+只保留回执引用的文件和收集器记录，从不包含夹具密钥或基准临时文件；失败的尝试同样导出。
+`cargo dev bench stability-import-checks --evidence MERGED/evidence.json --from EXPORT/evidence.json`
+把它们绑定到合并后的活动证据。只要身份有任何字节不同、带有 VM 单元、检查重复或检查目录已存在、
+路径越界、经过符号链接或属于私密材料，或者哈希变化，导入都会拒绝，并会重新校验每份回执；
+失败的回执仍会绑定，但该步骤失败。离线评估器不变，仍要求全部检查。原生回执产物缺失时，
+重试一次后恢复守卫失败。
+Frozen 验收发布所有被引用的证据，但各单元的流量对象除外。这些对象保留在单元各自的
+`hosted-qemu-cell-SHA-CELL` 产物中，路径为 `cell/PATH`，因为合并会原样复制单元目录。
+验收先证明四个产物都仍保留，暂存前仍校验每个流量对象的哈希，并在
+`external-cell-traffic.json` 中逐一列出对象及其所在产物。若无法证明产物保留，流量照旧发布。
 原生互操作性凭据保留源载荷、实际下载字节和 OpenSSL 握手跟踪。离线校验
 核对字节完全一致、服务端未发送 CCS、固定的外部可执行文件及规定的 stock-Xray
 命令；仅有声称成功的摘要不能通过。

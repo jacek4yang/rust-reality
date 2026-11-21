@@ -106,7 +106,11 @@ jobs:
     with:
       candidate_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       package_artifact: package-receipt-${{ github.event.pull_request.head.sha || github.sha }}-linux-x86_64-generic
+      native_receipts: true
 
+  # Native required checks are collected by `virtual-machines` beside the VM
+  # cells (qemu-specialist.yml `native-receipts`) and imported here into the
+  # byte-identical merged identity; this job no longer runs them serially.
   acceptance:
     name: Frozen native receipts and aggregate verdict
     needs: [packages, virtual-machines]
@@ -128,30 +132,15 @@ jobs:
           ref: ${{ env.HEAD_SHA }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Prepare native check tools
+      - name: Prepare the exact checkout and evidence paths
         run: |
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           test -z "$(git status --porcelain)"
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential perl libtext-template-perl binutils curl ca-certificates tar gzip unzip util-linux iproute2 iputils-ping
-          rustup toolchain install
           mkdir -p "$RUNNER_TEMP/frozen-runtime" "$RUNNER_TEMP/frozen-cache"
           echo "XDG_RUNTIME_DIR=$RUNNER_TEMP/frozen-runtime" >> "$GITHUB_ENV"
           echo "XDG_CACHE_HOME=$RUNNER_TEMP/frozen-cache" >> "$GITHUB_ENV"
           echo "BUNDLE=$RUNNER_TEMP/frozen-acceptance" >> "$GITHUB_ENV"
           df -h "$RUNNER_TEMP"
-      - name: Install nextest
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
-        with:
-          tool: cargo-nextest@0.9.140
-      - name: Install dependency policy tool
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
-        with:
-          tool: cargo-deny@0.19.4
-      - name: Install RustSec audit
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
-        with:
-          tool: cargo-audit@0.22.2
       # download-artifact v4 can exit successfully mid-download without its
       # digest line or `download-path` output (actions/download-artifact#475).
       # `download-path` is set only after every download completed, so an empty
@@ -195,14 +184,28 @@ jobs:
         with:
           pattern: package-receipt-${{ env.HEAD_SHA }}-*
           path: ${{ runner.temp }}/package-receipts
+      - name: Restore native receipts collected beside the VM cells
+        id: restore-native-receipts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: frozen-native-receipts-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/frozen-native
+      - name: Retry an incomplete native receipt restore once
+        id: retry-native-receipts
+        if: steps.restore-native-receipts.outputs.download-path == ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: frozen-native-receipts-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/frozen-native
       - name: Require every artifact restore to have completed
         env:
           VM_EVIDENCE: ${{ steps.restore-vm-evidence.outputs.download-path || steps.retry-vm-evidence.outputs.download-path }}
           FROZEN_EXEC: ${{ steps.restore-frozen-exec.outputs.download-path || steps.retry-frozen-exec.outputs.download-path }}
           PACKAGE_RECEIPTS: ${{ steps.restore-package-receipts.outputs.download-path || steps.retry-package-receipts.outputs.download-path }}
+          NATIVE_RECEIPTS: ${{ steps.restore-native-receipts.outputs.download-path || steps.retry-native-receipts.outputs.download-path }}
         run: |
           status=0
-          for name in VM_EVIDENCE FROZEN_EXEC PACKAGE_RECEIPTS; do
+          for name in VM_EVIDENCE FROZEN_EXEC PACKAGE_RECEIPTS NATIVE_RECEIPTS; do
             if [ -z "${!name}" ]; then
               echo "::error::artifact restore $name did not complete after one retry"
               status=1
@@ -248,21 +251,15 @@ jobs:
           for name in ['rr-dev','rust-reality','xray','openssl']:
               (root/name).chmod(0o755)
           PY
-      - name: Capture unchanged full gate and lifecycle receipts
-        timeout-minutes: 60
+      # The full gate, lifecycle, native-interop, native-mechanism,
+      # native-descriptor-pressure, native-resources and long-lived-connections
+      # receipts. Import refuses any identity difference, repeated check,
+      # escaped/private path or changed digest, and re-verifies each receipt.
+      - name: Bind native receipts collected beside the VM cells
+        timeout-minutes: 15
         run: |
-          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case local-full-gate
-          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case lifecycle
-      - name: Capture native interoperability, mechanism, pressure and resource receipts
-        timeout-minutes: 75
-        run: |
-          for check in native-interop native-mechanism native-descriptor-pressure native-resources; do
-            "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case "$check"
-          done
-      - name: Capture the fixed 600-second connection receipt
-        timeout-minutes: 25
-        run: |
-          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$BUNDLE/evidence.json" --case long-lived-connections
+          "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-import-checks \
+            --evidence "$BUNDLE/evidence.json" --from "$RUNNER_TEMP/frozen-native/evidence.json"
       - name: Bind native package receipts without rebuilding them
         run: |
           for tier in linux-x86_64-generic linux-x86_64-musl linux-x86_64-v3 linux-aarch64-generic; do
@@ -425,6 +422,30 @@ jobs:
             grep -Fq 'ulimit_nofile=256' "$constrained"
           fi
           printf 'frozen-native-xudp-six-cell verdict=PASS native_run=%s\n' "$run_id"
+      # The four cells' traffic objects (~21 GB) are already published in the
+      # per-cell artifacts at `cell/<path>`; merge copies those trees verbatim.
+      # Require each artifact to be retained, so staging can reference rather
+      # than re-publish that traffic.
+      - name: Require the per-cell traffic artifacts to be retained
+        timeout-minutes: 5
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | {id, name, digest, expired, size_in_bytes}' > "$RUNNER_TEMP/run-artifacts.jsonl"
+          python3 - <<'PYCELLS'
+          import json, os, pathlib
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          head = os.environ['HEAD_SHA']
+          rows = [json.loads(line) for line in (temp/'run-artifacts.jsonl').read_text().splitlines() if line.strip()]
+          cells = {}
+          for slug in ['handoff-ordinary', 'nxr-ordinary', 'handoff-constrained', 'nxr-constrained']:
+              name = 'hosted-qemu-cell-%s-%s' % (head, slug)
+              found = [row for row in rows if row.get('name') == name and not row.get('expired')]
+              if len(found) != 1 or not isinstance(found[0].get('id'), int) or not found[0].get('size_in_bytes'):
+                  raise SystemExit('per-cell traffic artifact %s is not retained exactly once' % name)
+              cells[slug] = {'name': name, 'id': found[0]['id'], 'digest': found[0].get('digest'), 'prefix': 'cell/'}
+          (temp/'cell-artifacts.json').write_text(json.dumps(cells, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(cells, indent=2, sort_keys=True))
+          PYCELLS
       - name: Require the complete frozen offline verdict
         run: |
           "$BUNDLE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-evaluate \
@@ -448,6 +469,12 @@ jobs:
                   path=directory/name
                   if path.is_file(): queue.append((str(path.relative_to(root)),None))
           seen={}
+          # Cell traffic is verified here but referenced, not re-published: it
+          # stays retrievable from the retained per-cell artifact at
+          # `cell/<path>`. Without the retention proof it is copied as before.
+          cells_file=pathlib.Path(os.environ['RUNNER_TEMP'])/'cell-artifacts.json'
+          cells=json.loads(cells_file.read_text()) if cells_file.is_file() else {}
+          external={}
           def references(value):
               if isinstance(value,dict):
                   if set(value)=={'path','sha256'} and isinstance(value['path'],str) and isinstance(value['sha256'],str):
@@ -473,6 +500,9 @@ jobs:
               digest=hashlib.file_digest(source.open('rb'),'sha256').hexdigest()
               if expected is not None and digest!=expected:
                   raise SystemExit('Evidence changed before publication')
+              if len(relative.parts)>2 and relative.parts[1]=='traffic' and relative.parts[0] in cells:
+                  if external.setdefault(name,digest)!=digest: raise SystemExit('Evidence changed while staging')
+                  continue
               if name in seen:
                   if seen[name]!=digest: raise SystemExit('Evidence changed while staging')
                   continue
@@ -496,6 +526,13 @@ jobs:
                       value=terminal.get(key)
                       if isinstance(value,dict) and set(value)=={'path','sha256'}:
                           queue.append((value['path'],value['sha256']))
+          if external:
+              manifest={'schema':'rr-frozen-external-cell-traffic/v1','artifacts':cells,
+                  'files':[{'path':name,'sha256':digest,'artifact':cells[pathlib.PurePosixPath(name).parts[0]]['name'],
+                      'artifact_path':cells[pathlib.PurePosixPath(name).parts[0]]['prefix']+name}
+                      for name,digest in sorted(external.items())]}
+              (public/'external-cell-traffic.json').write_text(json.dumps(manifest,indent=1,sort_keys=True)+'\n')
+              seen['external-cell-traffic.json']=hashlib.file_digest((public/'external-cell-traffic.json').open('rb'),'sha256').hexdigest()
           (public/'SHA256SUMS').write_text(''.join(digest+'  '+name+'\n' for name,digest in sorted(seen.items())))
           PYPUBLIC
       - name: Retain aggregate and attempted check evidence

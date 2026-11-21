@@ -381,6 +381,12 @@ pub(crate) enum BenchCommand {
     StabilityCheck(bench::stability::qualification::Plan),
     /// Verify and bind one retained native package smoke receipt.
     StabilityBindPackage(bench::stability::package_bind::Plan),
+    /// Freeze the campaign identity for native required checks only (no cells).
+    StabilityFreeze(bench::stability::native_bundle::FreezePlan),
+    /// Retain native required-check receipts for transfer to the aggregate.
+    StabilityExportChecks(bench::stability::native_bundle::ExportPlan),
+    /// Bind exported native required checks into identical merged evidence.
+    StabilityImportChecks(bench::stability::native_bundle::ImportPlan),
     /// Owned-fixture child: execute the fixed guest campaign schedule.
     #[command(hide = true)]
     StabilityGuest(bench::stability::guest::Plan),

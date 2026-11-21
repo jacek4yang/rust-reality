@@ -32,6 +32,15 @@ pub(crate) fn run_bench(repo: &Path, command: &BenchCommand) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        BenchCommand::StabilityFreeze(plan) => {
+            report(bench::stability::native_bundle::freeze(repo, plan))
+        }
+        BenchCommand::StabilityExportChecks(plan) => {
+            report(bench::stability::native_bundle::export(plan))
+        }
+        BenchCommand::StabilityImportChecks(plan) => {
+            report(bench::stability::native_bundle::import(plan))
+        }
         BenchCommand::StabilityCheck(plan) => {
             match bench::stability::qualification::run(repo, plan) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -2113,6 +2122,16 @@ fn probe_egress() -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("curl exited {:?}", outcome.code))
+    }
+}
+
+fn report(result: Result<(), String>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
     }
 }
 

@@ -867,20 +867,27 @@ pub fn run(repo: &Path, plan: &Plan) -> Result<(), String> {
     }
 }
 
-fn freeze(
+/// Frozen executables shared by every campaign cell and the native receipt bundle.
+pub(super) struct Inputs<'a> {
+    pub candidate: &'a Path,
+    pub xray: &'a Path,
+    pub openssl: &'a Path,
+}
+
+pub(super) fn freeze(
     repo: &Path,
-    plan: &Plan,
+    plan: &Inputs<'_>,
     root: &Path,
 ) -> Result<(schema::Identity, [schema::Artifact; 2], String), String> {
     let candidate = identity::register(
         "stability candidate",
-        &plan.candidate,
+        plan.candidate,
         "",
         identity::Kind::Rust,
     )?;
-    let xray = identity::register("stock Xray", &plan.xray, "", identity::Kind::Xray)?;
+    let xray = identity::register("stock Xray", plan.xray, "", identity::Kind::Xray)?;
     let evaluator_sha256 = collect::running_image_digest()?;
-    let openssl_sha256 = collect::file_digest(&plan.openssl)?;
+    let openssl_sha256 = collect::file_digest(plan.openssl)?;
     let source = identity::embedded_commit(&candidate.identity)?;
     if rust_reality::BUILD_COMMIT != source {
         return Err("build the frozen harness with RUST_REALITY_GIT_COMMIT set to the candidate source commit".to_owned());
@@ -904,14 +911,12 @@ fn freeze(
     {
         return Err("running harness contract differs from the source checkout".to_owned());
     }
+    let evaluator = std::env::current_exe().map_err(|error| error.to_string())?;
     for (path, name) in [
-        (&plan.candidate, "rust-reality"),
-        (
-            &std::env::current_exe().map_err(|error| error.to_string())?,
-            "rr-dev",
-        ),
-        (&plan.xray, "xray"),
-        (&plan.openssl, "openssl"),
+        (plan.candidate, "rust-reality"),
+        (evaluator.as_path(), "rr-dev"),
+        (plan.xray, "xray"),
+        (plan.openssl, "openssl"),
     ] {
         fs::copy(path, root.join(name)).map_err(|error| error.to_string())?;
     }
@@ -973,7 +978,15 @@ fn freeze(
 }
 
 fn execute(repo: &Path, plan: &Plan, root: &Path) -> Result<(), String> {
-    let (identity, sources, xray_sha256) = freeze(repo, plan, root)?;
+    let (identity, sources, xray_sha256) = freeze(
+        repo,
+        &Inputs {
+            candidate: &plan.candidate,
+            xray: &plan.xray,
+            openssl: &plan.openssl,
+        },
+        root,
+    )?;
     let contract: schema::Contract =
         serde_json::from_str(schema::CONTRACT).expect("compiled contract");
     let mut evidence = schema::Evidence {

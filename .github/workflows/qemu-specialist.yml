@@ -17,6 +17,11 @@ on:
         description: Native GNU package receipt artifact from this same workflow run
         required: true
         type: string
+      native_receipts:
+        description: Collect Frozen native required checks beside the VM cells
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
 
 permissions:
@@ -422,6 +427,116 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+
+  # Frozen native required checks run on their own runner while the VM cells
+  # run, instead of serially after the merge. They freeze the identity every
+  # cell freezes from the same prepare inputs; Frozen acceptance imports them
+  # only into a byte-identical merged identity (`stability-import-checks`).
+  native-receipts:
+    name: Frozen native receipts beside the VM cells
+    if: inputs.native_receipts
+    needs: qemu-prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      HEAD_SHA: ${{ inputs.candidate_sha || github.event.pull_request.head.sha || github.sha }}
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Restore shared prepare inputs
+        id: restore-prepare
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/rr-qemu-prepare
+      - name: Retry an incomplete prepare restore once
+        id: retry-prepare
+        if: steps.restore-prepare.outputs.download-path == ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/rr-qemu-prepare
+      - name: Require the prepare restore to have completed
+        env:
+          PREPARE: ${{ steps.restore-prepare.outputs.download-path || steps.retry-prepare.outputs.download-path }}
+        run: |
+          if [ -z "$PREPARE" ]; then
+            echo "::error::artifact restore PREPARE did not complete after one retry"
+            exit 1
+          fi
+      - name: Prepare native check tools
+        run: |
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain)"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential perl libtext-template-perl binutils curl ca-certificates tar gzip unzip util-linux iproute2 iputils-ping
+          rustup toolchain install
+          mkdir -p "$RUNNER_TEMP/frozen-runtime" "$RUNNER_TEMP/frozen-cache"
+          echo "XDG_RUNTIME_DIR=$RUNNER_TEMP/frozen-runtime" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$RUNNER_TEMP/frozen-cache" >> "$GITHUB_ENV"
+          echo "NATIVE=$RUNNER_TEMP/frozen-native" >> "$GITHUB_ENV"
+          df -h "$RUNNER_TEMP"
+      - name: Install nextest
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-nextest@0.9.140
+      - name: Install dependency policy tool
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-deny@0.19.4
+      - name: Install RustSec audit
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
+        with:
+          tool: cargo-audit@0.22.2
+      - name: Freeze the campaign identity from the shared prepare inputs
+        run: |
+          P="$RUNNER_TEMP/rr-qemu-prepare"
+          chmod 0755 "$P/bin/rr-dev" "$P/bin/rust-reality" "$P/tools/xray/xray" "$P/tools/openssl/bin/openssl"
+          "$P/bin/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-freeze --output "$NATIVE" \
+            --candidate "$P/bin/rust-reality" --xray "$P/tools/xray/xray" \
+            --openssl "$P/tools/openssl/bin/openssl"
+          # ADR 0055: relocated openssl needs a colocated openssl.cnf (OPENSSLDIR is absolute).
+          cp "$P/tools/openssl/ssl/openssl.cnf" "$NATIVE/openssl.cnf"
+          chmod 0755 "$NATIVE/rr-dev" "$NATIVE/rust-reality" "$NATIVE/xray" "$NATIVE/openssl"
+      - name: Capture unchanged full gate and lifecycle receipts
+        timeout-minutes: 60
+        run: |
+          "$NATIVE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$NATIVE/evidence.json" --case local-full-gate
+          "$NATIVE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$NATIVE/evidence.json" --case lifecycle
+      - name: Capture native interoperability, mechanism, pressure and resource receipts
+        timeout-minutes: 75
+        run: |
+          for check in native-interop native-mechanism native-descriptor-pressure native-resources; do
+            "$NATIVE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$NATIVE/evidence.json" --case "$check"
+          done
+      - name: Capture the fixed 600-second connection receipt
+        timeout-minutes: 25
+        run: |
+          "$NATIVE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-check --evidence "$NATIVE/evidence.json" --case long-lived-connections
+      # Referenced receipts and collector records only: never fixture keys,
+      # generated configurations or unreferenced benchmark scratch. Failed
+      # attempts are exported too, so their diagnostics survive.
+      - name: Export native receipts and attempted check records
+        if: always()
+        run: |
+          if test -f "$NATIVE/evidence.json"; then
+            "$NATIVE/rr-dev" --repo "$GITHUB_WORKSPACE" bench stability-export-checks \
+              --evidence "$NATIVE/evidence.json" --output "$RUNNER_TEMP/frozen-native-export"
+          fi
+      - name: Retain native receipts for Frozen acceptance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frozen-native-receipts-${{ env.HEAD_SHA }}
+          path: ${{ runner.temp }}/frozen-native-export/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 9
 
   # Guest-kernel NXR/Handoff UDP. Process-level UDP stays in qualification.yml.
   qemu-udp-guest:
