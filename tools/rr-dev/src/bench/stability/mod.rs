@@ -12,6 +12,7 @@ pub mod fixture;
 pub mod guest;
 pub mod merge;
 pub mod native;
+pub mod native_bundle;
 mod native_check;
 pub mod native_evaluate;
 pub mod native_interop;

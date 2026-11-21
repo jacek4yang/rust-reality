@@ -337,6 +337,28 @@ The same collector runs `native-interop`, `native-mechanism`,
 Xray and OpenSSL copies. It fixes the existing suite arguments, retains nested
 raw observations and rejects shortened native duration or recovery coverage.
 Run these host-exclusive workloads after the VM campaign has released its lock.
+Hosted Frozen runs them on a separate runner while the four VM cells run.
+`cargo dev bench stability-freeze --output FRESH_DIRECTORY --candidate FROZEN_BINARY
+--xray XRAY_BINARY --openssl OPENSSL_BINARY` freezes the identity every cell
+freezes from the same prepare inputs, with no cells and no checks. The checks
+above extend that bundle unchanged. `cargo dev bench stability-export-checks
+--evidence NATIVE/evidence.json --output FRESH_DIRECTORY` retains only
+receipt-referenced files and collector records, never fixture keys or benchmark
+scratch, including for failed attempts. `cargo dev bench stability-import-checks
+--evidence MERGED/evidence.json --from EXPORT/evidence.json` binds them into the
+merged campaign. Import refuses an identity that differs in any byte, VM cells,
+a repeated check or an existing check directory, escaped, symlinked or private
+paths and changed digests, and re-verifies every receipt; a failed receipt is
+still bound and fails the step. The offline evaluator is unchanged and still
+requires every check. A missing native receipt artifact fails the restore guard
+after one retry.
+Frozen acceptance publishes referenced evidence except the cells' traffic
+objects. Those stay in the retained per-cell `hosted-qemu-cell-SHA-CELL`
+artifacts at `cell/PATH`, because merge copies the cell trees verbatim.
+Acceptance first proves all four artifacts are retained, still verifies every
+traffic digest before staging, and lists each object with its artifact in
+`external-cell-traffic.json`. Without that retention proof, traffic is
+published as before.
 The native interoperability receipt retains the exact source and downloaded
 payloads and the OpenSSL handshake trace. Offline verification checks their
 bytes, the absence of server CCS, the pinned external executables and the

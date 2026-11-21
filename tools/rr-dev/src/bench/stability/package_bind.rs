@@ -164,11 +164,44 @@ mod tests {
         assert!(coordinator.contains("package_artifact: package-receipt-"));
         assert!(coordinator.contains("bench stability-bind-package"));
         assert!(coordinator.contains("bench stability-evaluate"));
-        assert!(coordinator.contains("--case long-lived-connections"));
-        assert!(coordinator.contains("--case local-full-gate"));
-        assert!(coordinator.contains(
+        // Native required checks run beside the VM cells on their own runner,
+        // freeze the cells' identity from the same prepare inputs, and are
+        // imported into the merged campaign; acceptance never re-runs them.
+        assert!(campaign.contains("--case long-lived-connections"));
+        assert!(campaign.contains("--case local-full-gate"));
+        assert!(campaign.contains("--case lifecycle"));
+        assert!(campaign.contains(
             "native-interop native-mechanism native-descriptor-pressure native-resources"
         ));
+        assert!(campaign.contains(
+            "  native-receipts:\n    name: Frozen native receipts beside the VM cells\n    if: inputs.native_receipts\n    needs: qemu-prepare\n"
+        ));
+        assert!(campaign.contains("bench stability-freeze --output \"$NATIVE\""));
+        assert!(campaign.contains("bench stability-export-checks"));
+        assert!(campaign.contains("name: frozen-native-receipts-${{ env.HEAD_SHA }}"));
+        assert!(coordinator.contains("      native_receipts: true\n"));
+        assert!(coordinator.contains("name: frozen-native-receipts-${{ env.HEAD_SHA }}"));
+        assert!(coordinator.contains("bench stability-import-checks"));
+        assert!(
+            !coordinator
+                .contains("bench stability-check --evidence \"$BUNDLE/evidence.json\" --case")
+        );
+        // Every restore, including native receipts, fails closed after one retry.
+        assert!(
+            coordinator.contains(
+                "for name in VM_EVIDENCE FROZEN_EXEC PACKAGE_RECEIPTS NATIVE_RECEIPTS; do"
+            )
+        );
+        // Cell traffic is referenced from the retained per-cell artifacts, not
+        // re-published, and only after their retention is proven.
+        assert!(coordinator.contains("Require the per-cell traffic artifacts to be retained"));
+        assert!(
+            coordinator.contains("relative.parts[1]=='traffic' and relative.parts[0] in cells")
+        );
+        assert!(coordinator.contains("external-cell-traffic.json"));
+        assert!(
+            campaign.contains("name: hosted-qemu-cell-${{ env.HEAD_SHA }}-${{ env.CELL_SLUG }}")
+        );
         assert!(!coordinator.contains("continue-on-error"));
         assert!(!coordinator.contains("contents: write"));
         // A newer request never cancels a campaign; only the PR's own
