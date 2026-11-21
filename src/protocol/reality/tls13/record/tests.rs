@@ -655,3 +655,98 @@ fn hex_vec(encoded: &str) -> Vec<u8> {
         })
         .collect()
 }
+
+/// RFC 8448 section 3 client application traffic: the application data record
+/// is sequence 0 and the close_notify alert is sequence 1, so the per-record
+/// nonce must XOR the sequence into the IV's low-order eight bytes.
+#[test]
+fn rfc8448_client_application_records_bind_the_sequence_into_the_nonce() {
+    let keys = || {
+        TrafficKeys::from_raw_parts(
+            &hex_vec("17422dda596ed5d9acd890e3c63f5051"),
+            hex_vec("5b78923dee08579033e523d9")
+                .try_into()
+                .expect("RFC 8448 IV is 12 bytes"),
+        )
+        .expect("RFC 8448 application keys must import")
+    };
+    let payload: Vec<u8> = (0..50).collect();
+    let application = hex_vec(
+        "17030300 43a23f70 54b62c94 d0affafe 8228ba55 cbefacea 42f914aa 66bcab3f 2b9819a8 \
+         a5b46b39 5bd54a9a 20441e2b 62974e1f 5a6292a2 977014bd 1e3deae6 3aeebb21 694915e4",
+    );
+    let alert = hex_vec("17030300 13c98727 60655666 b74d7ff1 153efd6d b6d0b0e3");
+
+    let mut writer = Tls13RecordLayer::new(CipherSuite::Aes128GcmSha256, keys())
+        .expect("RFC 8448 writer must initialize");
+    let mut record = Vec::new();
+    writer
+        .seal_into(ContentType::ApplicationData, &payload, 0, &mut record)
+        .expect("sequence 0 must seal");
+    assert_eq!(record, application);
+    record.clear();
+    writer
+        .seal_into(ContentType::Alert, &[1, 0], 0, &mut record)
+        .expect("sequence 1 must seal");
+    assert_eq!(record, alert);
+
+    let mut reader = Tls13RecordLayer::new(CipherSuite::Aes128GcmSha256, keys())
+        .expect("RFC 8448 reader must initialize");
+    let mut wire = application.clone();
+    assert_eq!(
+        reader
+            .open_in_place(&mut wire)
+            .expect("sequence 0 opens")
+            .plaintext(),
+        payload
+    );
+    let mut wire = alert;
+    let opened = reader.open_in_place(&mut wire).expect("sequence 1 opens");
+    assert_eq!(opened.content_type(), ContentType::Alert);
+    assert_eq!(opened.plaintext(), [1, 0]);
+}
+
+/// Framing is rejected before authentication, so the error names the framing.
+#[test]
+fn outer_header_and_ciphertext_bounds_are_rejected_before_authentication() {
+    let (_, mut reader) = paired_layers(CipherSuite::Aes128GcmSha256);
+    let framed = |outer: [u8; 3], length: usize| {
+        let mut record = outer.to_vec();
+        record.extend_from_slice(&u16::try_from(length).unwrap().to_be_bytes());
+        record.resize(5 + length, 0);
+        record
+    };
+    let application = [0x17, 0x03, 0x03];
+    for (outer, length, expected) in [
+        ([0x16, 0x03, 0x03], 32, Tls13RecordError::InvalidHeader),
+        ([0x17, 0x03, 0x01], 32, Tls13RecordError::InvalidHeader),
+        (application, 16, Tls13RecordError::InvalidLength),
+        (
+            application,
+            (1 << 14) + 1 + 16 + 1,
+            Tls13RecordError::InvalidLength,
+        ),
+        (application, 32, Tls13RecordError::AuthenticationFailed),
+    ] {
+        assert_eq!(
+            reader.open_in_place(&mut framed(outer, length)).err(),
+            Some(expected),
+            "{outer:02x?} {length}"
+        );
+    }
+}
+
+#[test]
+fn exported_state_rejects_a_secret_from_another_suite_hash() {
+    let secret =
+        TrafficSecret::from_bytes(HashAlgorithm::Sha384, &[0x42; 48]).expect("SHA-384 secret");
+    assert_eq!(
+        super::ExportedRecordState::from_parts(CipherSuite::Aes128GcmSha256, secret, 0).err(),
+        Some(Tls13RecordError::InvalidKey)
+    );
+    let secret =
+        TrafficSecret::from_bytes(HashAlgorithm::Sha384, &[0x42; 48]).expect("SHA-384 secret");
+    assert!(
+        super::ExportedRecordState::from_parts(CipherSuite::Aes256GcmSha384, secret, 7).is_ok()
+    );
+}
