@@ -192,6 +192,25 @@ mod tests {
                 "for name in VM_EVIDENCE FROZEN_EXEC PACKAGE_RECEIPTS NATIVE_RECEIPTS; do"
             )
         );
+        // The four-cell merge restores fail closed the same way, before any
+        // merge or guest UDP aggregation reads a partially restored directory.
+        assert!(campaign.contains("for name in PREPARE CELLS; do"));
+        assert!(campaign.contains("if: steps.restore-cells.outputs.download-path == ''\n"));
+        assert!(campaign.contains("if: steps.restore-udp-guest.outputs.download-path == ''\n"));
+        let merge = campaign
+            .find("      - name: Merge identity-bound cell evidence")
+            .expect("merge step");
+        let guard = campaign
+            .find("      - name: Require the prepare and cell restores to have completed")
+            .expect("restore guard");
+        assert!(guard < merge);
+        let udp = campaign
+            .find("      - name: Aggregate guest UDP four-cell fail-closed")
+            .expect("udp aggregate");
+        let udp_guard = campaign
+            .find("      - name: Require the guest UDP receipt restore to have completed")
+            .expect("udp restore guard");
+        assert!(udp_guard < udp);
         // Cell traffic is referenced from the retained per-cell artifacts, not
         // re-published, and only after their retention is proven.
         assert!(coordinator.contains("Require the per-cell traffic artifacts to be retained"));
