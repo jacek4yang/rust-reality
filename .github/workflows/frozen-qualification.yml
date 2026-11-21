@@ -152,21 +152,63 @@ jobs:
         uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2.77.5
         with:
           tool: cargo-audit@0.22.2
+      # download-artifact v4 can exit successfully mid-download without its
+      # digest line or `download-path` output (actions/download-artifact#475).
+      # `download-path` is set only after every download completed, so an empty
+      # value triggers exactly one identical retry; the guard below fails closed.
       - name: Restore immutable VM evidence and evaluator
+        id: restore-vm-evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-campaign-${{ env.HEAD_SHA }}
+          path: ${{ env.BUNDLE }}
+      - name: Retry an incomplete VM evidence restore once
+        id: retry-vm-evidence
+        if: steps.restore-vm-evidence.outputs.download-path == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: hosted-qemu-campaign-${{ env.HEAD_SHA }}
           path: ${{ env.BUNDLE }}
       - name: Restore frozen executable inputs
+        id: restore-frozen-exec
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hosted-qemu-frozen-exec-${{ env.HEAD_SHA }}
+          path: ${{ env.BUNDLE }}
+      - name: Retry an incomplete frozen executable restore once
+        id: retry-frozen-exec
+        if: steps.restore-frozen-exec.outputs.download-path == ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: hosted-qemu-frozen-exec-${{ env.HEAD_SHA }}
           path: ${{ env.BUNDLE }}
       - name: Restore every native package receipt separately
+        id: restore-package-receipts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: package-receipt-${{ env.HEAD_SHA }}-*
           path: ${{ runner.temp }}/package-receipts
+      - name: Retry an incomplete package receipt restore once
+        id: retry-package-receipts
+        if: steps.restore-package-receipts.outputs.download-path == ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: package-receipt-${{ env.HEAD_SHA }}-*
+          path: ${{ runner.temp }}/package-receipts
+      - name: Require every artifact restore to have completed
+        env:
+          VM_EVIDENCE: ${{ steps.restore-vm-evidence.outputs.download-path || steps.retry-vm-evidence.outputs.download-path }}
+          FROZEN_EXEC: ${{ steps.restore-frozen-exec.outputs.download-path || steps.retry-frozen-exec.outputs.download-path }}
+          PACKAGE_RECEIPTS: ${{ steps.restore-package-receipts.outputs.download-path || steps.retry-package-receipts.outputs.download-path }}
+        run: |
+          status=0
+          for name in VM_EVIDENCE FROZEN_EXEC PACKAGE_RECEIPTS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::artifact restore $name did not complete after one retry"
+              status=1
+            fi
+          done
+          exit "$status"
       - name: Verify frozen executable identities before execution
         run: |
           python3 - <<'PY'
