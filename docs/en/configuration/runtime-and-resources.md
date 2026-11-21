@@ -165,6 +165,11 @@ budgets, so they are never derived: unpinned, they take their documented
 defaults, and `explain` reports them as `default` rather than
 `startup-derived`.
 
+`connectTimeoutMs` is one overall budget per dial. When a name resolves to
+several addresses, each untried address gets an equal share of what remains,
+never less than 2 seconds unless less than that is left, so an unresponsive
+address cannot use up the whole budget before the next one is tried.
+
 `explain` shows exactly what you pinned:
 
 ```
