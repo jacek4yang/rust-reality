@@ -113,3 +113,4 @@ of the law is what it is.
 | [0069](0069-native-udp-channel-for-handoff-xudp.md) | Native UDP channel for Handoff XUDP (supersedes ADR 0060 §3) | Accepted |
 | [0070](0070-short-fault-admission-drain.md) | Short-fault admission drain before restore | Accepted |
 | [0071](0071-stock-xray-vision-client-write-half-close.md) | Stock Xray Vision client write half-close is not signaled on the REALITY tunnel | Accepted |
+| [0072](0072-glibc-malloc-trim-after-connection-burst.md) | Return freed glibc heap to the kernel after a connection burst | Accepted |
