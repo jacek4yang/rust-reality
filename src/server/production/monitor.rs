@@ -431,6 +431,14 @@ mod tests {
     }
 
     #[test]
+    fn a_burst_that_falls_to_exactly_half_of_the_peak_has_ended() {
+        let mut burst = super::BurstEnd::default();
+        assert!(!burst.observe(40));
+        assert!(!burst.observe(21), "one above half of the peak");
+        assert!(burst.observe(20), "exactly half of the peak, a drop of 20");
+    }
+
+    #[test]
     fn fluctuations_smaller_than_the_minimum_drop_never_trim() {
         let mut burst = super::BurstEnd::default();
         for connections in [4, 20, 9, 20, 5, 18, 5] {
