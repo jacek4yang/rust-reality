@@ -21,7 +21,8 @@ REALITY 身份，也不得绑到非回环地址。
 - `lineGroups` + `selection`（`hedgeMs` / `timeoutMs`）实现 sticky 主选与 hedge；
   健康跳闸只影响**新**会话。
   多个组引用同一 LINE 时共享编译后的不可变配置，但各组保留独立的健康与主选状态。
-- Listener 必须绑定回环；每组 1–8 个 LINE tag；`entry` / `landing` 拒绝
+- Listener 只绑定 `ipv4`，且必须显式设为回环地址（如 `127.0.0.1`）；缺省、未指定
+  及其他非回环地址都会被拒绝，客户端从不绑定 IPv6；每组 1–8 个 LINE tag；`entry` / `landing` 拒绝
   `protocol` 与 `lineGroup`。
 
 SOCKS5 方法协商及命令、HTTP CONNECT 请求头须在 15 秒内完成。随后 LINE
