@@ -727,6 +727,17 @@ pub struct OutboundPermit {
     _warm: Option<WarmUsePermit>,
 }
 
+#[cfg(test)]
+impl OutboundPermit {
+    /// A permit holding only descriptor units, for association unit tests.
+    pub(crate) const fn for_test(fd: FdPermit) -> Self {
+        Self {
+            _fd: fd,
+            _warm: None,
+        }
+    }
+}
+
 /// The selected route either connected or intentionally discarded the session.
 #[derive(Debug)]
 pub enum OutboundConnectOutcome {

@@ -350,7 +350,9 @@ mod tests {
 
     use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
-    use super::{ClientHelloReadErrorKind, MAX_TLS_PLAINTEXT_BYTES, read_client_hello};
+    use super::{
+        ClientHelloError, ClientHelloReadErrorKind, MAX_TLS_PLAINTEXT_BYTES, read_client_hello,
+    };
     use crate::protocol::reality::client_hello::fixtures::{client_hello, record};
 
     struct OneByteReader {
@@ -500,5 +502,130 @@ mod tests {
             ClientHelloReadErrorKind::RecordTooLarge
         ));
         assert_eq!(error.fallback_prefix(), header);
+    }
+
+    async fn read_one_byte_at_a_time(
+        wire: &[u8],
+    ) -> Result<super::ClientHelloRead, super::ClientHelloReadError> {
+        let mut reader = OneByteReader {
+            bytes: wire.to_vec(),
+            position: 0,
+        };
+        read_client_hello(&mut reader, Duration::from_secs(1)).await
+    }
+
+    fn raw_record(body: &[u8]) -> Vec<u8> {
+        let length = u16::try_from(body.len()).expect("test record length must fit u16");
+        let mut wire = vec![0x16, 0x03, 0x01];
+        wire.extend_from_slice(&length.to_be_bytes());
+        wire.extend_from_slice(body);
+        wire
+    }
+
+    /// Each rejection names its own cause and returns exactly the bytes
+    /// consumed so far, without waiting for more input.
+    #[tokio::test(flavor = "current_thread")]
+    async fn framing_rejections_stop_at_the_first_bad_byte() {
+        let declared_max = super::MAX_CLIENT_HELLO_BYTES - 4;
+        let declared_max = [
+            0x01,
+            u8::try_from(declared_max >> 16).unwrap(),
+            u8::try_from((declared_max >> 8) & 0xff).unwrap(),
+            u8::try_from(declared_max & 0xff).unwrap(),
+        ];
+        type Case = (&'static str, Vec<u8>, fn(&ClientHelloReadErrorKind) -> bool);
+        let cases: [Case; 6] = [
+            (
+                "application data record",
+                vec![0x17, 0x03, 0x03, 0x00, 0x01],
+                |kind| matches!(kind, ClientHelloReadErrorKind::UnexpectedRecordType),
+            ),
+            (
+                "zero-length handshake record",
+                vec![0x16, 0x03, 0x01, 0x00, 0x00],
+                |kind| matches!(kind, ClientHelloReadErrorKind::RecordTooLarge),
+            ),
+            ("non-ClientHello first byte", raw_record(&[0x02]), |kind| {
+                matches!(
+                    kind,
+                    ClientHelloReadErrorKind::Invalid(ClientHelloError::NotClientHello)
+                )
+            }),
+            (
+                "declared length above the cap",
+                raw_record(&[0x01, 0xff, 0xff, 0xff]),
+                |kind| {
+                    matches!(
+                        kind,
+                        ClientHelloReadErrorKind::Invalid(ClientHelloError::TooLarge)
+                    )
+                },
+            ),
+            (
+                "declared length exactly at the cap, then EOF",
+                raw_record(&declared_max),
+                |kind| matches!(kind, ClientHelloReadErrorKind::UnexpectedEof),
+            ),
+            ("EOF inside the record header", vec![0x16, 0x03], |kind| {
+                matches!(kind, ClientHelloReadErrorKind::UnexpectedEof)
+            }),
+        ];
+        for (name, wire, expected) in cases {
+            let error = read_one_byte_at_a_time(&wire)
+                .await
+                .expect_err("malformed framing must fail");
+            assert!(expected(error.kind()), "{name}: {:?}", error.kind());
+            assert_eq!(error.fallback_prefix(), wire, "{name}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_malformed_body_with_a_valid_header_returns_the_byte_exact_prefix() {
+        let wire = raw_record(&[0x01, 0x00, 0x00, 0x02, 0x03, 0x03]);
+        let error = read_one_byte_at_a_time(&wire)
+            .await
+            .expect_err("truncated ClientHello body must fail to parse");
+        assert!(matches!(error.kind(), ClientHelloReadErrorKind::Invalid(_)));
+        assert_eq!(error.fallback_prefix(), wire);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_record_count_is_capped_before_reading_another_header() {
+        let mut wire = Vec::new();
+        for byte in [0x01, 0x00, 0x10, 0x00] {
+            wire.extend_from_slice(&raw_record(&[byte]));
+        }
+        for _ in 4..super::MAX_CLIENT_HELLO_RECORDS {
+            wire.extend_from_slice(&raw_record(&[0]));
+        }
+        let consumed = wire.len();
+        wire.extend_from_slice(&raw_record(&[0]));
+
+        let error = read_one_byte_at_a_time(&wire)
+            .await
+            .expect_err("a ClientHello split over too many records must fail");
+        assert!(matches!(
+            error.kind(),
+            ClientHelloReadErrorKind::TooManyRecords
+        ));
+        assert_eq!(error.fallback_prefix(), &wire[..consumed]);
+    }
+
+    /// Bytes pipelined after the ClientHello stay unread on the socket so
+    /// the next phase, or the fallback relay, sees them exactly once.
+    #[tokio::test(flavor = "current_thread")]
+    async fn bytes_after_the_client_hello_are_not_consumed() {
+        let message = client_hello([1; 32], &[2; 32], "a.example", &[]);
+        let wire = record(&message);
+        let trailing = [0x14, 0x03, 0x03, 0x00, 0x01, 0x01];
+        let mut stream = wire.clone();
+        stream.extend_from_slice(&trailing);
+        let mut reader = stream.as_slice();
+
+        let read = read_client_hello(&mut reader, Duration::from_secs(1))
+            .await
+            .expect("ClientHello must be read");
+        assert_eq!(read.fallback_prefix(), wire);
+        assert_eq!(reader, trailing);
     }
 }

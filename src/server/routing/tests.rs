@@ -895,3 +895,55 @@ fn select_from_rules_without_index_is_the_plain_scan() {
         .expect("h3.test must match rule 3");
     assert_eq!(selected.name.as_ref(), "r3");
 }
+
+#[test]
+fn suffix_matches_the_apex_domain_and_destination_case_is_folded() {
+    let table = table();
+    for domain in ["example.com", "EXAMPLE.com", "Api.Example.COM"] {
+        let destination = Destination::new(Address::Domain(domain.to_owned()), 443);
+        let decision = table
+            .select(&context(&destination))
+            .expect("configured user must route");
+
+        assert_eq!(
+            decision.outbound(),
+            "socks",
+            "{domain} must match domain:example.com"
+        );
+        assert_eq!(decision.scope(), RouteScope::Policy);
+    }
+}
+
+fn distinct_addrs(count: u8) -> Vec<SocketAddr> {
+    (0..count)
+        .map(|index| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, index)), 443))
+        .collect()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn duplicate_resolved_addresses_collapse_before_the_cap_is_applied() {
+    let governor = tiny_dns_governor(1);
+    let mut addresses = distinct_addrs(64);
+    addresses.extend(
+        distinct_addrs(64)
+            .into_iter()
+            .map(|address| SocketAddr::new(address.ip(), 80)),
+    );
+    let resolved = resolve_domain_with(&governor, move || Ok(addresses), Duration::from_secs(1))
+        .await
+        .expect("64 distinct addresses fit the cap");
+
+    assert_eq!(resolved.len(), 64);
+    assert_eq!(resolved[0], IpAddr::V4(Ipv4Addr::new(192, 0, 2, 0)));
+    assert_eq!(resolved[63], IpAddr::V4(Ipv4Addr::new(192, 0, 2, 63)));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn more_than_the_resolved_address_cap_fails_closed() {
+    let governor = tiny_dns_governor(1);
+    let error = resolve_domain_with(&governor, || Ok(distinct_addrs(65)), Duration::from_secs(1))
+        .await
+        .expect_err("a 65th distinct address must be rejected");
+
+    assert!(matches!(error, RouteResolutionError::TooManyAddresses));
+}

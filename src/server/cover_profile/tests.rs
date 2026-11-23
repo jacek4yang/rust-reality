@@ -13,6 +13,7 @@ use crate::{
     transport::{FdBudget, TcpRelay, TcpRelayConfig},
 };
 
+use super::{CollectionFailure, REQUIRED_CONSENSUS, require_consensus};
 use super::{
     CoverHandshakePlan, CoverHandshakeRecordShape, CoverProfileState, CoverProfiles,
     LIFECYCLE_ACTIVE, LIFECYCLE_CREATED, MAX_PROFILE_CLASSES, RealityFallback,
@@ -310,4 +311,59 @@ fn expiration_and_generation_mismatch_are_always_misses() {
         now
     ));
     assert!(!profile_is_current(23, 23, now, now));
+}
+
+fn poll_ready<T>(future: impl Future<Output = T>) -> T {
+    let mut future = std::pin::pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => panic!("ready observations must complete in one poll"),
+    }
+}
+
+/// A profile publishes only when all four controlled observations succeed
+/// and agree; one disagreement is unstable and one failure is unavailable.
+#[test]
+fn consensus_requires_four_identical_successful_observations() {
+    let calls = std::sync::Mutex::new(Vec::new());
+    let agreed = poll_ready(require_consensus(|variant| {
+        calls.lock().unwrap().push(variant);
+        std::future::ready(Ok::<_, CollectionFailure>(7_u32))
+    }));
+    assert_eq!(agreed, Ok(7));
+    assert_eq!(REQUIRED_CONSENSUS, 4);
+    let mut variants = calls.into_inner().unwrap();
+    variants.sort_unstable();
+    assert_eq!(variants, [0, 1, 2, 3]);
+
+    for odd in 0..REQUIRED_CONSENSUS {
+        let disagreed = poll_ready(require_consensus(|variant| {
+            std::future::ready(Ok::<_, CollectionFailure>(u32::from(variant == odd)))
+        }));
+        assert_eq!(disagreed, Err(CollectionFailure::Unstable), "variant {odd}");
+        let failed = poll_ready(require_consensus(|variant| {
+            std::future::ready(if variant == odd {
+                Err(CollectionFailure::Unavailable)
+            } else {
+                Ok(7_u32)
+            })
+        }));
+        assert_eq!(failed, Err(CollectionFailure::Unavailable), "variant {odd}");
+    }
+}
+
+/// A cover answer that does not open with a handshake record, or is shorter
+/// than a record header, yields no profile.
+#[test]
+fn a_non_handshake_first_record_has_no_encrypted_range() {
+    let plan = CoverHandshakePlan {
+        emit_ccs: false,
+        shape: CoverHandshakeRecordShape::Coalesced { wire_len: 37 },
+    };
+    assert!(first_encrypted_record_range(&[21, 3, 3, 0, 2, 2, 40], plan).is_err());
+    assert!(first_encrypted_record_range(&[23, 3, 3, 0, 4, 0, 0, 0, 0], plan).is_err());
+    assert!(first_encrypted_record_range(&[22, 3, 3, 0], plan).is_err());
 }
