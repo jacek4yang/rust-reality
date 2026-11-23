@@ -44,6 +44,7 @@ pub(super) async fn run_resource_monitor(
     let mut last_source = watch
         .as_ref()
         .map(|watch| watch.sampler.configured_source());
+    let mut burst = BurstEnd::default();
     loop {
         tokio::select! {
             changed = shutdown.changed() => {
@@ -61,6 +62,13 @@ pub(super) async fn run_resource_monitor(
         // authentication/replay deadline or rebuilding a cache on reload.
         purge_expired_replays(&runtime);
         emit_ownership(&runtime);
+        let connections = runtime
+            .authorities
+            .governor
+            .in_flight(crate::runtime::AdmissionKind::Connection);
+        if burst.observe(connections) {
+            release_free_heap();
+        }
         let Some(watch) = watch.as_ref() else {
             continue;
         };
@@ -72,6 +80,44 @@ pub(super) async fn run_resource_monitor(
             &mut last_source,
         );
     }
+}
+
+/// Connections a burst must shed before freed relay memory is handed back.
+///
+/// Small fluctuations never trigger a trim; only the end of a real burst does.
+const BURST_END_MINIMUM_DROP: u64 = 16;
+
+/// Detects the end of a connection burst on the maintenance cadence.
+///
+/// A burst has ended when the admitted connection count has fallen to at most
+/// half of the highest count seen since the last trim, and by at least
+/// [`BURST_END_MINIMUM_DROP`]. The peak then restarts from the current count,
+/// so a slow drain trims at most once per halving, never once per tick.
+#[derive(Debug, Default)]
+struct BurstEnd {
+    peak: u64,
+}
+
+impl BurstEnd {
+    fn observe(&mut self, connections: u64) -> bool {
+        self.peak = self.peak.max(connections);
+        let ended = connections.saturating_mul(2) <= self.peak
+            && self.peak - connections >= BURST_END_MINIMUM_DROP;
+        if ended {
+            self.peak = connections;
+        }
+        ended
+    }
+}
+
+/// Returns allocator memory freed by a finished burst to the kernel.
+///
+/// Relay buffers of a burst are freed when it ends, but glibc keeps the pages
+/// resident inside the worker's arena; without this, resident memory after a
+/// burst depends on where the few surviving allocations happened to land.
+fn release_free_heap() {
+    #[cfg(target_os = "linux")]
+    let _released = rr_linux::heap::release_free_heap();
 }
 
 /// Purges expired entries from the process replay cache and every listener cache.
@@ -363,6 +409,35 @@ mod tests {
         config::node::fixture,
         server::production::{ProductionServer, fixture::unused_loopback_port},
     };
+    #[test]
+    fn a_burst_ends_when_connections_fall_to_half_of_the_peak() {
+        let mut burst = super::BurstEnd::default();
+        assert!(!burst.observe(8), "idle warm connections are not a burst");
+        assert!(!burst.observe(72), "a rising burst never trims");
+        assert!(!burst.observe(40), "not yet down to half of the peak");
+        assert!(burst.observe(30), "down to half of the peak");
+        assert!(
+            !burst.observe(20),
+            "a third more drained is not another halving"
+        );
+        assert!(
+            burst.observe(8),
+            "halved again, by more than the minimum drop"
+        );
+        assert!(
+            !burst.observe(2),
+            "halved again, but by fewer than the minimum drop"
+        );
+    }
+
+    #[test]
+    fn fluctuations_smaller_than_the_minimum_drop_never_trim() {
+        let mut burst = super::BurstEnd::default();
+        for connections in [4, 20, 9, 20, 5, 18, 5] {
+            assert!(!burst.observe(connections), "{connections}");
+        }
+        assert!(burst.observe(4), "a 20-connection peak fell by 16");
+    }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn idle_landing_replay_entries_are_reclaimed_without_another_admission() {
