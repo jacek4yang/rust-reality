@@ -936,12 +936,58 @@ mod tests {
         }
     }
 
+    /// Whether this test process inherited SIGINT as ignored.
+    ///
+    /// A non-interactive `sh` cannot trap a signal that was ignored on entry,
+    /// and `SIG_IGN` survives `exec`, so a cooperative SIGINT proof is
+    /// impossible in that environment (for example a backgrounded launch).
+    /// See #514.
+    #[cfg(target_os = "linux")]
+    fn sigint_ignored_on_entry() -> bool {
+        let status = fs::read_to_string("/proc/self/status").expect("read /proc/self/status");
+        sigint_ignored_in_status(&status)
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn sigint_ignored_on_entry() -> bool {
+        false
+    }
+
+    /// Reads the `SigIgn` mask from `/proc/<pid>/status`; bit `n - 1` is signal `n`.
+    #[cfg(unix)]
+    fn sigint_ignored_in_status(status: &str) -> bool {
+        const SIGINT_BIT: u64 = 1 << (2 - 1);
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("SigIgn:"))
+            .and_then(|mask| u64::from_str_radix(mask.trim(), 16).ok())
+            .is_some_and(|mask| mask & SIGINT_BIT != 0)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sigint_ignore_mask_is_read_from_the_sigign_line() {
+        assert!(!sigint_ignored_in_status(
+            "SigBlk:\t0000000000000002\nSigIgn:\t0000000000000000\n"
+        ));
+        assert!(sigint_ignored_in_status("SigIgn:\t0000000000000002\n"));
+        assert!(sigint_ignored_in_status("SigIgn:\t0000000000001006\n"));
+        assert!(!sigint_ignored_in_status("SigIgn:\t0000000000001004\n"));
+        assert!(!sigint_ignored_in_status("Name:\trr-dev\n"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn an_owned_running_tool_can_be_interrupted_and_reaped() {
         if !Tool::exists("sh") || !Tool::exists("sleep") {
             return;
         }
+        assert!(
+            !sigint_ignored_on_entry(),
+            "SIGINT was inherited as ignored, so `sh` cannot trap it and the cooperative \
+             interrupt cannot be proven here; rerun with the default disposition, e.g. \
+             `env --default-signal=INT cargo dev check --all` (see #514)"
+        );
         let directory = scratch("rr-interrupt-ready");
         let ready = directory.join("ready.ack");
         let ready_path = ready.display().to_string();
