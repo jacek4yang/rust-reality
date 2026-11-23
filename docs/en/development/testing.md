@@ -352,6 +352,9 @@ paths and changed digests, and re-verifies every receipt; a failed receipt is
 still bound and fails the step. The offline evaluator is unchanged and still
 requires every check. A missing native receipt artifact fails the restore guard
 after one retry.
+The four-cell merge job guards its prepare-controller, cell and guest UDP
+restores the same way: an incomplete download is retried once, and a restore
+that still did not complete fails the job before any merge reads it.
 Frozen acceptance publishes referenced evidence except the cells' traffic
 objects. Those stay in the retained per-cell `hosted-qemu-cell-SHA-CELL`
 artifacts at `cell/PATH`, because merge copies the cell trees verbatim.
