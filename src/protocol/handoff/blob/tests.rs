@@ -9,7 +9,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use super::cursor::BlobCursor;
-use super::policy::{decode_policy_snapshot, encode_policy_snapshot};
+use super::policy::{decode_policy_snapshot, encode_policy_snapshot, encoded_policy_len};
 use super::{encode_address, encode_bounded_bytes};
 use crate::protocol::handoff::policy::{
     HANDOFF_POLICY_SNAPSHOT_VERSION, HANDOFF_POLICY_SNAPSHOT_VERSION_V1, MAX_POLICY_SNAPSHOT_LEN,
@@ -222,12 +222,14 @@ fn out_of_range_prefixes_and_unknown_tags_fail_closed() {
     let ports_at = find(&body, &[0x03, 0xe8, 0x07, 0xd0]);
     // IPv4 initial: version, two flags, 7-byte address, port, then rule count.
     assert_eq!(body[12], 1, "single rule; its allow flag follows at 13");
-    let mutations: [(&str, usize, &[u8]); 11] = [
+    let mutations: [(&str, usize, &[u8]); 12] = [
         ("IPv4 prefix above 32", v4_at + 1, &[33]),
         ("IPv6 prefix above 128", v6_at + 1, &[129]),
         ("unknown IP family", v4_at, &[5]),
         ("unknown domain matcher kind", domain_at, &[4]),
         ("non-ASCII domain byte", domain_at + 2, &[0xff]),
+        // Valid UTF-8, so only the ASCII check can reject it.
+        ("non-ASCII UTF-8 domain", domain_at + 2, &[0xc3, 0xa9]),
         ("port range start zero", ports_at, &[0, 0]),
         (
             "port range start above end",
@@ -293,6 +295,52 @@ fn rule_count_and_frame_length_caps_are_enforced() {
         Err(HandoffError::Length),
         "encoder must refuse what the decoder would reject"
     );
+}
+
+#[test]
+fn decoder_rule_cap_rejects_an_otherwise_well_formed_body() {
+    // The cap must be what rejects the body, so every declared rule is
+    // actually present and well formed.
+    let empty_rule = SealedHandoffRouteRule {
+        allow: false,
+        domains: Vec::new(),
+        ips: Vec::new(),
+        ports: Vec::new(),
+    };
+    let at_cap = HandoffPolicySnapshot::xudp_with_sealed_rules(
+        v4(10, 0, 0, 1, 443),
+        vec![empty_rule; MAX_SEALED_HANDOFF_RULES],
+        false,
+    );
+    let mut body = body_of(&at_cap);
+    decode_body(&body).expect("a body at the rule cap decodes");
+    // IPv4 initial: version, two flags, 7-byte address, port, then rule count.
+    assert_eq!(usize::from(body[12]), MAX_SEALED_HANDOFF_RULES);
+    body[12] += 1;
+    body.extend_from_slice(&[0, 0, 0, 0]);
+    assert!(body.len() <= MAX_POLICY_SNAPSHOT_LEN);
+    assert_eq!(decode_body(&body), Err(HandoffError::State));
+}
+
+#[test]
+fn encoder_refuses_bodies_above_the_frame_cap() {
+    // Within the rule cap, long matchers can still exceed the frame the
+    // decoder accepts; the encoder must refuse rather than seal it.
+    let long = SealedHandoffRouteRule {
+        allow: true,
+        domains: vec![SealedDomainMatcher::Full("a".repeat(255))],
+        ips: Vec::new(),
+        ports: Vec::new(),
+    };
+    let oversized =
+        HandoffPolicySnapshot::xudp_with_sealed_rules(v4(10, 0, 0, 1, 443), vec![long; 5], false);
+    assert_eq!(encoded_policy_len(&oversized), Err(HandoffError::Length));
+    let mut output = Vec::new();
+    assert_eq!(
+        encode_policy_snapshot(&oversized, &mut output),
+        Err(HandoffError::Length)
+    );
+    assert!(output.is_empty(), "a refused snapshot writes nothing");
 }
 
 #[test]
