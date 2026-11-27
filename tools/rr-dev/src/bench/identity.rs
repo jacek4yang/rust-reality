@@ -273,13 +273,11 @@ mod tests {
         let dir = scratch("xray");
         let script = dir.join("tool");
         // Print no version line at all: the identity must fail closed.
-        std::fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-        make_executable(&script);
+        write_script(&script, "#!/bin/sh\nexit 0\n");
         let error = register("tool", &script, "", Kind::Xray).unwrap_err();
         assert!(error.contains("no identity line"), "{error}");
 
-        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
-        make_executable(&script);
+        write_script(&script, "#!/bin/sh\nexit 1\n");
         let error = register("tool", &script, "", Kind::Xray).unwrap_err();
         assert!(error.contains("identity exited"), "{error}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -291,43 +289,36 @@ mod tests {
         let script = dir.join("tool");
 
         // A binary that reports only its version carries no provenance.
-        std::fs::write(&script, "#!/bin/sh\nprintf 'rust-reality 1.9.0\\n'\n").unwrap();
-        make_executable(&script);
+        write_script(&script, "#!/bin/sh\nprintf 'rust-reality 1.9.0\\n'\n");
         let error = register("tool", &script, "", Kind::Rust).unwrap_err();
         assert!(error.contains("no `commit:` line"), "{error}");
 
         // An unstamped ordinary `cargo build` must be refused, by name, with the
         // remedy: this is the failure a contributor is most likely to hit.
-        std::fs::write(
+        write_script(
             &script,
             "#!/bin/sh\nprintf 'rust-reality 1.9.0\\ncommit: unknown\\n'\n",
-        )
-        .unwrap();
-        make_executable(&script);
+        );
         let error = register("tool", &script, "", Kind::Rust).unwrap_err();
         assert!(error.contains("40-hex"), "{error}");
         assert!(error.contains("RUST_REALITY_GIT_COMMIT"), "{error}");
 
         // Upper-case hex is not the recorded form.
-        std::fs::write(
+        write_script(
             &script,
             format!(
                 "#!/bin/sh\nprintf 'rust-reality 1.9.0\\ncommit: {}\\n'\n",
                 "A".repeat(40)
             ),
-        )
-        .unwrap();
-        make_executable(&script);
+        );
         let error = register("tool", &script, "", Kind::Rust).unwrap_err();
         assert!(error.contains("40-hex"), "{error}");
 
         let commit = "a".repeat(40);
-        std::fs::write(
+        write_script(
             &script,
             format!("#!/bin/sh\nprintf 'rust-reality 1.9.0\\ncommit: {commit}\\n'\n"),
-        )
-        .unwrap();
-        make_executable(&script);
+        );
         let binary = register("tool", &script, "", Kind::Rust).expect("valid identity");
         assert_eq!(binary.path, script.canonicalize().unwrap());
         assert_eq!(binary.sha256.len(), 64);
@@ -373,13 +364,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    fn make_executable(path: &Path) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = std::fs::metadata(path).unwrap().permissions();
-            permissions.set_mode(0o755);
-            std::fs::set_permissions(path, permissions).unwrap();
-        }
+    /// Writes an executable test script without this process ever holding a
+    /// writable descriptor for it.
+    ///
+    /// Tests run on parallel threads that fork children. A child forked while
+    /// this process still held the script open for writing inherits that
+    /// descriptor until its own exec, and executing the script in that window
+    /// fails with ETXTBSY ("Text file busy"). A short-lived shell owns the only
+    /// writable descriptor instead, so no fork here can inherit it.
+    fn write_script(path: &Path, body: impl AsRef<str>) {
+        let status = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+                "sh",
+            ])
+            .arg(body.as_ref())
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "writing {} failed: {status}",
+            path.display()
+        );
     }
 }
