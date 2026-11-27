@@ -24,8 +24,8 @@ use crate::protocol::reality::tls13::record::{
 };
 use crate::protocol::reality::tls13::{
     CipherSuite, ContentType, EstablishedTls, ExportedRecordState, MAX_PLAINTEXT_LEN,
-    TLS_RECORD_HEADER_LEN, Tls13KeySchedule, Tls13RecordError, Tls13RecordLayer,
-    TlsRecordReadErrorKind, read_tls_record,
+    MAX_TLS13_CIPHERTEXT_LEN, TLS_RECORD_HEADER_LEN, Tls13KeySchedule, Tls13RecordError,
+    Tls13RecordLayer, TlsRecordReadErrorKind, read_tls_record,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(1);
@@ -799,30 +799,51 @@ async fn pending_drain_returns_exactly_the_pipelined_raw_bytes() {
     assert_eq!(pending, b"raw-after-boundary");
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn oversized_declared_length_fails_with_the_five_byte_header() {
+/// Reads one record from a transport that replays exactly `input` and ends.
+async fn read_error_for_wire(input: Vec<u8>) -> TlsApplicationIoError {
     let (established, _client_write) = buffered_reader_states();
-    let header = [23, 3, 3, 0xff, 0xff];
     let transport = CountingTransport {
-        input: header.to_vec(),
+        input,
         position: 0,
         chunk: usize::MAX,
         reads: Arc::new(AtomicUsize::new(0)),
     };
     let application = TlsApplicationIo::new(transport, established);
     let (mut reader, _writer) = application.into_split();
-
-    let error = reader
+    reader
         .read_application(TIMEOUT)
         .await
-        .expect_err("an oversized declared length must fail at its header");
-    let TlsApplicationIoError::Read(read) = error else {
-        panic!("an invalid length must surface as a record read error");
+        .expect_err("the record must fail")
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn invalid_declared_lengths_fail_with_the_five_byte_header() {
+    for declared in [0, MAX_TLS13_CIPHERTEXT_LEN + 1, usize::from(u16::MAX)] {
+        let length = u16::try_from(declared).expect("declared length must fit the header");
+        let [high, low] = length.to_be_bytes();
+        let header = [23, 3, 3, high, low];
+        let TlsApplicationIoError::Read(read) = read_error_for_wire(header.to_vec()).await else {
+            panic!("declared length {declared} must surface as a record read error");
+        };
+        assert!(
+            matches!(read.kind(), TlsRecordReadErrorKind::RecordTooLarge),
+            "declared length {declared} must be rejected at its header"
+        );
+        assert_eq!(read.wire_prefix(), header, "declared length {declared}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_largest_declared_length_passes_the_header_check() {
+    let length = u16::try_from(MAX_TLS13_CIPHERTEXT_LEN).expect("the bound must fit the header");
+    let [high, low] = length.to_be_bytes();
+    let header = [23, 3, 3, high, low];
+    // The header is accepted, so the reader waits for the body and the EOF
+    // that follows reports the header as the buffered partial record.
+    let TlsApplicationIoError::Read(read) = read_error_for_wire(header.to_vec()).await else {
+        panic!("a truncated maximal record must surface as a record read error");
     };
-    assert!(matches!(
-        read.kind(),
-        TlsRecordReadErrorKind::RecordTooLarge
-    ));
+    assert!(matches!(read.kind(), TlsRecordReadErrorKind::UnexpectedEof));
     assert_eq!(read.wire_prefix(), header);
 }
 
