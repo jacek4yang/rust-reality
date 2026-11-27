@@ -641,6 +641,296 @@ async fn every_positional_flight_truncation_retains_the_exact_prefix() {
     }
 }
 
+#[test]
+fn retained_prefix_limit_matches_its_documented_derivation() {
+    let derived = (super::TLS_RECORD_HEADER_LEN + super::MAX_TLS_PLAINTEXT_BYTES)
+        + (super::TLS_RECORD_HEADER_LEN + 1)
+        + super::COALESCED_COVER_RECORD_THRESHOLD
+        + 3 * (super::TLS_RECORD_HEADER_LEN + super::MAX_TLS13_CIPHERTEXT_LEN)
+        + super::TLS_RECORD_HEADER_LEN
+        + super::NST_PROBE_SCRATCH_BYTES;
+    assert_eq!(MAX_RETAINED_COVER_PREFIX_LEN, derived);
+    assert_eq!(MAX_RETAINED_COVER_PREFIX_LEN, 66_642);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn malformed_server_hello_headers_fail_closed_before_the_body() {
+    let client = client();
+    let cases: [(&str, [u8; 5], Rejection); 3] = [
+        (
+            "legacy record version",
+            [22, 3, 1, 0, 64],
+            Rejection::Sequence,
+        ),
+        ("empty record", [22, 3, 3, 0, 0], Rejection::Length),
+        (
+            "one byte over the plaintext limit",
+            [22, 3, 3, 0x40, 0x01],
+            Rejection::Length,
+        ),
+    ];
+
+    for (case, header, expected) in cases {
+        let mut reader = OneByteReader {
+            bytes: header.to_vec(),
+            position: 0,
+        };
+        let error = read_target_server_hello(&mut reader, &client, Duration::from_secs(1))
+            .await
+            .expect_err(case);
+
+        expected.assert_matches(error.kind(), case);
+        assert_eq!(error.fallback_prefix(), header, "{case}");
+        assert_eq!(reader.position, header.len(), "{case}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn malformed_post_server_hello_headers_fail_closed_with_the_exact_prefix() {
+    let client = client();
+    let server_hello = target_record(&[0x55; 32]);
+    let ccs = [20, 3, 3, 0, 1, 1];
+    let cases: [(&str, bool, [u8; 5], Rejection); 6] = [
+        ("two-byte CCS", false, [20, 3, 3, 0, 2], Rejection::Sequence),
+        (
+            "legacy encrypted record version",
+            true,
+            [23, 3, 1, 0, 32],
+            Rejection::Sequence,
+        ),
+        (
+            "handshake record after CCS",
+            true,
+            [22, 3, 3, 0, 32],
+            Rejection::Sequence,
+        ),
+        (
+            "alert record after CCS",
+            true,
+            [21, 3, 3, 0, 2],
+            Rejection::Sequence,
+        ),
+        (
+            "empty encrypted record",
+            true,
+            [23, 3, 3, 0, 0],
+            Rejection::Length,
+        ),
+        (
+            "one byte over the ciphertext limit",
+            true,
+            [23, 3, 3, 0x40, 0x12],
+            Rejection::Length,
+        ),
+    ];
+
+    for (case, with_ccs, header, expected) in cases {
+        let mut input = server_hello.clone();
+        if with_ccs {
+            input.extend_from_slice(&ccs);
+        }
+        input.extend_from_slice(&header);
+        let mut reader = OneByteReader {
+            bytes: input.clone(),
+            position: 0,
+        };
+        let error = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+            .await
+            .expect_err(case);
+
+        expected.assert_matches(error.kind(), case);
+        assert_eq!(error.fallback_prefix(), input, "{case}");
+        assert_eq!(reader.position, input.len(), "{case}");
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_first_encrypted_record_of_exactly_512_wire_bytes_stays_positional() {
+    let client = client();
+    let mut positional = target_record(&[0x55; 32]);
+    for (index, body_len) in [507_usize, 32, 32, 32].into_iter().enumerate() {
+        positional.extend_from_slice(&opaque_record(23, body_len, index as u8));
+    }
+    let mut reader = OneByteReader {
+        bytes: positional.clone(),
+        position: 0,
+    };
+    let (_, plan, prefix) = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+        .await
+        .expect("a 512-wire-byte first record must select positional records")
+        .into_parts();
+    assert_eq!(
+        plan.shape,
+        CoverHandshakeRecordShape::PositionalRecords {
+            wire_lens: [512, 37, 37, 37],
+            nst_wire_len: None,
+        }
+    );
+    assert_eq!(prefix, positional);
+
+    let mut coalesced = target_record(&[0x55; 32]);
+    coalesced.extend_from_slice(&opaque_record(23, 508, 0xa5));
+    let expected_prefix_len = coalesced.len() - 507;
+    let mut reader = OneByteReader {
+        bytes: coalesced.clone(),
+        position: 0,
+    };
+    let (_, plan, prefix) = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+        .await
+        .expect("a 513-wire-byte first record must select coalescing")
+        .into_parts();
+    assert_eq!(
+        plan.shape,
+        CoverHandshakeRecordShape::Coalesced { wire_len: 513 }
+    );
+    assert_eq!(prefix, coalesced[..expected_prefix_len]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_ticket_probe_reports_only_a_valid_application_data_header() {
+    let client = client();
+    let mut flight = target_record(&[0x55; 32]);
+    for (index, body_len) in [32_usize, 48, 64, 80].into_iter().enumerate() {
+        flight.extend_from_slice(&opaque_record(23, body_len, index as u8));
+    }
+    // `None` is an ignored probe; `Some(rejection)` fails the whole read.
+    let cases: [(&str, [u8; 5], Option<Rejection>); 4] = [
+        ("alert record", [21, 3, 3, 0, 2], None),
+        ("legacy record version", [23, 3, 1, 0, 24], None),
+        ("empty record", [23, 3, 3, 0, 0], Some(Rejection::Length)),
+        (
+            "one byte over the ciphertext limit",
+            [23, 3, 3, 0x40, 0x12],
+            Some(Rejection::Length),
+        ),
+    ];
+
+    for (case, header, expected) in cases {
+        let mut input = flight.clone();
+        input.extend_from_slice(&header);
+        let mut reader = OneByteReader {
+            bytes: input.clone(),
+            position: 0,
+        };
+        let result = read_target_server_flight(&mut reader, &client, Duration::from_secs(1)).await;
+        if let Some(rejection) = expected {
+            let error = result.expect_err(case);
+            rejection.assert_matches(error.kind(), case);
+            assert_eq!(error.fallback_prefix(), input, "{case}");
+        } else {
+            let (_, plan, prefix) = result.expect(case).into_parts();
+            assert_eq!(
+                plan.shape,
+                CoverHandshakeRecordShape::PositionalRecords {
+                    wire_lens: [37, 53, 69, 85],
+                    nst_wire_len: None,
+                },
+                "{case}"
+            );
+            assert_eq!(prefix, input, "{case}");
+        }
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_ticket_probe_completes_a_partially_buffered_header() {
+    let client = client();
+    let mut input = target_record(&[0x55; 32]);
+    for (index, body_len) in [32_usize, 48, 64, 80].into_iter().enumerate() {
+        input.extend_from_slice(&opaque_record(23, body_len, index as u8));
+    }
+    let split = input.len() + 2;
+    input.extend_from_slice(&opaque_record(23, 24, 0xf5));
+    let mut reader = CappedReader {
+        bytes: input.clone(),
+        position: 0,
+        cap: split,
+    };
+
+    let (_, plan, prefix) = read_target_server_flight(&mut reader, &client, Duration::from_secs(1))
+        .await
+        .expect("a split ticket header must still be probed")
+        .into_parts();
+
+    assert_eq!(
+        plan.shape,
+        CoverHandshakeRecordShape::PositionalRecords {
+            wire_lens: [37, 53, 69, 85],
+            nst_wire_len: Some(29),
+        }
+    );
+    assert_eq!(prefix, input);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_ticket_probe_never_grows_the_prefix_past_the_global_limit() {
+    let mut reader = OneByteReader {
+        bytes: vec![0x5a; 600],
+        position: 0,
+    };
+    let mut flight = BufferedFlightReader {
+        reader: &mut reader,
+        deadline: tokio::time::Instant::now() + Duration::from_secs(1),
+        buffer: vec![0; MAX_RETAINED_COVER_PREFIX_LEN - 1],
+        consumed: MAX_RETAINED_COVER_PREFIX_LEN - 1,
+    };
+
+    assert!(matches!(flight.probe_session_ticket().await, Ok(None)));
+    assert_eq!(flight.buffer.len(), MAX_RETAINED_COVER_PREFIX_LEN);
+}
+
+/// Expected fail-closed category for a malformed cover record header.
+#[derive(Clone, Copy)]
+enum Rejection {
+    Sequence,
+    Length,
+}
+
+impl Rejection {
+    fn assert_matches(self, kind: &TargetServerHelloReadErrorKind, case: &str) {
+        let matched = match self {
+            Self::Sequence => matches!(kind, TargetServerHelloReadErrorKind::UnexpectedRecord),
+            Self::Length => matches!(kind, TargetServerHelloReadErrorKind::RecordTooLarge),
+        };
+        assert!(matched, "{case}: {kind:?}");
+    }
+}
+
+/// Blocking reads stop at `cap`; the non-blocking probe returns the rest.
+struct CappedReader {
+    bytes: Vec<u8>,
+    position: usize,
+    cap: usize,
+}
+
+impl AsyncRead for CappedReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _context: &mut std::task::Context<'_>,
+        output: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let end = self.cap.min(self.bytes.len());
+        let read = end.saturating_sub(self.position).min(output.remaining());
+        let start = self.position;
+        output.put_slice(&self.bytes[start..start + read]);
+        self.position += read;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl CoverFlightIo for CappedReader {
+    fn try_read_now(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        let read = self
+            .bytes
+            .len()
+            .saturating_sub(self.position)
+            .min(output.len());
+        output[..read].copy_from_slice(&self.bytes[self.position..self.position + read]);
+        self.position += read;
+        Ok(read)
+    }
+}
+
 fn client() -> ClientHello {
     ClientHello::parse_message(&fixtures::client_hello_with_key_share(
         [0x44; 32],
