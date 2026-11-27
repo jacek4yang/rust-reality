@@ -366,9 +366,9 @@ mod equivalence {
 
     use rr_crypto::StaticSecret;
 
-    use super::{CoverProfile, classify_encrypted_extensions};
+    use super::{CoverProfile, CoverProfileError, classify_encrypted_extensions};
     use crate::protocol::reality::{
-        AuthKey, ClientHello,
+        AuthKey, ClientHello, CoverProbe, NormalizedClientHelloClass,
         client_hello::fixtures,
         tls13::{
             CipherSuite, ContentType, CoverHandshakePlan, CoverHandshakeRecordShape, ServerFlight,
@@ -385,12 +385,17 @@ mod equivalence {
 
     /// The client whose class both paths serve.
     fn client() -> ClientHello {
+        client_offering(&OFFERED_ALPN)
+    }
+
+    /// A client that differs from [`client`] only in the ALPN list it offers.
+    fn client_offering(alpn: &[&[u8]]) -> ClientHello {
         let public = StaticSecret::from_bytes(CLIENT_SECRET).public_key();
         ClientHello::parse_message(&fixtures::client_hello_with_key_share(
             [0x44; 32],
             &SESSION_ID,
             "cover.example",
-            &OFFERED_ALPN,
+            alpn,
             X25519_GROUP,
             &public,
         ))
@@ -457,12 +462,13 @@ mod equivalence {
     /// One sealed cover EncryptedExtensions record, as the collector reads it.
     fn sealed_cover_flight(
         records: &mut Tls13RecordLayer,
+        content_type: ContentType,
         extensions: &[(u16, Vec<u8>)],
     ) -> Vec<u8> {
         let mut output = Vec::new();
         records
             .seal_into(
-                ContentType::Handshake,
+                content_type,
                 &super::tests::message(extensions),
                 0,
                 &mut output,
@@ -514,10 +520,36 @@ mod equivalence {
             .to_vec()
     }
 
-    /// Builds a profile from a fully encrypted in-memory controlled observation.
-    pub(super) fn observed_profile(
-        extensions: &[(u16, Vec<u8>)],
-    ) -> (ClientHello, CoverProfile, [u8; 32], CoverHandshakePlan) {
+    const PLAN: CoverHandshakePlan = CoverHandshakePlan {
+        emit_ccs: true,
+        shape: CoverHandshakeRecordShape::Coalesced { wire_len: 4_096 },
+    };
+
+    /// Everything a controlled observation hands to the profile constructor.
+    struct Observation {
+        client: ClientHello,
+        class: NormalizedClientHelloClass,
+        probe: CoverProbe,
+        target: ServerHelloTemplate,
+        sealed: Vec<u8>,
+        cover_public: [u8; 32],
+    }
+
+    impl Observation {
+        fn into_profile(self) -> Result<CoverProfile, CoverProfileError> {
+            CoverProfile::from_controlled_observation(
+                self.class,
+                self.probe,
+                self.target,
+                PLAN,
+                &self.sealed,
+            )
+        }
+    }
+
+    /// One fully encrypted in-memory controlled observation of a cover whose
+    /// first record has `content_type` and carries `extensions`.
+    fn observe(content_type: ContentType, extensions: &[(u16, Vec<u8>)]) -> Observation {
         let client = client();
         let class = client
             .normalized_profile_class()
@@ -551,16 +583,28 @@ mod equivalence {
             .agree(&probe_share)
             .expect("the probe offers a contributory share");
         let mut records = cover_records(probe.hello(), &observed_hello, shared.as_bytes());
-        let sealed = sealed_cover_flight(&mut records, extensions);
+        let sealed = sealed_cover_flight(&mut records, content_type, extensions);
+        Observation {
+            client,
+            class,
+            probe,
+            target,
+            sealed,
+            cover_public,
+        }
+    }
 
-        let plan = CoverHandshakePlan {
-            emit_ccs: true,
-            shape: CoverHandshakeRecordShape::Coalesced { wire_len: 4_096 },
-        };
-        let profile =
-            CoverProfile::from_controlled_observation(class, probe, target, plan, &sealed)
-                .expect("the cover observation must become a profile");
-        (client, profile, cover_public, plan)
+    /// Builds a profile from a fully encrypted in-memory controlled observation.
+    pub(super) fn observed_profile(
+        extensions: &[(u16, Vec<u8>)],
+    ) -> (ClientHello, CoverProfile, [u8; 32], CoverHandshakePlan) {
+        let observation = observe(ContentType::Handshake, extensions);
+        let client = observation.client.clone();
+        let cover_public = observation.cover_public;
+        let profile = observation
+            .into_profile()
+            .expect("the cover observation must become a profile");
+        (client, profile, cover_public, PLAN)
     }
 
     /// Compares a materialized profile flight with the live-cover flight.
@@ -646,6 +690,78 @@ mod equivalence {
                 .as_deref(),
             Some(OFFERED_ALPN[0]),
             "the live path selects the client's first offer"
+        );
+    }
+
+    /// A probe answers for exactly one class. An observation filed under any
+    /// other class would let one client population reuse a flight shaped for
+    /// another, so construction refuses it before touching the cover's keys.
+    #[test]
+    fn an_observation_is_bound_to_the_class_its_probe_was_built_for() {
+        let other = client_offering(&[b"http/1.1"])
+            .normalized_profile_class()
+            .expect("the other fixture client must classify");
+        let mut observation = observe(ContentType::Handshake, &[]);
+        assert_ne!(
+            observation.class, other,
+            "the fixtures must differ in class"
+        );
+        observation.class = other;
+        assert_eq!(
+            observation.into_profile().err(),
+            Some(CoverProfileError::ProfileClassMismatch)
+        );
+    }
+
+    /// The first encrypted record must be a handshake record. A cover that
+    /// authenticates but sends anything else is not an EncryptedExtensions
+    /// observation, even when the plaintext would parse as one.
+    #[test]
+    fn rejects_a_first_encrypted_record_that_is_not_a_handshake_record() {
+        let alpn = super::tests::alpn(b"h2");
+        assert!(
+            observe(ContentType::Handshake, &[(0x0010, alpn.clone())])
+                .into_profile()
+                .is_ok(),
+            "the same plaintext under a handshake record must profile"
+        );
+        assert_eq!(
+            observe(ContentType::ApplicationData, &[(0x0010, alpn)])
+                .into_profile()
+                .err(),
+            Some(CoverProfileError::MalformedEncryptedExtensions)
+        );
+    }
+
+    /// The profile replays the cover's ALPN selection, so that selection must
+    /// be one the probe actually offered.
+    #[test]
+    fn rejects_a_cover_alpn_selection_the_probe_never_offered() {
+        assert_eq!(
+            observe(
+                ContentType::Handshake,
+                &[(0x0010, super::tests::alpn(b"h3"))]
+            )
+            .into_profile()
+            .err(),
+            Some(CoverProfileError::AlpnNotOffered)
+        );
+    }
+
+    /// A profile only materializes for a ClientHello of its own class.
+    #[test]
+    fn a_profile_materializes_only_for_its_own_class() {
+        let (client, profile, _, _) = observed_profile(&[]);
+        assert!(profile.materialize(&client, [0x5a; 32]).is_ok());
+        let other = client_offering(&[b"http/1.1"]);
+        assert_ne!(
+            other.normalized_profile_class(),
+            client.normalized_profile_class(),
+            "the fixtures must differ in class"
+        );
+        assert_eq!(
+            profile.materialize(&other, [0x5a; 32]).err(),
+            Some(CoverProfileError::ProfileClassMismatch)
         );
     }
 }
@@ -832,6 +948,31 @@ mod tests {
         excessive.push((0x0f00, Vec::new()));
         assert_eq!(
             classify_encrypted_extensions(&message(&excessive)),
+            Err(CoverProfileError::MalformedEncryptedExtensions)
+        );
+    }
+
+    /// Bytes framed inside the message or the ALPN extension but outside the
+    /// structure that declares them are malformed, not ignorable padding.
+    #[test]
+    fn rejects_bytes_left_over_inside_a_framed_structure() {
+        // The handshake header covers one byte more than the extension vector.
+        let mut after_vector = message(&[(0x0010, alpn(b"h2"))]);
+        after_vector.push(0);
+        let declared = u32::try_from(after_vector.len() - 4).expect("fits");
+        after_vector
+            .get_mut(1..4)
+            .expect("the fixture carries a handshake length")
+            .copy_from_slice(&declared.to_be_bytes()[1..]);
+        assert_eq!(
+            classify_encrypted_extensions(&after_vector),
+            Err(CoverProfileError::MalformedEncryptedExtensions)
+        );
+        // The ALPN extension body carries a byte after its protocol list.
+        let mut after_list = alpn(b"h2");
+        after_list.push(0);
+        assert_eq!(
+            classify_encrypted_extensions(&message(&[(0x0010, after_list)])),
             Err(CoverProfileError::MalformedEncryptedExtensions)
         );
     }
