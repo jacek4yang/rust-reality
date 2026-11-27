@@ -715,8 +715,8 @@ pub fn fuzz_transcript_snapshot_matches(algorithm: HashAlgorithm, chunks: &[&[u8
 #[cfg(test)]
 mod tests {
     use super::{
-        CipherSuite, HashAlgorithm, Tls13KeySchedule, TrafficSecret, TranscriptHash,
-        TranscriptHasher, derive_traffic_keys,
+        CipherSuite, HashAlgorithm, Tls13KeySchedule, Tls13KeyScheduleError, TrafficKeys,
+        TrafficSecret, TranscriptHash, TranscriptHasher, derive_traffic_keys,
     };
 
     #[test]
@@ -841,6 +841,88 @@ mod tests {
         );
         let right_hash = HashAlgorithm::Sha256.digest(b"ClientHelloServerHello");
         assert!(Tls13KeySchedule::new(CipherSuite::Aes128GcmSha256, &[], &right_hash).is_err());
+    }
+
+    #[test]
+    fn imports_accept_only_exact_hash_and_key_lengths() {
+        for (algorithm, wrong) in [
+            (HashAlgorithm::Sha256, [0, 31, 33, 48]),
+            (HashAlgorithm::Sha384, [0, 32, 47, 49]),
+        ] {
+            for length in wrong {
+                assert_eq!(
+                    TranscriptHash::from_bytes(algorithm, &vec![0xab; length]).err(),
+                    Some(Tls13KeyScheduleError::InvalidLength),
+                    "{algorithm:?} transcript of {length} bytes"
+                );
+                assert_eq!(
+                    TrafficSecret::from_bytes(algorithm, &vec![0xab; length]).err(),
+                    Some(Tls13KeyScheduleError::InvalidLength),
+                    "{algorithm:?} traffic secret of {length} bytes"
+                );
+            }
+        }
+        for length in [0, 15, 17, 24, 31, 33] {
+            assert_eq!(
+                TrafficKeys::from_raw_parts(&vec![0xab; length], [0; 12]).err(),
+                Some(Tls13KeyScheduleError::InvalidLength),
+                "raw key of {length} bytes"
+            );
+        }
+        for length in [16, 32] {
+            let keys = TrafficKeys::from_raw_parts(&vec![0xab; length], [0; 12])
+                .expect("a suite-sized raw key must import");
+            assert_eq!(keys.key(), vec![0xab; length]);
+        }
+    }
+
+    #[test]
+    fn shared_secret_bound_is_inclusive() {
+        let transcript = HashAlgorithm::Sha256.digest(b"ClientHelloServerHello");
+        assert!(
+            Tls13KeySchedule::new(CipherSuite::Aes128GcmSha256, &[1; 128], &transcript).is_ok()
+        );
+        assert_eq!(
+            Tls13KeySchedule::new(CipherSuite::Aes128GcmSha256, &[1; 129], &transcript).err(),
+            Some(Tls13KeyScheduleError::InvalidSharedSecret)
+        );
+    }
+
+    #[test]
+    fn inputs_from_another_hash_are_refused_with_hash_mismatch() {
+        let schedule = rfc8448_schedule();
+        let foreign_secret = TrafficSecret::from_bytes(HashAlgorithm::Sha384, &[0xab; 48])
+            .expect("a SHA-384 secret must import");
+        let foreign_transcript = HashAlgorithm::Sha384.digest(b"through server Finished");
+        let own_transcript = HashAlgorithm::Sha256.digest(b"through server Finished");
+
+        assert_eq!(
+            schedule.traffic_keys(&foreign_secret).err(),
+            Some(Tls13KeyScheduleError::HashMismatch)
+        );
+        assert_eq!(
+            schedule
+                .finished_verify_data(schedule.client_handshake_secret(), &foreign_transcript)
+                .err(),
+            Some(Tls13KeyScheduleError::HashMismatch)
+        );
+        assert_eq!(
+            schedule
+                .finished_verify_data(&foreign_secret, &own_transcript)
+                .err(),
+            Some(Tls13KeyScheduleError::HashMismatch)
+        );
+        assert_eq!(
+            schedule
+                .application_traffic_secrets(&foreign_transcript)
+                .err(),
+            Some(Tls13KeyScheduleError::HashMismatch)
+        );
+        assert_eq!(
+            Tls13KeySchedule::new(CipherSuite::Aes128GcmSha256, &[1; 32], &foreign_transcript)
+                .err(),
+            Some(Tls13KeyScheduleError::HashMismatch)
+        );
     }
 
     #[test]
