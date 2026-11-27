@@ -482,7 +482,7 @@ mod tests {
         TLS13_VERSION, change_cipher_spec_record, plaintext_handshake_record,
     };
     use crate::protocol::reality::{
-        ClientHello, SESSION_ID_LEN, X25519_GROUP, client_hello::fixtures,
+        ClientHello, P256_GROUP, SESSION_ID_LEN, X25519_GROUP, client_hello::fixtures,
     };
 
     #[test]
@@ -651,6 +651,201 @@ mod tests {
         }
     }
 
+    #[test]
+    fn rejects_structurally_inexact_server_hello_messages() {
+        let client = client(X25519_GROUP, &[0x22; 32]);
+        let valid = || {
+            server_hello(
+                &[0x11; SESSION_ID_LEN],
+                0x1301,
+                X25519_GROUP,
+                &[0x55; 32],
+                &[],
+            )
+        };
+        ServerHelloTemplate::parse(&valid(), &client).expect("baseline ServerHello must parse");
+
+        let base_len = valid().len();
+        let padding = vec![0; super::MAX_SERVER_HELLO_LEN + 1 - base_len - 4];
+        let oversized = server_hello(
+            &[0x11; SESSION_ID_LEN],
+            0x1301,
+            X25519_GROUP,
+            &[0x55; 32],
+            &[(0xff01, &padding)],
+        );
+        assert_eq!(oversized.len(), super::MAX_SERVER_HELLO_LEN + 1);
+        assert_eq!(
+            ServerHelloTemplate::parse(&oversized, &client).unwrap_err(),
+            ServerHelloError::TooLarge
+        );
+
+        let mut short_declared = valid();
+        short_declared[3] -= 1;
+        let mut legacy_version = valid();
+        legacy_version[4..6].copy_from_slice(&TLS13_VERSION.to_be_bytes());
+        let mut long_session_id = valid();
+        long_session_id[super::SESSION_ID_LENGTH_OFFSET] = 33;
+        let mut compressed = valid();
+        compressed[super::SESSION_ID_START + SESSION_ID_LEN + 2] = 1;
+        let mut trailing = valid();
+        trailing.push(0);
+        trailing[3] += 1;
+        let many: Vec<(u16, &[u8])> = (0..63).map(|index| (0x1000 + index, &[][..])).collect();
+        let too_many_extensions = server_hello(
+            &[0x11; SESSION_ID_LEN],
+            0x1301,
+            X25519_GROUP,
+            &[0x55; 32],
+            &many,
+        );
+        let duplicated = server_hello(
+            &[0x11; SESSION_ID_LEN],
+            0x1301,
+            X25519_GROUP,
+            &[0x55; 32],
+            &[(0x1000, &[]), (0x1000, &[])],
+        );
+        let overlong_version = server_hello_with_version(
+            Some(&[0x03, 0x04, 0x00]),
+            &[0x11; SESSION_ID_LEN],
+            0x1301,
+            X25519_GROUP,
+            &[0x55; 32],
+            &[],
+        );
+
+        for (case, message) in [
+            ("declared length shorter than the body", short_declared),
+            ("legacy version other than TLS 1.2", legacy_version),
+            ("session ID longer than 32 bytes", long_session_id),
+            ("non-null compression method", compressed),
+            ("bytes after the extensions block", trailing),
+            ("more than 64 extensions", too_many_extensions),
+            ("duplicate extension", duplicated),
+            ("extension body longer than its value", overlong_version),
+        ] {
+            assert_eq!(
+                ServerHelloTemplate::parse(&message, &client).unwrap_err(),
+                ServerHelloError::Malformed,
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn requires_the_target_to_negotiate_tls13() {
+        let client = client(X25519_GROUP, &[0x22; 32]);
+        for (case, version) in [
+            ("TLS 1.2 selected", Some(&[0x03, 0x03][..])),
+            ("no supported_versions extension", None),
+        ] {
+            let message = server_hello_with_version(
+                version,
+                &[0x11; SESSION_ID_LEN],
+                0x1301,
+                X25519_GROUP,
+                &[0x55; 32],
+                &[],
+            );
+            assert_eq!(
+                ServerHelloTemplate::parse(&message, &client).unwrap_err(),
+                ServerHelloError::UnsupportedVersion,
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn patching_requires_the_exact_key_exchange_length() {
+        let client = client(X25519_GROUP, &[0x22; 32]);
+        let message = server_hello(
+            &[0x11; SESSION_ID_LEN],
+            0x1301,
+            X25519_GROUP,
+            &[0x55; 32],
+            &[],
+        );
+        for length in [31, 33] {
+            let template = ServerHelloTemplate::parse(&message, &client)
+                .expect("target ServerHello must parse");
+            assert_eq!(
+                template
+                    .into_patched_message(&vec![0x77; length])
+                    .unwrap_err(),
+                ServerHelloError::ReplacementLength,
+                "{length}-byte replacement"
+            );
+        }
+    }
+
+    #[test]
+    fn a_profile_refuses_an_offer_it_cannot_serve() {
+        let profile = ServerHelloTemplate::parse(
+            &server_hello(
+                &[0x11; SESSION_ID_LEN],
+                0x1301,
+                X25519_GROUP,
+                &[0x55; 32],
+                &[],
+            ),
+            &client(X25519_GROUP, &[0x22; 32]),
+        )
+        .expect("observed target ServerHello must parse")
+        .into_profile_template()
+        .expect("per-session fields must erase");
+
+        let mut other_suite = fixtures::client_hello_with_key_share(
+            [0x33; 32],
+            &[0x44; SESSION_ID_LEN],
+            "www.example.com",
+            &[b"h2"],
+            X25519_GROUP,
+            &[0x66; 32],
+        );
+        let suites = other_suite
+            .windows(4)
+            .position(|window| window == [0x00, 0x02, 0x13, 0x01])
+            .expect("fixture offers exactly TLS_AES_128_GCM_SHA256");
+        other_suite[suites + 3] = 0x02;
+        let other_suite =
+            ClientHello::parse_message(&other_suite).expect("patched ClientHello must parse");
+        let other_group = client(P256_GROUP, &[0x04; 65]);
+        let short_session = ClientHello::parse_message(&fixtures::client_hello_with_key_share(
+            [0x33; 32],
+            &[0x44; 16],
+            "www.example.com",
+            &[b"h2"],
+            X25519_GROUP,
+            &[0x66; 32],
+        ))
+        .expect("16-byte session ID ClientHello must parse");
+
+        for (case, current, expected) in [
+            (
+                "suite not offered",
+                other_suite,
+                ServerHelloError::UnsupportedCipherSuite,
+            ),
+            (
+                "group not offered",
+                other_group,
+                ServerHelloError::UnsupportedKeyShare,
+            ),
+            (
+                "session ID length changed",
+                short_session,
+                ServerHelloError::SessionIdMismatch,
+            ),
+        ] {
+            assert_eq!(
+                profile.materialize(&current, [0x77; 32]).unwrap_err(),
+                expected,
+                "{case}"
+            );
+        }
+    }
+
     fn client(group: u16, key_exchange: &[u8]) -> ClientHello {
         ClientHello::parse_message(&fixtures::client_hello_with_key_share(
             [0x44; 32],
@@ -670,6 +865,24 @@ mod tests {
         key_exchange: &[u8],
         extra_extensions: &[(u16, &[u8])],
     ) -> Vec<u8> {
+        server_hello_with_version(
+            Some(&TLS13_VERSION.to_be_bytes()),
+            session_id,
+            suite,
+            group,
+            key_exchange,
+            extra_extensions,
+        )
+    }
+
+    fn server_hello_with_version(
+        supported_version: Option<&[u8]>,
+        session_id: &[u8],
+        suite: u16,
+        group: u16,
+        key_exchange: &[u8],
+        extra_extensions: &[(u16, &[u8])],
+    ) -> Vec<u8> {
         let mut body = Vec::new();
         body.extend_from_slice(&LEGACY_TLS12_VERSION.to_be_bytes());
         body.extend_from_slice(&[0x33; 32]);
@@ -679,11 +892,9 @@ mod tests {
         body.push(0);
 
         let mut extensions = Vec::new();
-        push_extension(
-            &mut extensions,
-            EXTENSION_SUPPORTED_VERSIONS,
-            &TLS13_VERSION.to_be_bytes(),
-        );
+        if let Some(version) = supported_version {
+            push_extension(&mut extensions, EXTENSION_SUPPORTED_VERSIONS, version);
+        }
         let mut share = Vec::new();
         share.extend_from_slice(&group.to_be_bytes());
         share.extend_from_slice(
