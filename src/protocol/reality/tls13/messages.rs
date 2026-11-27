@@ -382,6 +382,24 @@ mod tests {
     }
 
     #[test]
+    fn certificate_verify_accepts_only_suite_sized_transcript_digests() {
+        let identity = CertificateIdentity::from_seed([0x07; 32]);
+        for length in [0, 31, 33, 47, 49, 64] {
+            assert_eq!(
+                identity.certificate_verify(&vec![0xab; length]),
+                Err(HandshakeMessageError::InvalidLength),
+                "transcript digest length {length}"
+            );
+        }
+        for length in [32, 48] {
+            assert!(
+                identity.certificate_verify(&vec![0xab; length]).is_ok(),
+                "transcript digest length {length}"
+            );
+        }
+    }
+
+    #[test]
     fn identity_debug_is_redacted() {
         let identity = CertificateIdentity::from_seed([0x42; 32]);
         assert_eq!(format!("{identity:?}"), "CertificateIdentity([REDACTED])");

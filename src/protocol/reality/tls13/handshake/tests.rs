@@ -732,6 +732,126 @@ fn exported_session_state_resumes_interoperation_with_the_client() {
     assert_eq!(opened.plaintext(), b"response");
 }
 
+/// A coalesced server flight plus what an honest client holds after reading
+/// it: its handshake-direction record writer and its Finished message.
+fn flight_and_client_finished() -> (super::ServerFlight, Tls13RecordLayer, Vec<u8>) {
+    let client_secret = StaticSecret::from([0x31; 32]);
+    let client_public = PublicKey::from(&client_secret).to_bytes();
+    let client = client_hello(X25519_GROUP, &client_public);
+    let target = ServerHelloTemplate::parse(&server_hello(X25519_GROUP, &[0x55; 32]), &client)
+        .expect("test target must parse");
+    let flight = build_server_flight_with_shape(
+        &client,
+        &AuthKey::from_test_bytes([0x99; 32]),
+        target,
+        &CertificateIdentity::from_seed([0x42; 32]),
+        Some(b"h2"),
+        cover_plan(CoverHandshakeRecordShape::Coalesced { wire_len: 605 }),
+    )
+    .expect("coalesced server flight must build");
+
+    let server_hello = &flight.server_hello_record()[5..];
+    let server_public: [u8; 32] = server_hello
+        .get(server_hello.len() - 32..)
+        .expect("test ServerHello ends with key share")
+        .try_into()
+        .expect("X25519 server share is fixed");
+    let shared = client_secret.diffie_hellman(&PublicKey::from(server_public));
+    let mut transcript = client.raw_message().to_vec();
+    transcript.extend_from_slice(server_hello);
+    let suite = CipherSuite::Aes128GcmSha256;
+    let schedule =
+        Tls13KeySchedule::new(suite, shared.as_bytes(), &suite.hash().digest(&transcript))
+            .expect("client schedule must derive");
+    let mut server_records = Tls13RecordLayer::new(
+        suite,
+        schedule
+            .traffic_keys(schedule.server_handshake_secret())
+            .expect("server handshake keys must derive"),
+    )
+    .expect("server record state must initialize");
+    let (server_handshake, _, _, _) =
+        open_handshake_records(flight.encrypted_handshake_records(), &mut server_records);
+    transcript.extend_from_slice(&server_handshake);
+
+    let finished_data = schedule
+        .finished_verify_data(
+            schedule.client_handshake_secret(),
+            &suite.hash().digest(&transcript),
+        )
+        .expect("client Finished must derive");
+    let finished = finished_message(finished_data.as_bytes()).expect("client Finished must encode");
+    let client_records = Tls13RecordLayer::new(
+        suite,
+        schedule
+            .traffic_keys(schedule.client_handshake_secret())
+            .expect("client handshake keys must derive"),
+    )
+    .expect("client record state must initialize");
+    (flight, client_records, finished)
+}
+
+/// Seals `message` as the client's first handshake-direction record and asks
+/// the server flight to verify it as ClientFinished.
+fn verify_as_client_finished(
+    content_type: ContentType,
+    edit: impl FnOnce(&mut Vec<u8>),
+) -> Result<EstablishedTls, RealityHandshakeError> {
+    let (flight, mut client_records, mut finished) = flight_and_client_finished();
+    edit(&mut finished);
+    let mut record = Vec::new();
+    client_records
+        .seal_into(content_type, &finished, 0, &mut record)
+        .expect("client record must seal");
+    flight.verify_client_finished(&mut record)
+}
+
+/// ClientFinished is the transition that unlocks application traffic and
+/// commits replay reservations, so each of its checks must hold on its own,
+/// even for a record that authenticates under the client's handshake keys.
+#[test]
+fn client_finished_requires_handshake_type_and_exact_verify_data() {
+    assert!(
+        verify_as_client_finished(ContentType::Handshake, |_| {}).is_ok(),
+        "the honest Finished must verify"
+    );
+    assert!(matches!(
+        verify_as_client_finished(ContentType::Handshake, |message| {
+            let last = message.len() - 1;
+            message[last] ^= 0x01;
+        }),
+        Err(RealityHandshakeError::ClientFinished)
+    ));
+    assert!(matches!(
+        verify_as_client_finished(ContentType::ApplicationData, |_| {}),
+        Err(RealityHandshakeError::ClientFinished)
+    ));
+    assert!(matches!(
+        verify_as_client_finished(ContentType::Handshake, |message| message[0] = 15),
+        Err(RealityHandshakeError::ClientFinished)
+    ));
+}
+
+#[test]
+fn exported_state_with_mismatched_direction_suites_is_refused() {
+    let layer = |suite: CipherSuite, length: usize| {
+        let secret = TrafficSecret::from_bytes(suite.hash(), &vec![0x42; length])
+            .expect("test traffic secret must match the suite hash");
+        Tls13RecordLayer::from_traffic_secret(suite, secret)
+            .expect("test layer must initialize")
+            .into_exported_state()
+            .expect("application state must export")
+    };
+    let mismatched = ExportedTlsState::from_directions(
+        layer(CipherSuite::Aes256GcmSha384, 48),
+        layer(CipherSuite::Aes128GcmSha256, 32),
+    );
+    assert!(matches!(
+        EstablishedTls::from_exported_state(mismatched),
+        Err(super::super::Tls13RecordError::InvalidKey)
+    ));
+}
+
 fn client_hello(group: u16, key_exchange: &[u8]) -> ClientHello {
     ClientHello::parse_message(&fixtures::client_hello_with_key_share(
         [0x44; 32],
