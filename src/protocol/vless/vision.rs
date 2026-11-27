@@ -972,4 +972,146 @@ mod tests {
             Err(super::VisionEncodeError::EncoderFinished)
         );
     }
+
+    /// A Vision frame header announcing `content` and `padding` bytes.
+    fn header(command: u8, content: usize, padding: usize) -> [u8; HEADER_SIZE] {
+        let content = u16::try_from(content).expect("test content fits u16");
+        let padding = u16::try_from(padding).expect("test padding fits u16");
+        let [c0, c1] = content.to_be_bytes();
+        let [p0, p1] = padding.to_be_bytes();
+        [command, c0, c1, p0, p1]
+    }
+
+    /// The whole frame, UUID included on the first one, must fit one Xray
+    /// buffer. Exactly full is accepted; one byte more is rejected.
+    #[test]
+    fn decoder_frame_bound_counts_the_first_frame_user_id() {
+        let first_body = VISION_FRAME_SIZE - UUID_SIZE - HEADER_SIZE;
+
+        let mut exact = USER.as_bytes().to_vec();
+        exact.extend_from_slice(&header(0, 0, first_body));
+        let mut decoder = VisionDecoder::new(USER);
+        let mut decoded = Vec::new();
+        assert_eq!(decoder.decode(&exact, &mut decoded), Ok(VisionMode::Framed));
+
+        let mut over = USER.as_bytes().to_vec();
+        over.extend_from_slice(&header(0, 0, first_body + 1));
+        assert_eq!(
+            VisionDecoder::new(USER).decode(&over, &mut decoded),
+            Err(VisionDecodeError::FrameTooLarge {
+                content_length: 0,
+                padding_length: first_body + 1,
+            })
+        );
+
+        // A later frame has no UUID, so its own bound is five bytes wider.
+        let later_body = VISION_FRAME_SIZE - HEADER_SIZE;
+        let mut later = USER.as_bytes().to_vec();
+        later.extend_from_slice(&header(0, 0, 0));
+        later.extend_from_slice(&header(0, 0, later_body));
+        let mut decoder = VisionDecoder::new(USER);
+        assert_eq!(decoder.decode(&later, &mut decoded), Ok(VisionMode::Framed));
+        let mut later_over = USER.as_bytes().to_vec();
+        later_over.extend_from_slice(&header(0, 0, 0));
+        later_over.extend_from_slice(&header(0, 0, later_body + 1));
+        assert_eq!(
+            VisionDecoder::new(USER).decode(&later_over, &mut decoded),
+            Err(VisionDecodeError::FrameTooLarge {
+                content_length: 0,
+                padding_length: later_body + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn encoder_refuses_content_one_byte_past_the_frame() {
+        let maximum = VISION_FRAME_SIZE - HEADER_SIZE - UUID_SIZE;
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        assert!(
+            encoder
+                .plan(maximum, VisionCommand::Continue, false)
+                .is_ok()
+        );
+        assert_eq!(
+            encoder.plan(maximum + 1, VisionCommand::Continue, false),
+            Err(super::VisionEncodeError::ContentTooLarge {
+                length: maximum + 1,
+                maximum,
+            })
+        );
+    }
+
+    /// The record budget covers the UUID on the first frame and caps padding.
+    #[test]
+    fn plan_within_budget_includes_the_user_id_and_caps_long_padding() {
+        let content = 10;
+        let prefix = UUID_SIZE + HEADER_SIZE;
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        assert_eq!(
+            encoder
+                .plan_within(
+                    content,
+                    VisionCommand::Continue,
+                    false,
+                    prefix + content - 1
+                )
+                .expect("budget check must not fail"),
+            None,
+            "the first frame's UUID counts against the budget"
+        );
+        let budget = prefix + content + 3;
+        let plan = encoder
+            .plan_within(content, VisionCommand::Continue, true, budget)
+            .expect("frame must plan")
+            .expect("the frame fits");
+        assert!(
+            plan.wire_len() <= budget,
+            "long padding must be capped to the record budget"
+        );
+    }
+
+    /// Like Xray, long padding applies only below the threshold.
+    #[test]
+    fn long_padding_starts_strictly_below_the_threshold() {
+        for seed in 0..32_u8 {
+            let mut encoder = VisionEncoder::with_padding_seed(USER, &[seed; 44]);
+            let plan = encoder
+                .plan(
+                    super::DEFAULT_LONG_PADDING_THRESHOLD,
+                    VisionCommand::Continue,
+                    true,
+                )
+                .expect("frame must plan");
+            assert!(
+                plan.padding_len() < super::DEFAULT_SHORT_PADDING_RANGE as usize,
+                "content at the threshold takes short padding"
+            );
+        }
+    }
+
+    /// Assembly writes nothing for mismatched lengths and never leaves stale
+    /// buffer bytes in the padding.
+    #[test]
+    fn assemble_zeroes_padding_and_refuses_mismatched_content() {
+        let mut encoder = VisionEncoder::with_padding_seed(USER, &[0x5a; 44]);
+        let plan = encoder
+            .plan(4, VisionCommand::Continue, true)
+            .expect("frame must plan");
+        assert!(plan.padding_len() > 0);
+
+        let mut untouched = vec![0xaa; plan.wire_len()];
+        encoder.assemble(&plan, b"abc", &mut untouched);
+        assert!(
+            untouched.iter().all(|&byte| byte == 0xaa),
+            "a content length mismatch must not write"
+        );
+
+        let mut output = vec![0xaa; plan.wire_len()];
+        encoder.assemble(&plan, b"abcd", &mut output);
+        let padding_start = UUID_SIZE + HEADER_SIZE + 4;
+        assert!(
+            output[padding_start..].iter().all(|&byte| byte == 0),
+            "padding must be zeroed"
+        );
+    }
 }
