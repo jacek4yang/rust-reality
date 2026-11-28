@@ -282,3 +282,49 @@ impl HandoffPolicySnapshot {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn domain(name: &str, port: u16) -> Destination {
+        Destination::new(Address::Domain(name.to_owned()), port)
+    }
+
+    fn allow_suffix(suffix: &str) -> HandoffPolicySnapshot {
+        HandoffPolicySnapshot::xudp_with_sealed_rules(
+            domain("initial.test", 443),
+            vec![SealedHandoffRouteRule {
+                allow: true,
+                domains: vec![SealedDomainMatcher::Suffix(suffix.to_owned())],
+                ips: Vec::new(),
+                ports: Vec::new(),
+            }],
+            false,
+        )
+    }
+
+    #[test]
+    fn suffix_matcher_requires_a_dot_boundary_and_rejects_infix() {
+        let policy = allow_suffix("example.test");
+        policy
+            .authorize_udp_destination(&domain("example.test", 443))
+            .expect("exact suffix matches");
+        policy
+            .authorize_udp_destination(&domain("www.example.test", 443))
+            .expect("dot-separated subdomain matches");
+        policy
+            .authorize_udp_destination(&domain("EXAMPLE.TEST", 443))
+            .expect("destination case folds before matching");
+        assert_eq!(
+            policy.authorize_udp_destination(&domain("notexample.test", 443)),
+            Err(HandoffError::State),
+            "a longer label that merely ends with the suffix must not match"
+        );
+        assert_eq!(
+            policy.authorize_udp_destination(&domain("example.test.evil", 443)),
+            Err(HandoffError::State),
+            "a name that only contains the suffix as a prefix must not match"
+        );
+    }
+}
