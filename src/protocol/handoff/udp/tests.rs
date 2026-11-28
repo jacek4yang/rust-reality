@@ -589,3 +589,88 @@ fn reassembly_group_limit_evicts_the_oldest_group() {
         .expect("group 2 must survive; the oldest group 1 is the one evicted");
     assert_eq!(whole, vec![2; 20]);
 }
+
+#[test]
+fn header_and_open_framing_fail_closed_with_their_own_errors() {
+    let (mut line, mut landing, open) = pair();
+    let mut wire = Vec::new();
+    line.seal(PacketType::Data, b"d", &mut wire).expect("seal");
+
+    // Shorter than a header plus a tag never reaches the AEAD.
+    assert_eq!(
+        parse_header(&wire[..HEADER_LEN + TAG_LEN - 1]),
+        Err(UdpPacketError::Length)
+    );
+    assert!(parse_header(&wire[..HEADER_LEN + TAG_LEN]).is_ok());
+    let mut plain = vec![0xaa];
+    assert_eq!(
+        landing.open(&wire[..HEADER_LEN + TAG_LEN - 1], &mut plain),
+        Err(UdpPacketError::Length)
+    );
+
+    let mut wrong_version = wire.clone();
+    wrong_version[0] ^= 0xff;
+    assert_eq!(parse_header(&wrong_version), Err(UdpPacketError::Version));
+
+    // A channel packet relabelled OPEN is refused by type, not by the AEAD.
+    let mut relabelled = wire.clone();
+    relabelled[1] = PacketType::Open as u8;
+    assert_eq!(
+        landing.open(&relabelled, &mut plain),
+        Err(UdpPacketError::Type)
+    );
+    assert_eq!(
+        line.seal(PacketType::Open, b"", &mut wire),
+        Err(UdpPacketError::Type),
+        "a channel never seals an OPEN"
+    );
+
+    // An OPEN is exactly OPEN_LEN bytes, typed OPEN, with counter zero.
+    let mut longer = open.clone();
+    longer.push(0);
+    assert_eq!(
+        accept_open(&longer, &keys(), &replay(), NOW, 30).unwrap_err(),
+        UdpPacketError::Length
+    );
+    let mut not_open = open.clone();
+    not_open[1] = PacketType::Data as u8;
+    assert_eq!(
+        accept_open(&not_open, &keys(), &replay(), NOW, 30).unwrap_err(),
+        UdpPacketError::Type
+    );
+    let mut nonzero_counter = open;
+    nonzero_counter[HEADER_LEN - 1] = 1;
+    assert_eq!(
+        accept_open(&nonzero_counter, &keys(), &replay(), NOW, 30).unwrap_err(),
+        UdpPacketError::Type
+    );
+}
+
+#[test]
+fn a_forged_packet_leaves_no_plaintext_behind() {
+    let (mut line, mut landing, _) = pair();
+    let mut wire = Vec::new();
+    line.seal(PacketType::Data, b"secret", &mut wire)
+        .expect("seal");
+    let last = wire.len() - 1;
+    wire[last] ^= 1;
+    let mut plain = b"stale".to_vec();
+    assert_eq!(
+        landing.open(&wire, &mut plain),
+        Err(UdpPacketError::Authentication)
+    );
+    assert!(plain.is_empty(), "a rejected packet must not leave bytes");
+}
+
+#[test]
+fn decode_data_payload_bound_is_exact() {
+    let mut exact = vec![4_u8, 1, 2, 3, 4];
+    exact.extend_from_slice(&53_u16.to_be_bytes());
+    exact.resize(exact.len() + MAX_UDP_PAYLOAD_LEN, 0);
+    assert_eq!(
+        decode_data(&exact).map(|(_, payload)| payload.len()),
+        Ok(MAX_UDP_PAYLOAD_LEN)
+    );
+    exact.push(0);
+    assert_eq!(decode_data(&exact), Err(UdpPacketError::Length));
+}
