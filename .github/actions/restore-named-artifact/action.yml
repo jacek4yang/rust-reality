@@ -1,0 +1,96 @@
+name: Restore named artifact fail-closed
+description: >
+  Download one Actions artifact into a unique staging directory, retry up to
+  three times after wiping that staging directory, then try a digest-checked
+  gh zip fallback. The final path is written only after a complete restore.
+  Fail closed. Does not change qualification verdicts, evaluators, or thresholds.
+inputs:
+  name:
+    description: Exact artifact name
+    required: true
+  path:
+    description: Final destination directory; written only after a complete restore
+    required: true
+outputs:
+  download-path:
+    description: The final destination when the restore completed; empty otherwise
+    value: ${{ steps.finish.outputs.download-path }}
+runs:
+  using: composite
+  steps:
+    - name: Create a unique staging directory
+      id: staging
+      shell: bash
+      run: |
+        set -euo pipefail
+        # A unique parent so a retry never wipes a sibling artifact that already
+        # completed into a shared final path (e.g. BUNDLE).
+        stage="$RUNNER_TEMP/restore-staging/${{ inputs.name }}"
+        rm -rf "$stage"
+        mkdir -p "$stage/try"
+        echo "dir=$stage" >> "$GITHUB_OUTPUT"
+    # download-artifact v4 (d3f86a1) can exit 0 mid-download with no digest
+    # line and an empty download-path (actions/download-artifact#475 / #454).
+    # download-path is set only after the download completed, so it is the
+    # completeness signal (#506 / #510). Leftover files are not success.
+    - name: Restore attempt 1
+      id: a1
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ steps.staging.outputs.dir }}/try
+    - name: Wipe staging for attempt 2
+      if: steps.a1.outputs.download-path == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        rm -rf "${{ steps.staging.outputs.dir }}/try"
+        mkdir -p "${{ steps.staging.outputs.dir }}/try"
+    - name: Restore attempt 2
+      id: a2
+      if: steps.a1.outputs.download-path == ''
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ steps.staging.outputs.dir }}/try
+    - name: Wipe staging for attempt 3
+      if: steps.a1.outputs.download-path == '' && steps.a2.outputs.download-path == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        rm -rf "${{ steps.staging.outputs.dir }}/try"
+        mkdir -p "${{ steps.staging.outputs.dir }}/try"
+    - name: Restore attempt 3
+      id: a3
+      if: steps.a1.outputs.download-path == '' && steps.a2.outputs.download-path == ''
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ steps.staging.outputs.dir }}/try
+    - name: Digest-checked gh zip fallback
+      id: fallback
+      if: steps.a1.outputs.download-path == '' && steps.a2.outputs.download-path == '' && steps.a3.outputs.download-path == ''
+      shell: bash
+      env:
+        ARTIFACT_NAME: ${{ inputs.name }}
+        STAGE: ${{ steps.staging.outputs.dir }}
+        GH_TOKEN: ${{ github.token }}
+        GH_HOST: ${{ github.server_url }}
+      run: bash "${{ github.action_path }}/fallback.sh"
+    - name: Publish a complete restore only
+      id: finish
+      shell: bash
+      env:
+        SRC: ${{ steps.a1.outputs.download-path || steps.a2.outputs.download-path || steps.a3.outputs.download-path || steps.fallback.outputs.download-path }}
+        DEST: ${{ inputs.path }}
+        ARTIFACT_NAME: ${{ inputs.name }}
+      run: |
+        set -euo pipefail
+        if [ -z "${SRC}" ]; then
+          echo "::error::artifact restore ${ARTIFACT_NAME} did not complete after three retries and a digest-checked fallback"
+          echo "download-path=" >> "$GITHUB_OUTPUT"
+          exit 1
+        fi
+        mkdir -p "$DEST"
+        cp -a "$SRC"/. "$DEST"/
+        echo "download-path=$DEST" >> "$GITHUB_OUTPUT"

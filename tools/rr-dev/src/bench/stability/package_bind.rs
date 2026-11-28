@@ -155,6 +155,36 @@ pub fn run(plan: &Plan) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn assert_fail_closed_named_artifact_restores(coordinator: &str, campaign: &str) {
+        // Every restore, including native receipts, fails closed after three
+        // wiped retries and a digest-checked gh fallback (actions/download-artifact#475).
+        assert!(coordinator.contains("uses: ./.github/actions/restore-named-artifact\n"));
+        assert!(coordinator.contains(
+            "for name in VM_EVIDENCE FROZEN_EXEC PKG_X64_GENERIC PKG_X64_MUSL PKG_X64_V3 PKG_ARM_GENERIC NATIVE_RECEIPTS; do"
+        ));
+        assert!(
+            coordinator
+                .contains("did not complete after three retries and a digest-checked fallback")
+        );
+        // The four-cell merge restores each named cell on its own, so one
+        // completed cell is kept when another is retried, and the guard still
+        // fails closed before any merge or guest UDP aggregation.
+        assert!(campaign.contains("uses: ./.github/actions/restore-named-artifact\n"));
+        assert!(campaign.contains("hosted-qemu-cell-${{ env.HEAD_SHA }}-nxr-ordinary"));
+        assert!(campaign.contains("hosted-qemu-cell-${{ env.HEAD_SHA }}-handoff-ordinary"));
+        assert!(campaign.contains("hosted-qemu-cell-${{ env.HEAD_SHA }}-nxr-constrained"));
+        assert!(campaign.contains("hosted-qemu-cell-${{ env.HEAD_SHA }}-handoff-constrained"));
+        assert!(campaign.contains(
+            "for name in PREPARE CELL_NXR_ORDINARY CELL_HANDOFF_ORDINARY CELL_NXR_CONSTRAINED CELL_HANDOFF_CONSTRAINED; do"
+        ));
+        assert!(campaign.contains(
+            "for name in UDP_NXR_ORDINARY UDP_HANDOFF_ORDINARY UDP_NXR_CONSTRAINED UDP_HANDOFF_CONSTRAINED; do"
+        ));
+        assert!(
+            campaign.contains("did not complete after three retries and a digest-checked fallback")
+        );
+    }
+
     #[test]
     fn coordinated_workflow_uses_one_package_and_requires_frozen_acceptance() {
         let coordinator = include_str!("../../../../../.github/workflows/frozen-qualification.yml");
@@ -186,17 +216,8 @@ mod tests {
             !coordinator
                 .contains("bench stability-check --evidence \"$BUNDLE/evidence.json\" --case")
         );
-        // Every restore, including native receipts, fails closed after one retry.
-        assert!(
-            coordinator.contains(
-                "for name in VM_EVIDENCE FROZEN_EXEC PACKAGE_RECEIPTS NATIVE_RECEIPTS; do"
-            )
-        );
-        // The four-cell merge restores fail closed the same way, before any
-        // merge or guest UDP aggregation reads a partially restored directory.
-        assert!(campaign.contains("for name in PREPARE CELLS; do"));
-        assert!(campaign.contains("if: steps.restore-cells.outputs.download-path == ''\n"));
-        assert!(campaign.contains("if: steps.restore-udp-guest.outputs.download-path == ''\n"));
+        assert_fail_closed_named_artifact_restores(coordinator, campaign);
+
         let merge = campaign
             .find("      - name: Merge identity-bound cell evidence")
             .expect("merge step");
