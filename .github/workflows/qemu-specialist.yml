@@ -89,7 +89,7 @@ jobs:
           fetch-depth: 0
       - name: Restore the coordinator's native GNU package receipt
         if: inputs.package_artifact != ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: ${{ inputs.package_artifact }}
           path: ${{ runner.temp }}/shared-gnu-package
@@ -219,7 +219,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Restore shared prepare inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
           path: ${{ runner.temp }}/rr-qemu-prepare
@@ -450,23 +450,16 @@ jobs:
           fetch-depth: 0
       - name: Restore shared prepare inputs
         id: restore-prepare
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
-          path: ${{ runner.temp }}/rr-qemu-prepare
-      - name: Retry an incomplete prepare restore once
-        id: retry-prepare
-        if: steps.restore-prepare.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
           path: ${{ runner.temp }}/rr-qemu-prepare
       - name: Require the prepare restore to have completed
         env:
-          PREPARE: ${{ steps.restore-prepare.outputs.download-path || steps.retry-prepare.outputs.download-path }}
+          PREPARE: ${{ steps.restore-prepare.outputs.download-path }}
         run: |
           if [ -z "$PREPARE" ]; then
-            echo "::error::artifact restore PREPARE did not complete after one retry"
+            echo "::error::artifact restore PREPARE did not complete after three retries and a digest-checked fallback"
             exit 1
           fi
       - name: Prepare native check tools
@@ -571,7 +564,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Restore shared prepare inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
           path: ${{ runner.temp }}/rr-qemu-prepare
@@ -783,48 +776,54 @@ jobs:
           ref: ${{ env.HEAD_SHA }}
           persist-credentials: false
           fetch-depth: 0
-      # download-artifact v4 can exit successfully mid-download without its
-      # `download-path` output (actions/download-artifact#475), leaving a
-      # partially restored cell directory. `download-path` is set only after
-      # every download completed, so an empty value triggers exactly one
-      # identical retry, and the guard fails closed before any merge.
+      # download-artifact v4 can exit 0 mid-download with no digest line and
+      # an empty download-path (actions/download-artifact#475 / #454). Restore
+      # each required artifact on its own, up to three wiped retries plus a
+      # digest-checked gh fallback. A cell that already completed is kept;
+      # only incomplete cells are retried. The guard still fails closed before
+      # any merge. Hit on #516 (four-cell pattern) and #524 (campaign zip).
       - name: Restore shared prepare controller
         id: restore-prepare
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
           path: ${{ runner.temp }}/rr-qemu-prepare
-      - name: Retry an incomplete prepare controller restore once
-        id: retry-prepare
-        if: steps.restore-prepare.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Restore cell campaign nxr/ordinary
+        id: restore-cell-nxr-ordinary
+        uses: ./.github/actions/restore-named-artifact
         with:
-          name: hosted-qemu-prepare-${{ env.HEAD_SHA }}
-          path: ${{ runner.temp }}/rr-qemu-prepare
-      - name: Restore every cell campaign directory
-        id: restore-cells
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+          name: hosted-qemu-cell-${{ env.HEAD_SHA }}-nxr-ordinary
+          path: ${{ runner.temp }}/rr-qemu-cells/hosted-qemu-cell-${{ env.HEAD_SHA }}-nxr-ordinary
+      - name: Restore cell campaign handoff/ordinary
+        id: restore-cell-handoff-ordinary
+        uses: ./.github/actions/restore-named-artifact
         with:
-          pattern: hosted-qemu-cell-${{ env.HEAD_SHA }}-*
-          path: ${{ runner.temp }}/rr-qemu-cells
-          merge-multiple: false
-      - name: Retry an incomplete cell campaign restore once
-        id: retry-cells
-        if: steps.restore-cells.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+          name: hosted-qemu-cell-${{ env.HEAD_SHA }}-handoff-ordinary
+          path: ${{ runner.temp }}/rr-qemu-cells/hosted-qemu-cell-${{ env.HEAD_SHA }}-handoff-ordinary
+      - name: Restore cell campaign nxr/constrained
+        id: restore-cell-nxr-constrained
+        uses: ./.github/actions/restore-named-artifact
         with:
-          pattern: hosted-qemu-cell-${{ env.HEAD_SHA }}-*
-          path: ${{ runner.temp }}/rr-qemu-cells
-          merge-multiple: false
+          name: hosted-qemu-cell-${{ env.HEAD_SHA }}-nxr-constrained
+          path: ${{ runner.temp }}/rr-qemu-cells/hosted-qemu-cell-${{ env.HEAD_SHA }}-nxr-constrained
+      - name: Restore cell campaign handoff/constrained
+        id: restore-cell-handoff-constrained
+        uses: ./.github/actions/restore-named-artifact
+        with:
+          name: hosted-qemu-cell-${{ env.HEAD_SHA }}-handoff-constrained
+          path: ${{ runner.temp }}/rr-qemu-cells/hosted-qemu-cell-${{ env.HEAD_SHA }}-handoff-constrained
       - name: Require the prepare and cell restores to have completed
         env:
-          PREPARE: ${{ steps.restore-prepare.outputs.download-path || steps.retry-prepare.outputs.download-path }}
-          CELLS: ${{ steps.restore-cells.outputs.download-path || steps.retry-cells.outputs.download-path }}
+          PREPARE: ${{ steps.restore-prepare.outputs.download-path }}
+          CELL_NXR_ORDINARY: ${{ steps.restore-cell-nxr-ordinary.outputs.download-path }}
+          CELL_HANDOFF_ORDINARY: ${{ steps.restore-cell-handoff-ordinary.outputs.download-path }}
+          CELL_NXR_CONSTRAINED: ${{ steps.restore-cell-nxr-constrained.outputs.download-path }}
+          CELL_HANDOFF_CONSTRAINED: ${{ steps.restore-cell-handoff-constrained.outputs.download-path }}
         run: |
           status=0
-          for name in PREPARE CELLS; do
+          for name in PREPARE CELL_NXR_ORDINARY CELL_HANDOFF_ORDINARY CELL_NXR_CONSTRAINED CELL_HANDOFF_CONSTRAINED; do
             if [ -z "${!name}" ]; then
-              echo "::error::artifact restore $name did not complete after one retry"
+              echo "::error::artifact restore $name did not complete after three retries and a digest-checked fallback"
               status=1
             fi
           done
@@ -861,29 +860,45 @@ jobs:
           chmod 0755 "$RUNNER_TEMP/rr-cloud-campaign/rr-dev" "$RUNNER_TEMP/rr-cloud-campaign/rust-reality" \
             "$RUNNER_TEMP/rr-cloud-campaign/xray" "$RUNNER_TEMP/rr-cloud-campaign/openssl"
 
-      - name: Restore guest UDP receipts
-        id: restore-udp-guest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Restore guest UDP receipt nxr/ordinary
+        id: restore-udp-nxr-ordinary
+        uses: ./.github/actions/restore-named-artifact
         with:
-          pattern: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-*
-          path: ${{ runner.temp }}/rr-qemu-udp-guest
-          merge-multiple: false
-      - name: Retry an incomplete guest UDP receipt restore once
-        id: retry-udp-guest
-        if: steps.restore-udp-guest.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+          name: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-nxr-ordinary
+          path: ${{ runner.temp }}/rr-qemu-udp-guest/hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-nxr-ordinary
+      - name: Restore guest UDP receipt handoff/ordinary
+        id: restore-udp-handoff-ordinary
+        uses: ./.github/actions/restore-named-artifact
         with:
-          pattern: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-*
-          path: ${{ runner.temp }}/rr-qemu-udp-guest
-          merge-multiple: false
+          name: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-handoff-ordinary
+          path: ${{ runner.temp }}/rr-qemu-udp-guest/hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-handoff-ordinary
+      - name: Restore guest UDP receipt nxr/constrained
+        id: restore-udp-nxr-constrained
+        uses: ./.github/actions/restore-named-artifact
+        with:
+          name: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-nxr-constrained
+          path: ${{ runner.temp }}/rr-qemu-udp-guest/hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-nxr-constrained
+      - name: Restore guest UDP receipt handoff/constrained
+        id: restore-udp-handoff-constrained
+        uses: ./.github/actions/restore-named-artifact
+        with:
+          name: hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-handoff-constrained
+          path: ${{ runner.temp }}/rr-qemu-udp-guest/hosted-qemu-udp-guest-${{ env.HEAD_SHA }}-handoff-constrained
       - name: Require the guest UDP receipt restore to have completed
         env:
-          UDP_GUEST: ${{ steps.restore-udp-guest.outputs.download-path || steps.retry-udp-guest.outputs.download-path }}
+          UDP_NXR_ORDINARY: ${{ steps.restore-udp-nxr-ordinary.outputs.download-path }}
+          UDP_HANDOFF_ORDINARY: ${{ steps.restore-udp-handoff-ordinary.outputs.download-path }}
+          UDP_NXR_CONSTRAINED: ${{ steps.restore-udp-nxr-constrained.outputs.download-path }}
+          UDP_HANDOFF_CONSTRAINED: ${{ steps.restore-udp-handoff-constrained.outputs.download-path }}
         run: |
-          if [ -z "$UDP_GUEST" ]; then
-            echo "::error::artifact restore UDP_GUEST did not complete after one retry"
-            exit 1
-          fi
+          status=0
+          for name in UDP_NXR_ORDINARY UDP_HANDOFF_ORDINARY UDP_NXR_CONSTRAINED UDP_HANDOFF_CONSTRAINED; do
+            if [ -z "${!name}" ]; then
+              echo "::error::artifact restore $name did not complete after three retries and a digest-checked fallback"
+              status=1
+            fi
+          done
+          exit "$status"
       - name: Aggregate guest UDP four-cell fail-closed
         run: |
           set -euo pipefail

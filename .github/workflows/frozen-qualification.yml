@@ -141,73 +141,68 @@ jobs:
           echo "XDG_CACHE_HOME=$RUNNER_TEMP/frozen-cache" >> "$GITHUB_ENV"
           echo "BUNDLE=$RUNNER_TEMP/frozen-acceptance" >> "$GITHUB_ENV"
           df -h "$RUNNER_TEMP"
-      # download-artifact v4 can exit successfully mid-download without its
-      # digest line or `download-path` output (actions/download-artifact#475).
-      # `download-path` is set only after every download completed, so an empty
-      # value triggers exactly one identical retry; the guard below fails closed.
+      # download-artifact v4 can exit 0 mid-download with no digest line and
+      # an empty download-path (actions/download-artifact#475 / #454). The
+      # restore-named-artifact action retries each named artifact up to three
+      # times in a wiped staging directory, then a digest-checked gh fallback,
+      # and writes the final path only after a complete restore. The guard
+      # still fails closed. Hit on #516 (four-cell merge) and #524 (campaign).
       - name: Restore immutable VM evidence and evaluator
         id: restore-vm-evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: hosted-qemu-campaign-${{ env.HEAD_SHA }}
-          path: ${{ env.BUNDLE }}
-      - name: Retry an incomplete VM evidence restore once
-        id: retry-vm-evidence
-        if: steps.restore-vm-evidence.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: hosted-qemu-campaign-${{ env.HEAD_SHA }}
           path: ${{ env.BUNDLE }}
       - name: Restore frozen executable inputs
         id: restore-frozen-exec
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: hosted-qemu-frozen-exec-${{ env.HEAD_SHA }}
           path: ${{ env.BUNDLE }}
-      - name: Retry an incomplete frozen executable restore once
-        id: retry-frozen-exec
-        if: steps.restore-frozen-exec.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Restore package receipt linux-x86_64-generic
+        id: restore-package-linux-x86_64-generic
+        uses: ./.github/actions/restore-named-artifact
         with:
-          name: hosted-qemu-frozen-exec-${{ env.HEAD_SHA }}
-          path: ${{ env.BUNDLE }}
-      - name: Restore every native package receipt separately
-        id: restore-package-receipts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+          name: package-receipt-${{ env.HEAD_SHA }}-linux-x86_64-generic
+          path: ${{ runner.temp }}/package-receipts/package-receipt-${{ env.HEAD_SHA }}-linux-x86_64-generic
+      - name: Restore package receipt linux-x86_64-musl
+        id: restore-package-linux-x86_64-musl
+        uses: ./.github/actions/restore-named-artifact
         with:
-          pattern: package-receipt-${{ env.HEAD_SHA }}-*
-          path: ${{ runner.temp }}/package-receipts
-      - name: Retry an incomplete package receipt restore once
-        id: retry-package-receipts
-        if: steps.restore-package-receipts.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+          name: package-receipt-${{ env.HEAD_SHA }}-linux-x86_64-musl
+          path: ${{ runner.temp }}/package-receipts/package-receipt-${{ env.HEAD_SHA }}-linux-x86_64-musl
+      - name: Restore package receipt linux-x86_64-v3
+        id: restore-package-linux-x86_64-v3
+        uses: ./.github/actions/restore-named-artifact
         with:
-          pattern: package-receipt-${{ env.HEAD_SHA }}-*
-          path: ${{ runner.temp }}/package-receipts
+          name: package-receipt-${{ env.HEAD_SHA }}-linux-x86_64-v3
+          path: ${{ runner.temp }}/package-receipts/package-receipt-${{ env.HEAD_SHA }}-linux-x86_64-v3
+      - name: Restore package receipt linux-aarch64-generic
+        id: restore-package-linux-aarch64-generic
+        uses: ./.github/actions/restore-named-artifact
+        with:
+          name: package-receipt-${{ env.HEAD_SHA }}-linux-aarch64-generic
+          path: ${{ runner.temp }}/package-receipts/package-receipt-${{ env.HEAD_SHA }}-linux-aarch64-generic
       - name: Restore native receipts collected beside the VM cells
         id: restore-native-receipts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: frozen-native-receipts-${{ env.HEAD_SHA }}
-          path: ${{ runner.temp }}/frozen-native
-      - name: Retry an incomplete native receipt restore once
-        id: retry-native-receipts
-        if: steps.restore-native-receipts.outputs.download-path == ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: ./.github/actions/restore-named-artifact
         with:
           name: frozen-native-receipts-${{ env.HEAD_SHA }}
           path: ${{ runner.temp }}/frozen-native
       - name: Require every artifact restore to have completed
         env:
-          VM_EVIDENCE: ${{ steps.restore-vm-evidence.outputs.download-path || steps.retry-vm-evidence.outputs.download-path }}
-          FROZEN_EXEC: ${{ steps.restore-frozen-exec.outputs.download-path || steps.retry-frozen-exec.outputs.download-path }}
-          PACKAGE_RECEIPTS: ${{ steps.restore-package-receipts.outputs.download-path || steps.retry-package-receipts.outputs.download-path }}
-          NATIVE_RECEIPTS: ${{ steps.restore-native-receipts.outputs.download-path || steps.retry-native-receipts.outputs.download-path }}
+          VM_EVIDENCE: ${{ steps.restore-vm-evidence.outputs.download-path }}
+          FROZEN_EXEC: ${{ steps.restore-frozen-exec.outputs.download-path }}
+          PKG_X64_GENERIC: ${{ steps.restore-package-linux-x86_64-generic.outputs.download-path }}
+          PKG_X64_MUSL: ${{ steps.restore-package-linux-x86_64-musl.outputs.download-path }}
+          PKG_X64_V3: ${{ steps.restore-package-linux-x86_64-v3.outputs.download-path }}
+          PKG_ARM_GENERIC: ${{ steps.restore-package-linux-aarch64-generic.outputs.download-path }}
+          NATIVE_RECEIPTS: ${{ steps.restore-native-receipts.outputs.download-path }}
         run: |
           status=0
-          for name in VM_EVIDENCE FROZEN_EXEC PACKAGE_RECEIPTS NATIVE_RECEIPTS; do
+          for name in VM_EVIDENCE FROZEN_EXEC PKG_X64_GENERIC PKG_X64_MUSL PKG_X64_V3 PKG_ARM_GENERIC NATIVE_RECEIPTS; do
             if [ -z "${!name}" ]; then
-              echo "::error::artifact restore $name did not complete after one retry"
+              echo "::error::artifact restore $name did not complete after three retries and a digest-checked fallback"
               status=1
             fi
           done
