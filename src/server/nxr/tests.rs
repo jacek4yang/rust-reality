@@ -38,6 +38,65 @@ fn replay_cache_is_bounded_and_expires_monotonically() {
 }
 
 #[test]
+fn replay_retention_outlives_both_skew_directions() {
+    // A request is accepted while its timestamp is within the skew of the
+    // landing clock in either direction, so a replay stays acceptable for up
+    // to twice the skew after the first sighting. The cache keeps the nonce
+    // for that window plus one second of margin, saturating rather than
+    // wrapping.
+    assert_eq!(super::replay_retention_seconds(0), 1);
+    assert_eq!(super::replay_retention_seconds(30), 61);
+    assert_eq!(super::replay_retention_seconds(u64::MAX), u64::MAX);
+}
+
+#[test]
+fn replay_cache_rejects_zero_capacity_or_retention() {
+    // Zero retention would forget every nonce at once and disable replay
+    // protection; zero capacity would reject every request.
+    assert_eq!(
+        NxrReplayCache::new(0, Duration::from_secs(1)).err(),
+        Some(NxrReplayError::Unavailable)
+    );
+    assert_eq!(
+        NxrReplayCache::new(1, Duration::ZERO).err(),
+        Some(NxrReplayError::Unavailable)
+    );
+}
+
+#[test]
+fn same_shard_expiry_releases_replay_capacity_at_the_deadline() {
+    let retention = Duration::from_millis(100);
+    let cache = NxrReplayCache::new(2, retention).expect("cache policy must compile");
+    let now = std::time::Instant::now();
+    // All three nonces share one shard, so only the shard-local purge can
+    // release their capacity.
+    let nonce = |second: u8| {
+        let mut nonce = [1; 16];
+        nonce[1] = second;
+        nonce
+    };
+    cache
+        .reserve_at(nonce(0), now)
+        .expect("first nonce must fit");
+    cache
+        .reserve_at(nonce(1), now)
+        .expect("second nonce must fit");
+    assert_eq!(
+        cache.reserve_at(nonce(2), now),
+        Err(NxrReplayError::Capacity)
+    );
+    assert_eq!(
+        cache.reserve_at(nonce(0), now + retention - Duration::from_millis(1)),
+        Err(NxrReplayError::Duplicate),
+        "a nonce must stay reserved until its retention deadline"
+    );
+    cache
+        .reserve_at(nonce(2), now + retention)
+        .expect("entries expire at their deadline and release shard capacity");
+    assert_eq!(cache.entry_count(), 1);
+}
+
+#[test]
 fn authenticator_rejects_nonce_reuse_before_returning_destination() {
     let key = NxrKey::new([0x11; 32]);
     let cache = NxrReplayCache::new(8, Duration::from_secs(60)).expect("cache policy must compile");
